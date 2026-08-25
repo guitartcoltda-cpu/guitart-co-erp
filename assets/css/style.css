@@ -90,6 +90,7 @@ img.avatar-img, .avatar { flex-shrink: 0; }
   flex-direction: column;
   z-index: 40;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sidebar-brand {
@@ -156,7 +157,45 @@ img.avatar-img, .avatar { flex-shrink: 0; }
   color: var(--gray-400);
 }
 
-.main-area { margin-left: var(--sidebar-w); flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.main-area { margin-left: var(--sidebar-w); flex: 1; min-width: 0; display: flex; flex-direction: column; transition: margin-left .18s ease; }
+
+/* Menu lateral recolhível (desktop) — a pedido do cliente, para "mostrar
+   somente se quisermos". O estado (aberto/recolhido) é lembrado por
+   navegador via localStorage (ver AppLayout.render em layout.js). */
+.sidebar-collapse-toggle {
+  position: absolute;
+  top: 18px;
+  right: -13px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #1a1a1a;
+  border: 2px solid var(--sidebar-bg);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  z-index: 41;
+  transition: transform .18s ease;
+}
+.sidebar-collapse-toggle:hover { filter: brightness(1.08); }
+
+body.sidebar-collapsed .sidebar { width: 72px; transition: width .18s ease; }
+body.sidebar-collapsed .sidebar:not(:hover) { overflow: visible; }
+body.sidebar-collapsed .main-area { margin-left: 72px; }
+body.sidebar-collapsed .sidebar-collapse-toggle { transform: rotate(180deg); }
+body.sidebar-collapsed .sidebar-brand-logo .brand-logo-img { display: none; }
+body.sidebar-collapsed .sidebar-brand-logo::after { content: "G&C"; color: #fff; font-weight: 700; font-size: 14px; letter-spacing: .04em; }
+body.sidebar-collapsed .sidebar-section-label { display: none; }
+body.sidebar-collapsed .sidebar-nav a { justify-content: center; padding: 10px 0; }
+body.sidebar-collapsed .sidebar-nav a span:not(.nav-icon) { display: none; }
+body.sidebar-collapsed .sidebar-nav a .nav-icon { width: auto; }
+body.sidebar-collapsed .sidebar-foot { display: none; }
+.sidebar { transition: width .18s ease; }
+@media (max-width: 900px) {
+  body.sidebar-collapsed .sidebar { width: var(--sidebar-w); }
+  body.sidebar-collapsed .main-area { margin-left: 0; }
+  .sidebar-collapse-toggle { display: none; }
+}
 
 .topbar {
   height: var(--topbar-h);
@@ -442,6 +481,8 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
 .toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ---------------- Modal ---------------- */
+body.modal-open-lock { overflow: hidden; }
+
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(25,25,27,.5);
   display: none; align-items: center; justify-content: center;
@@ -452,6 +493,7 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
   background: #fff; border-radius: var(--radius-lg);
   width: 100%; max-width: 620px;
   max-height: 90vh; overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: var(--shadow-lg);
 }
 .modal-box.modal-wide { max-width: 880px; }
