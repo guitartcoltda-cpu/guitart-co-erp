@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Chamados · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Chamados", subtitle: "Melhorias, bugs e novos desenvolvimentos do sistema" };</script>
+</head>
+<body data-page="chamados">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Chamados</h2>
+            <p>Abra melhorias, bugs ou ideias de novos desenvolvimentos — o time de desenvolvimento acompanha e responde por aqui</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" id="btn-new-chamado"><i class="fa-solid fa-plus"></i> Novo Chamado</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="cham-summary" style="margin-bottom:16px;"></div>
+
+        <div class="grid-2 mb-16">
+          <div class="card">
+            <div class="card-header"><div><h3>Maiores Demandas — por Tipo</h3><div class="card-header-sub">Onde estão concentrados os chamados abertos</div></div></div>
+            <div class="card-body"><div id="chart-cham-type"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><h3>Maiores Demandas — por Área do Sistema</h3><div class="card-header-sub">Módulos com mais chamados registrados</div></div></div>
+            <div class="card-body"><div id="chart-cham-area"></div></div>
+          </div>
+        </div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>Status</label><select id="ch-status"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Tipo</label><select id="ch-type"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Área</label><select id="ch-area"><option value="">Todas</option></select></div>
+          <div class="form-field ff-grow"><label>Buscar</label><input type="text" id="ch-search" placeholder="Título ou descrição..."></div>
+          <div class="form-field checkbox-wrap" style="align-self:flex-end;"><input type="checkbox" id="ch-mine"><label for="ch-mine" style="font-weight:600;">Só os meus</label></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3>Chamados</h3><div class="card-header-sub" id="ch-count-sub"></div></div></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-chamados"></table></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/chamados.js"></script>
+</body>
+</html>

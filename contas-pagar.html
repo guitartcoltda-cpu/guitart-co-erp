@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Contas a Pagar · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Contas a Pagar", subtitle: "Previsão de pagamentos e despesas em aberto" };</script>
+<style>
+  .cp-bucket-btn { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-color); background: var(--gray-50); color: var(--gray-600); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .cp-bucket-btn:hover { background: var(--gray-100); color: var(--gray-800); }
+  .cp-bucket-btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .cp-bulk-bar {
+    display: none; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--color-primary-light); border: 1px solid var(--color-primary);
+    border-radius: var(--radius-lg); padding: 10px 16px; margin-bottom: 16px;
+  }
+  .cp-bulk-bar.show { display: flex; }
+  .cp-bulk-bar .cp-bulk-count { font-size: 13px; font-weight: 600; color: var(--color-primary-dark); }
+  #tbl-cp th.cp-col-check, #tbl-cp td.cp-col-check { width: 34px; text-align: center; }
+  #tbl-cp .cp-row-check, #tbl-cp #cp-select-all { width: 16px; height: 16px; cursor: pointer; }
+</style>
+</head>
+<body data-page="contas-pagar">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="filters-bar">
+          <div class="form-field ff-grow">
+            <label>Situação</label>
+            <div class="flex gap-6" id="cp-buckets" style="flex-wrap:wrap;">
+              <button class="cp-bucket-btn active" data-bucket="" type="button">Todas</button>
+              <button class="cp-bucket-btn" data-bucket="vencida" type="button">Vencidas</button>
+              <button class="cp-bucket-btn" data-bucket="hoje" type="button">Vence Hoje</button>
+              <button class="cp-bucket-btn" data-bucket="7d" type="button">Próx. 7 dias</button>
+              <button class="cp-bucket-btn" data-bucket="30d" type="button">8–30 dias</button>
+              <button class="cp-bucket-btn" data-bucket="futuro" type="button">Mais de 30 dias</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>Centro de Custo</label><select id="cp-cc"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Categoria</label><select id="cp-cat"><option value="">Todas</option></select></div>
+          <div class="form-field ff-grow"><label>Buscar</label><input type="text" id="cp-search" placeholder="Descrição..."></div>
+          <button class="btn btn-secondary btn-sm" id="btn-cp-clear" type="button">Limpar</button>
+          <button class="btn btn-primary btn-sm" id="btn-cp-export" type="button"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
+        </div>
+
+        <div class="kpi-grid" id="cp-summary" style="margin-bottom:16px;"></div>
+
+        <div class="grid-2 mb-16">
+          <div class="card">
+            <div class="card-header"><div><h3>Previsão de Pagamentos</h3><div class="card-header-sub">Total em aberto por situação de vencimento</div></div></div>
+            <div class="card-body"><div id="chart-cp-forecast"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><h3>Em Aberto por Centro de Custo</h3></div></div>
+            <div class="card-body"><div id="chart-cp-cc"></div></div>
+          </div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Ranking — Maiores Gastos</h3><div class="card-header-sub">Top categorias com mais despesas pendentes</div></div></div>
+          <div class="card-body"><div id="chart-cp-ranking"></div></div>
+        </div>
+
+        <div class="cp-bulk-bar" id="cp-bulk-bar">
+          <div class="cp-bulk-count" id="cp-bulk-count">0 conta(s) selecionada(s)</div>
+          <button class="btn btn-primary btn-sm" id="btn-cp-bulk-pay" type="button"><i class="fa-solid fa-check-double"></i> Marcar selecionados como pago</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3>Contas a Pagar</h3><div class="card-header-sub" id="cp-count-sub"></div></div></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-cp"></table></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/contas-pagar.js"></script>
+</body>
+</html>

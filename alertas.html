@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Central de Alertas Inteligentes · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Central de Alertas Inteligentes", subtitle: "Situações identificadas automaticamente a partir dos dados do salão" };</script>
+<style>
+  .al-card { margin-bottom: 16px; }
+  .al-rule {
+    font-size: 12px; color: var(--gray-500); background: var(--gray-50);
+    border: 1px solid var(--border-color); border-radius: var(--radius-md);
+    padding: 8px 12px; margin: 0 20px 14px 20px; display: flex; gap: 8px; align-items: flex-start;
+  }
+  .al-rule i { color: var(--color-primary); margin-top: 2px; }
+  .al-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border-color);
+  }
+  .al-row:last-child { border-bottom: none; }
+  .al-row-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .al-row-name { font-weight: 700; color: var(--gray-900); }
+  .al-row-sub { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
+  .al-row-side { text-align: right; white-space: nowrap; font-size: 12.5px; }
+  .al-slot-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+  .al-slot-label { width: 64px; font-weight: 700; font-size: 13px; color: var(--gray-700); flex-shrink: 0; }
+  .al-slot-count { width: 90px; text-align: right; font-size: 12px; color: var(--gray-500); flex-shrink: 0; }
+  .al-diag-box {
+    border-radius: var(--radius-lg); padding: 14px 16px; margin: 0 20px 14px 20px;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .al-diag-box.down { background: #fbe6e6; border: 1px solid #f0c2c2; }
+  .al-diag-box.up { background: #e2f5ec; border: 1px solid #b9e6cd; }
+  .al-diag-box.na { background: var(--gray-50); border: 1px solid var(--border-color); }
+  .al-diag-box i { font-size: 18px; margin-top: 2px; }
+  .al-diag-box.down i { color: var(--color-danger); }
+  .al-diag-box.up i { color: var(--color-success); }
+  .al-diag-box.na i { color: var(--gray-500); }
+  .al-diag-text { font-size: 13.5px; color: var(--gray-800); line-height: 1.5; }
+  .al-diag-text strong { color: var(--gray-900); }
+</style>
+</head>
+<body data-page="alertas">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="env-banner">
+          <i class="fa-solid fa-circle-info"></i>
+          Esta central apenas identifica e exibe situações na tela — nenhuma mensagem é enviada automaticamente a clientes ou profissionais.
+        </div>
+
+        <div class="kpi-grid" id="al-kpis" style="margin-bottom:16px;"></div>
+
+        <!-- 1. Clientes que faltaram -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-user-slash" style="color:var(--color-danger);margin-right:8px;"></i>Clientes que Faltaram</h3><div class="card-header-sub">Agendamentos marcados como "faltou" recentemente</div></div></div>
+          <div class="al-rule"><i class="fa-solid fa-circle-info"></i><span id="rule-noshow"></span></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-noshow"></table></div>
+        </div>
+
+        <!-- 2. Clientes inativos -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-user-clock" style="color:var(--color-warning);margin-right:8px;"></i>Clientes Inativos</h3><div class="card-header-sub">Sem passar pelo salão há um bom tempo e sem retorno agendado</div></div></div>
+          <div class="al-rule"><i class="fa-solid fa-circle-info"></i><span id="rule-inactive"></span></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-inactive"></table></div>
+        </div>
+
+        <!-- 3. Profissionais com baixa produção -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-arrow-trend-down" style="color:var(--color-danger);margin-right:8px;"></i>Profissionais com Baixa Produção</h3><div class="card-header-sub">Comparativo com a média da equipe no mês atual</div></div></div>
+          <div class="al-rule"><i class="fa-solid fa-circle-info"></i><span id="rule-lowprod"></span></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-lowprod"></table></div>
+        </div>
+
+        <!-- 4. Horários ociosos -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-clock" style="color:var(--color-info);margin-right:8px;"></i>Horários Ociosos</h3><div class="card-header-sub">Faixas de horário historicamente menos ocupadas</div></div></div>
+          <div class="al-rule"><i class="fa-solid fa-circle-info"></i><span id="rule-idle"></span></div>
+          <div class="card-body" id="idle-slots"></div>
+        </div>
+
+        <!-- 5. Clientes com recorrência esperada -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-rotate" style="color:var(--color-primary);margin-right:8px;"></i>Clientes com Recorrência Esperada</h3><div class="card-header-sub">Padrão de retorno detectado pelo histórico de atendimentos</div></div></div>
+          <div class="al-rule"><i class="fa-solid fa-circle-info"></i><span id="rule-recurrence"></span></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-recurrence"></table></div>
+        </div>
+
+        <!-- 6. Retorno sugerido após serviço específico -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-comment-dots" style="color:var(--color-primary);margin-right:8px;"></i>Retorno Sugerido — Serviços de Ciclo Longo</h3><div class="card-header-sub">Clientes que fizeram serviços de maior ticket/duração há bastante tempo</div></div></div>
+          <div class="al-rule"><i class="fa-solid fa-circle-info"></i><span id="rule-followup"></span></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-followup"></table></div>
+        </div>
+
+        <!-- 7. Diagnóstico de vendas -->
+        <div class="card al-card">
+          <div class="card-header"><div><h3><i class="fa-solid fa-magnifying-glass-chart" style="color:var(--color-primary);margin-right:8px;"></i>Por que as Vendas Caíram Este Mês?</h3><div class="card-header-sub">Comparação com o mesmo período do mês anterior</div></div></div>
+          <div id="sales-diagnostic"></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-sales-breakdown"></table></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/alertas.js"></script>
+</body>
+</html>

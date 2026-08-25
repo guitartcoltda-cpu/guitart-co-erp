@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Entrar · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  body.login-body { background: #0c0c0d; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .login-card { width: 100%; max-width: 380px; background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-md); overflow: hidden; }
+  .login-brand { background: #000; padding: 28px 20px; text-align: center; }
+  .login-brand img { max-width: 190px; width: 100%; height: auto; }
+  .login-body-inner { padding: 28px 26px 30px; }
+  .login-body-inner h2 { font-size: 17px; font-weight: 800; margin-bottom: 4px; color: var(--gray-900); }
+  .login-body-inner p.sub { font-size: 12.5px; color: var(--gray-500); margin-bottom: 20px; }
+  .login-error { background: var(--color-danger-bg); color: var(--color-danger); font-size: 12.5px; font-weight: 600; padding: 10px 12px; border-radius: var(--radius-sm); margin-bottom: 14px; display: none; }
+  .login-error.show { display: block; }
+  .login-hint { margin-top: 18px; font-size: 11.5px; color: var(--gray-500); background: var(--gray-50); border-radius: var(--radius-sm); padding: 10px 12px; line-height: 1.5; }
+  .login-hint strong { color: var(--gray-700); }
+</style>
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="login-brand">
+      <img src="assets/img/logo-guitart.png" alt="Guitart & Co.">
+    </div>
+    <div class="login-body-inner">
+      <h2>Acessar o sistema</h2>
+      <p class="sub">Informe seu CPF e senha para entrar.</p>
+
+      <div class="login-error" id="li-error"></div>
+
+      <form id="login-form">
+        <div class="form-field full mb-16">
+          <label>CPF</label>
+          <input type="text" id="li-cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autofocus>
+        </div>
+        <div class="form-field full mb-16">
+          <label>Senha</label>
+          <input type="password" id="li-pass" inputmode="numeric" placeholder="mín. 6 dígitos" autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;">Entrar</button>
+      </form>
+
+      <div class="login-hint">
+        <strong>Ambiente de demonstração offline.</strong> Acesso padrão: CPF <strong>000.000.000-00</strong>, senha <strong>123456</strong>. Novos acessos podem ser criados em Configurações → Acessos.
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/login.js"></script>
+</body>
+</html>

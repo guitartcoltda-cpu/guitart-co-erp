@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Relatório de Vendas · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Relatório de Vendas", subtitle: "Acompanhamento em tempo real de todas as vendas — para conferência e prestação de contas" };</script>
+</head>
+<body data-page="relatorio-vendas">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div id="rv-period-filter"></div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>Tipo</label><select id="rv-tipo"><option value="">Todos</option><option value="servico">Serviços</option><option value="produto">Produtos</option></select></div>
+          <div class="form-field"><label>Profissional</label><select id="rv-employee"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Forma de Pagamento</label><select id="rv-pay"><option value="">Todas</option></select></div>
+          <div class="form-field ff-grow"><label>Buscar</label><input type="text" id="rv-search" placeholder="Cliente, descrição..."></div>
+          <button class="btn btn-secondary" id="btn-rv-clear" type="button">Limpar</button>
+          <button class="btn btn-primary" id="btn-rv-export" type="button"><i class="fa-solid fa-file-csv"></i> Exportar CSV</button>
+        </div>
+
+        <div class="kpi-grid" id="rv-summary" style="margin-bottom:16px;"></div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Vendas por Dia</h3><div class="card-header-sub">Evolução no período selecionado</div></div></div>
+          <div class="card-body"><div id="chart-rv-daily"></div></div>
+        </div>
+
+        <div class="grid-2 mb-16" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+          <div class="card">
+            <div class="card-header"><div><h3>Por Forma de Pagamento</h3></div></div>
+            <div class="card-body"><div id="chart-rv-pay"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><h3>Top Itens Vendidos</h3><div class="card-header-sub">Serviços e produtos</div></div></div>
+            <div class="card-body"><div id="chart-rv-top"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3>Vendas do Período</h3><div class="card-header-sub" id="rv-count-sub"></div></div></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-rv"></table></div>
+          <div class="pagination" id="rv-pagination"></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/period-filter.js"></script>
+  <script src="assets/js/relatorio-vendas.js"></script>
+</body>
+</html>

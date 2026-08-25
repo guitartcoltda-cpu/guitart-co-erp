@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Estoque · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Estoque", subtitle: "Materiais de consumo interno e produtos para revenda" };</script>
+</head>
+<body data-page="estoque">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Estoque</h2>
+            <p>Controle de materiais para uso interno e produtos para revenda</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary" id="btn-export-stock"><i class="fa-solid fa-file-arrow-down"></i> Exportar CSV</button>
+            <button class="btn btn-primary" id="btn-new-product"><i class="fa-solid fa-plus"></i> Novo Produto</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="stock-summary" style="margin-bottom:16px;"></div>
+
+        <div class="tabs" id="main-tabs">
+          <button class="tab-btn active" data-panel="panel-products">Produtos</button>
+          <button class="tab-btn" data-panel="panel-moves">Movimentações</button>
+          <button class="tab-btn" data-panel="panel-consumo">Consumo de Insumos</button>
+        </div>
+
+        <div class="tab-panel active" id="panel-products">
+          <div class="filters-bar">
+            <div class="form-field"><label>Tipo</label>
+              <select id="p-type"><option value="">Todos</option><option value="uso_interno">Uso Interno</option><option value="revenda">Revenda</option></select>
+            </div>
+            <div class="form-field"><label>Situação</label>
+              <select id="p-status"><option value="">Todas</option><option value="baixo">Estoque Baixo</option><option value="ok">Estoque OK</option></select>
+            </div>
+            <div class="form-field ff-grow"><label>Buscar</label><input type="text" id="p-search" placeholder="Produto, SKU ou fornecedor..."></div>
+          </div>
+          <div class="card">
+            <div class="table-wrap"><table class="data-table" id="tbl-products"></table></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-moves">
+          <div class="filters-bar">
+            <div class="form-field"><label>Produto</label><select id="mv-product"><option value="">Todos</option></select></div>
+            <div class="form-field"><label>Tipo</label><select id="mv-type"><option value="">Todos</option><option value="entrada">Entrada</option><option value="saida">Saída</option></select></div>
+            <div class="form-field"><label>De</label><input type="date" id="mv-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="mv-end"></div>
+          </div>
+          <div class="card">
+            <div class="table-wrap"><table class="data-table" id="tbl-moves"></table></div>
+            <div class="pagination" id="moves-pagination"></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-consumo">
+          <div class="flex items-center justify-between mb-16" style="flex-wrap:wrap;gap:10px;">
+            <div>
+              <h3 style="margin:0 0 2px;">Lançamentos de Consumo de Insumos</h3>
+              <div class="card-header-sub">Registro manual do consumo de produtos internos por profissional — custo dividido 50/50 com o salão</div>
+            </div>
+            <button class="btn btn-primary" id="btn-new-consumo"><i class="fa-solid fa-plus"></i> Lançar Consumo</button>
+          </div>
+          <div class="filters-bar">
+            <div class="form-field"><label>Profissional</label><select id="cs-employee"><option value="">Todos</option></select></div>
+            <div class="form-field"><label>De</label><input type="date" id="cs-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="cs-end"></div>
+          </div>
+          <div class="card">
+            <div class="table-wrap"><table class="data-table" id="tbl-consumo"></table></div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/consumo.js"></script>
+  <script src="assets/js/estoque.js"></script>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Comissionamento · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>window.PAGE_META = { title: "Comissionamento", subtitle: "Cálculo automático de comissões por profissional" };</script>
+<style>
+  .com-bulk-bar {
+    display: none; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--color-primary-light); border: 1px solid var(--color-primary);
+    border-radius: var(--radius-lg); padding: 10px 16px; margin-bottom: 16px;
+  }
+  .com-bulk-bar.show { display: flex; }
+  .com-bulk-bar .com-bulk-count { font-size: 13px; font-weight: 600; color: var(--color-primary-dark); }
+  #tbl-commission th.com-col-check, #tbl-commission td.com-col-check { width: 34px; text-align: center; }
+  #tbl-commission .com-row-check, #tbl-commission #com-select-all { width: 16px; height: 16px; cursor: pointer; }
+</style>
+</head>
+<body data-page="comissoes">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Comissionamento</h2>
+            <p>Cálculo automático de comissões por profissional</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-outline" id="btn-com-pdf"><i class="fa-solid fa-file-pdf"></i> Gerar PDF</button>
+            <button class="btn btn-outline" id="btn-com-send-admins"><i class="fa-brands fa-whatsapp"></i> Enviar resumo aos administradores</button>
+            <button class="btn btn-secondary" id="btn-new-bonus"><i class="fa-solid fa-award"></i> Comissionamento Esporádico</button>
+          </div>
+        </div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>Mês de Referência</label><select id="cm-month"></select></div>
+          <div class="hint" style="align-self:center;color:var(--gray-500);font-size:12px;">A comissão é calculada sobre a receita de serviços concluídos no mês (não incide sobre venda de produtos), somada a eventuais lançamentos de comissionamento esporádico do mês</div>
+        </div>
+
+        <div class="kpi-grid" id="com-summary" style="margin-bottom:16px;"></div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Comissão por Profissional</h3><div class="card-header-sub">Mês selecionado</div></div></div>
+          <div class="card-body"><div id="chart-commission"></div></div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Ranking — Quem Mais Recebe</h3><div class="card-header-sub">Top profissionais por valor devido no mês</div></div></div>
+          <div class="card-body"><div id="chart-commission-ranking"></div></div>
+        </div>
+
+        <div class="com-bulk-bar" id="com-bulk-bar">
+          <div class="com-bulk-count" id="com-bulk-count">0 profissional(is) selecionado(s)</div>
+          <button class="btn btn-primary btn-sm" id="btn-com-bulk-pay" type="button"><i class="fa-solid fa-check-double"></i> Registrar pagamento dos selecionados</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3>Detalhamento</h3><div class="card-header-sub">Devido x Pago por profissional</div></div></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-commission"></table></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/consumo.js"></script>
+  <script src="assets/js/comissoes.js"></script>
+</body>
+</html>

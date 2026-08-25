@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Extrato do Profissional · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Extrato do Profissional", subtitle: "Comissões por serviço, próximo corte e repasse" };</script>
+<style>
+  .ec-payout-card { display: flex; gap: 16px; flex-wrap: wrap; }
+  .ec-payout-item { flex: 1; min-width: 220px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 16px; }
+  .ec-payout-item .ec-p-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--gray-500); }
+  .ec-payout-item .ec-p-value { font-size: 20px; font-weight: 800; margin-top: 6px; }
+  .ec-payout-item .ec-p-sub { font-size: 12px; color: var(--gray-500); margin-top: 4px; }
+</style>
+</head>
+<body data-page="extrato-comissao">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="filters-bar">
+          <div class="form-field ff-grow"><label>Profissional</label><select id="ec-employee"></select></div>
+          <div class="form-field"><label>Mês de Referência</label><select id="ec-month"></select></div>
+        </div>
+
+        <div class="kpi-grid" id="ec-summary" style="margin-bottom:16px;"></div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Próximo Corte e Repasse</h3><div class="card-header-sub">Datas de fechamento e pagamento da comissão</div></div></div>
+          <div class="card-body">
+            <div class="ec-payout-card" id="ec-payout"></div>
+          </div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Comissão por Serviço</h3><div class="card-header-sub">Quanto cada tipo de serviço representou no total</div></div></div>
+          <div class="card-body"><div id="chart-ec-services"></div></div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Histórico (últimos 6 meses)</h3><div class="card-header-sub">Evolução da comissão devida e paga</div></div></div>
+          <div class="card-body"><div id="chart-ec-history"></div></div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Atendimentos do Mês</h3><div class="card-header-sub">Detalhamento de cada atendimento concluído</div></div></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-ec"></table></div>
+        </div>
+
+        <div class="card mb-16" id="ec-assistant" style="display:none;"></div>
+
+        <div class="card mb-16" id="ec-consumo" style="display:none;"></div>
+
+        <div class="card" id="ec-bonus" style="display:none;"></div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/consumo.js"></script>
+  <script src="assets/js/extrato-comissao.js"></script>
+</body>
+</html>

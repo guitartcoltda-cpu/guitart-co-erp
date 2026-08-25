@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Configurações · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Configurações", subtitle: "Centros de custo, categorias, serviços e dados do sistema" };</script>
+</head>
+<body data-page="configuracoes">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Configurações</h2>
+            <p>Estrutura de centros de custo, categorias, serviços e dados do sistema</p>
+          </div>
+        </div>
+
+        <div class="tabs" id="cfg-tabs">
+          <button class="tab-btn active" data-panel="p-cc">Centros de Custo</button>
+          <button class="tab-btn" data-panel="p-cat">Categorias</button>
+          <button class="tab-btn" data-panel="p-srv">Serviços</button>
+          <button class="tab-btn" data-panel="p-acessos">Acessos</button>
+          <button class="tab-btn" data-panel="p-approvals" id="tab-btn-approvals">Aprovações</button>
+          <button class="tab-btn" data-panel="p-perms">Permissões</button>
+          <button class="tab-btn" data-panel="p-log">Log de Atividade</button>
+          <button class="tab-btn" data-panel="p-data">Backup e Dados</button>
+        </div>
+
+        <div class="tab-panel active" id="p-cc">
+          <div class="toolbar"><div></div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-cc"><i class="fa-solid fa-plus"></i> Novo Centro de Custo</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-cc"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-cat">
+          <div class="toolbar"><div></div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-cat"><i class="fa-solid fa-plus"></i> Nova Categoria</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-cat"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-srv">
+          <div class="toolbar"><div></div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-srv"><i class="fa-solid fa-plus"></i> Novo Serviço</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-srv"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-acessos">
+          <div class="toolbar"><div class="small text-muted">Cadastro de usuários com acesso ao sistema. Necessário CPF, nome completo e senha (mínimo 6 dígitos, apenas números).</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-user"><i class="fa-solid fa-user-plus"></i> Novo Acesso</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-users"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-approvals">
+          <div class="toolbar"><div class="small text-muted">Solicitações de alteração de comissão e de desconto em consumo de insumos, feitas por qualquer usuário — só um Administrador pode aprovar ou recusar.</div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-approvals"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-perms">
+          <div class="toolbar">
+            <div class="small text-muted">Escolha quais telas cada usuário pode acessar. Um usuário sem restrições marcada vê o sistema inteiro (inclusive telas novas que forem adicionadas depois).</div>
+          </div>
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header"><h3>Usuário</h3></div>
+              <div class="card-body">
+                <div class="form-field"><label>Selecione um acesso cadastrado</label><select id="perm-user-select"></select></div>
+              </div>
+            </div>
+            <div class="card" id="perm-card" style="display:none;">
+              <div class="card-header"><h3 id="perm-user-name"></h3></div>
+              <div class="card-body">
+                <label class="flex items-center gap-8 mb-16">
+                  <input type="checkbox" id="perm-full-access">
+                  <span><strong>Acesso total</strong> — vê todas as telas do sistema (inclusive novas telas futuras)</span>
+                </label>
+                <div id="perm-checklist" class="form-grid"></div>
+                <button class="btn btn-primary mt-16" id="btn-save-perms">Salvar Permissões</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="p-log">
+          <div class="filters-bar">
+            <div class="form-field ff-grow"><label>Buscar</label><input type="text" id="log-search" placeholder="Ação, descrição, usuário..."></div>
+            <div class="form-field"><label>De</label><input type="date" id="log-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="log-end"></div>
+            <button class="btn btn-secondary btn-sm" id="btn-log-clear-filters">Limpar Filtros</button>
+          </div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-log"></table></div>
+            <div class="small text-muted" id="log-note" style="padding:10px 14px;"></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="p-data">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header"><h3>Dados da Empresa</h3></div>
+              <div class="card-body">
+                <div class="form-field"><label>Nome do Salão</label><input type="text" id="cfg-company"></div>
+                <button class="btn btn-primary mt-16" id="btn-save-company">Salvar</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><h3>Backup Local</h3></div>
+              <div class="card-body">
+                <p class="small text-muted mb-16">Exporte todos os dados para um arquivo JSON, ou restaure a partir de um backup anterior. Os dados ficam salvos apenas no navegador (localStorage) — mantenha um backup se for limpar o cache.</p>
+                <div class="flex gap-8">
+                  <button class="btn btn-secondary" id="btn-export-json"><i class="fa-solid fa-file-export"></i> Exportar Backup (JSON)</button>
+                  <button class="btn btn-secondary" id="btn-import-json"><i class="fa-solid fa-file-import"></i> Importar Backup</button>
+                  <input type="file" id="file-import-json" accept="application/json" style="display:none;">
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card mt-16">
+            <div class="card-header"><h3>Zona de Risco</h3></div>
+            <div class="card-body">
+              <p class="small text-muted mb-16">Apaga todos os dados atuais e gera um novo conjunto de dados fictícios (funcionários, clientes, financeiro, estoque e agenda).</p>
+              <button class="btn btn-danger" id="btn-reset-data"><i class="fa-solid fa-rotate"></i> Restaurar Dados Fictícios</button>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/consumo.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/configuracoes.js"></script>
+</body>
+</html>

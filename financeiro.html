@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Lançamentos Financeiros · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Lançamentos Financeiros", subtitle: "Receitas e despesas, categorizadas por centro de custo" };</script>
+<style>
+  .bulk-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--gray-50); border: 1px solid var(--border-color); border-radius: var(--radius-md);
+    padding: 10px 14px; margin-bottom: 12px; font-size: 13px; font-weight: 600;
+  }
+  #tbl-txn th.col-check, #tbl-txn td.col-check { width: 34px; text-align: center; }
+  #tbl-txn input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--color-primary); cursor: pointer; }
+</style>
+</head>
+<body data-page="financeiro">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Lançamentos Financeiros</h2>
+            <p>Cadastre receitas e despesas, categorizadas por centro de custo</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary" id="btn-export-csv"><i class="fa-solid fa-file-arrow-down"></i> Exportar CSV</button>
+            <button class="btn btn-primary" id="btn-new-txn"><i class="fa-solid fa-plus"></i> Novo Lançamento</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="fin-summary" style="margin-bottom:16px;"></div>
+
+        <div class="tabs" id="type-tabs">
+          <button class="tab-btn active" data-type="">Todos</button>
+          <button class="tab-btn" data-type="receita">Receitas</button>
+          <button class="tab-btn" data-type="despesa">Despesas</button>
+        </div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>De</label><input type="date" id="f-start"></div>
+          <div class="form-field"><label>Até</label><input type="date" id="f-end"></div>
+          <div class="form-field"><label>Centro de Custo</label><select id="f-cc"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Categoria</label><select id="f-cat"><option value="">Todas</option></select></div>
+          <div class="form-field"><label>Status</label><select id="f-status"><option value="">Todos</option><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
+          <div class="form-field ff-grow"><label>Buscar</label><input type="text" id="f-search" placeholder="Descrição, cliente, funcionário..."></div>
+          <button class="btn btn-ghost" id="btn-clear-filters">Limpar filtros</button>
+        </div>
+
+        <div class="bulk-bar" id="bulk-bar" style="display:none;"></div>
+
+        <div class="card">
+          <div class="table-wrap"><table class="data-table" id="tbl-txn"></table></div>
+          <div class="pagination" id="txn-pagination"></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/financeiro.js"></script>
+</body>
+</html>

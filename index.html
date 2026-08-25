@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Dashboard · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  .card-alert-attention {
+    border-left: 4px solid var(--color-danger);
+  }
+  .card-alert-attention .card-body { background: #fbe6e6; border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); }
+</style>
+<script>window.PAGE_META = { title: "Dashboard", subtitle: "Visão geral do salão" };</script>
+</head>
+<body data-page="dashboard">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="env-banner">
+          <i class="fa-solid fa-circle-info"></i>
+          Ambiente de demonstração offline — todos os dados são fictícios e ficam salvos apenas neste navegador.
+        </div>
+
+        <div id="dash-period-filter"></div>
+
+        <div class="kpi-grid" id="kpi-grid"></div>
+
+        <div class="mt-16">
+          <div class="card card-alert-attention">
+            <div class="card-header">
+              <div><h3><i class="fa-solid fa-triangle-exclamation" style="color:var(--color-danger);margin-right:8px;"></i>Estoque — Alertas</h3><div class="card-header-sub">Produtos abaixo do mínimo</div></div>
+              <a href="estoque.html" class="btn btn-sm btn-secondary">Ver estoque</a>
+            </div>
+            <div class="card-body" id="stock-alerts"></div>
+          </div>
+        </div>
+
+        <div class="grid-2 mt-16">
+          <div class="card">
+            <div class="card-header">
+              <div><h3>Receita x Despesa</h3><div class="card-header-sub">Últimos 6 meses</div></div>
+            </div>
+            <div class="card-body"><div id="chart-revenue-expense"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div><h3>Despesas por Categoria</h3><div class="card-header-sub" id="cc-chart-sub">Período selecionado</div></div>
+            </div>
+            <div class="card-body"><div id="chart-cost-center"></div></div>
+          </div>
+        </div>
+
+        <div class="grid-2 mt-16">
+          <div class="card">
+            <div class="card-header">
+              <div><h3>Próximos Agendamentos</h3><div class="card-header-sub">Próximos horários marcados</div></div>
+              <a href="agenda.html" class="btn btn-sm btn-secondary">Ver agenda</a>
+            </div>
+            <div class="table-wrap"><table class="data-table" id="tbl-upcoming"></table></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div><h3>Top Serviços</h3><div class="card-header-sub">Por receita gerada no período</div></div>
+            </div>
+            <div class="card-body"><div id="chart-top-services"></div></div>
+          </div>
+        </div>
+
+        <div class="grid-2 mt-16">
+          <div class="card">
+            <div class="card-header">
+              <div><h3>Formas de Pagamento</h3><div class="card-header-sub">Receitas no período</div></div>
+            </div>
+            <div class="card-body" id="payment-methods"></div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/period-filter.js"></script>
+  <script src="assets/js/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Conciliação Bancária · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  /* Página-específico: comparação lado a lado usada no fluxo de confirmação
+     de conciliação (não altera assets/css/style.css). */
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare-table th, .compare-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+  .compare-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--gray-500); font-weight: 700; }
+  .compare-table td.compare-label { color: var(--gray-500); font-weight: 600; white-space: nowrap; }
+  .compare-table tr.compare-diff-row td { background: var(--gray-50); }
+  .compare-review-table td { vertical-align: top; }
+  .compare-review-table .ri-desc { font-weight: 600; }
+  .compare-review-table .ri-meta { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+</style>
+<script>window.PAGE_META = { title: "Conciliação Bancária", subtitle: "Importe o extrato e bata os lançamentos do banco com o sistema" };</script>
+</head>
+<body data-page="conciliacao">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="kpi-grid" id="recon-summary" style="margin-bottom:16px;"></div>
+
+        <div class="card mb-16">
+          <div class="card-header">
+            <div><h3>Importar Extrato Bancário (CSV)</h3><div class="card-header-sub">Colunas esperadas: data, descrição e valor (positivo = entrada, negativo = saída)</div></div>
+            <button class="btn btn-secondary btn-sm" id="btn-sample-csv"><i class="fa-solid fa-download"></i> Gerar extrato de exemplo</button>
+          </div>
+          <div class="card-body">
+            <div class="upload-zone" id="upload-zone">
+              <div class="uz-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
+              <div><strong>Arraste o arquivo CSV aqui</strong> ou clique para selecionar</div>
+              <div class="small text-muted mt-8">Aceita .csv exportado do internet banking (delimitado por vírgula ou ponto-e-vírgula)</div>
+              <input type="file" id="file-input" accept=".csv,text/csv" style="display:none;">
+            </div>
+          </div>
+        </div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>De</label><input type="date" id="rf-start"></div>
+          <div class="form-field"><label>Até</label><input type="date" id="rf-end"></div>
+          <button class="btn btn-outline btn-sm" id="btn-auto-match"><i class="fa-solid fa-wand-magic-sparkles"></i> Conciliar sugestões automáticas</button>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-recon-filters">Limpar filtros</button>
+        </div>
+
+        <div class="recon-cols">
+          <div class="card">
+            <div class="card-header"><div><h3>Extrato do Banco</h3><div class="card-header-sub" id="bank-col-sub">Linhas importadas, ainda não conciliadas</div></div></div>
+            <div class="card-body" id="bank-lines-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><h3>Lançamentos do Sistema</h3><div class="card-header-sub" id="txn-col-sub">Pagos, ainda não conciliados</div></div></div>
+            <div class="card-body" id="system-txn-list"></div>
+          </div>
+        </div>
+
+        <div class="card mt-16">
+          <div class="card-header">
+            <div><h3>Histórico de Conciliações</h3><div class="card-header-sub">Pares já conciliados</div></div>
+          </div>
+          <div class="table-wrap"><table class="data-table" id="tbl-history"></table></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/conciliacao.js"></script>
+</body>
+</html>

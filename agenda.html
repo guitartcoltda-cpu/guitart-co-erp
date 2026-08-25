@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Agenda · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Agenda", subtitle: "Agendamentos por cliente, profissional e serviço" };</script>
+<style>
+  .week-strip { display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto; }
+  .week-day { flex: 1; min-width: 92px; text-align: center; padding: 10px 6px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: #fff; cursor: pointer; }
+  .week-day:hover { background: var(--gray-50); }
+  .week-day.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .week-day .wd-name { font-size: 10.5px; text-transform: uppercase; opacity: .75; }
+  .week-day .wd-num { font-size: 17px; font-weight: 800; margin: 2px 0; }
+  .week-day .wd-count { font-size: 10.5px; }
+  .agenda-item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); margin-bottom: 8px; background: #fff; }
+  .agenda-item .ai-time { width: 56px; font-weight: 800; font-size: 14px; color: var(--color-primary); flex-shrink: 0; }
+  .agenda-item .ai-main { flex: 1; min-width: 0; }
+  .agenda-item .ai-service { font-weight: 700; }
+  .agenda-item .ai-meta { font-size: 12px; color: var(--gray-500); margin-top: 2px; }
+  .ag-general-group { margin-bottom: 18px; }
+  .ag-general-date { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: var(--gray-500); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color); }
+
+  /* Visão do Dia — calendário em grade (colunas = profissionais, linhas = horário) */
+  .cal-scroll { overflow: auto; max-height: 680px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; }
+  .cal-grid-inner { display: grid; min-width: 100%; width: max-content; }
+  .cal-corner { position: sticky; top: 0; left: 0; z-index: 3; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
+  .cal-col-header { position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); padding: 10px 6px; text-align: center; }
+  .cal-col-header .avatar { margin: 0 auto 4px; }
+  .cal-col-header .cch-name { font-weight: 800; font-size: 12.5px; }
+  .cal-col-header .cch-role { font-size: 10.5px; color: var(--gray-500); }
+  .cal-time-axis { position: sticky; left: 0; z-index: 1; background: #fff; border-right: 1px solid var(--border-color); }
+  .cal-hour-label { position: absolute; left: 0; right: 0; font-size: 10.5px; color: var(--gray-500); padding: 0 6px; transform: translateY(-50%); }
+  .cal-col { position: relative; border-right: 1px solid var(--border-color); cursor: pointer; background-image: repeating-linear-gradient(to bottom, var(--border-color) 0, var(--border-color) 1px, transparent 1px, transparent 100%); background-repeat: repeat-y; }
+  .cal-col:hover { background-color: var(--gray-50); }
+  .cal-block { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 7px; font-size: 11px; overflow: hidden; cursor: pointer; border-left: 3px solid; box-shadow: 0 1px 2px rgba(0,0,0,.08); line-height: 1.3; }
+  .cal-block.status-agendado { background: #e3eefb; border-color: #2a78d6; color: #184a86; }
+  .cal-block.status-concluido { background: #e2f5ec; border-color: #1baf7a; color: #0e6b47; }
+  .cal-block.status-cancelado { background: #f1f1f1; border-color: #999; color: #777; text-decoration: line-through; opacity: .8; }
+  .cal-block.status-faltou { background: #fdf2df; border-color: #b7791f; color: #7a5313; }
+  .cal-block .cb-time { font-weight: 800; }
+  .cal-block .cb-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cal-block .cb-meta { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cal-occ-block { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 7px; font-size: 11px; border-left: 3px solid #888; color: #555; cursor: pointer; overflow: hidden; background-color: #ececec; background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(0,0,0,.05) 6px, rgba(0,0,0,.05) 12px); }
+</style>
+</head>
+<body data-page="agenda">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Agenda</h2>
+            <p>Agendamentos de horários por cliente, profissional e serviço</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-secondary" id="btn-today"><i class="fa-solid fa-calendar-day"></i> Hoje</button>
+            <button class="btn btn-secondary" id="btn-new-occurrence"><i class="fa-solid fa-triangle-exclamation"></i> Registrar Ocorrência</button>
+            <button class="btn btn-primary" id="btn-new-appt"><i class="fa-solid fa-plus"></i> Novo Agendamento</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="agenda-summary" style="margin-bottom:16px;"></div>
+
+        <div class="tabs" id="ag-view-tabs" style="margin-bottom:16px;">
+          <button type="button" class="tab-btn active" data-view="dia">Visão do Dia</button>
+          <button type="button" class="tab-btn" data-view="geral">Visão Geral (todos os dias)</button>
+        </div>
+
+        <div id="ag-day-nav">
+          <div class="flex items-center justify-between mb-16" style="gap:10px;flex-wrap:wrap;">
+            <div class="flex items-center gap-6">
+              <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Mês anterior"><i class="fa-solid fa-angles-left"></i></button>
+              <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Semana anterior"><i class="fa-solid fa-chevron-left"></i></button>
+            </div>
+            <h3 id="week-label" style="font-size:14px;"></h3>
+            <div class="flex items-center gap-6">
+              <button class="btn btn-icon btn-secondary" id="btn-next-week" title="Próxima semana"><i class="fa-solid fa-chevron-right"></i></button>
+              <button class="btn btn-icon btn-secondary" id="btn-next-month" title="Próximo mês"><i class="fa-solid fa-angles-right"></i></button>
+            </div>
+          </div>
+          <div class="week-strip" id="week-strip"></div>
+
+          <div class="filters-bar" style="margin-bottom:16px;">
+            <div class="form-field"><label>Ir para data</label><input type="date" id="ag-date-jump"></div>
+            <button class="btn btn-sm btn-outline" id="btn-jump-1m" type="button">+1 mês</button>
+            <button class="btn btn-sm btn-outline" id="btn-jump-3m" type="button">+3 meses</button>
+            <button class="btn btn-sm btn-outline" id="btn-jump-6m" type="button">+6 meses</button>
+            <button class="btn btn-sm btn-outline" id="btn-jump-year-end" type="button">Fim do ano</button>
+          </div>
+        </div>
+
+        <div class="filters-bar" id="ag-period-filters" style="display:none;margin-bottom:16px;">
+          <div class="form-field"><label>De</label><input type="date" id="ag-period-start"></div>
+          <div class="form-field"><label>Até</label><input type="date" id="ag-period-end"></div>
+          <div class="small text-muted" style="align-self:center;">Deixe "Até" em branco para ver todos os agendamentos futuros sem limite.</div>
+        </div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>Profissional</label><select id="ag-employee"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Status</label><select id="ag-status"><option value="">Todos</option><option value="agendado">Agendado</option><option value="concluido">Concluído</option><option value="faltou">Faltou</option><option value="cancelado">Cancelado</option></select></div>
+          <button class="btn btn-sm btn-secondary" id="btn-ag-clear-filters" type="button">Limpar Filtros</button>
+          <div class="small text-muted" id="ag-filter-note" style="align-self:center;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3 id="day-title">Agendamentos</h3></div></div>
+          <div class="card-body" id="day-list"></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/consumo.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/clientes-quick.js"></script>
+  <script src="assets/js/agenda.js"></script>
+</body>
+</html>

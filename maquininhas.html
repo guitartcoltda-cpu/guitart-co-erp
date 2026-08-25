@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Maquininhas · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Maquininhas", subtitle: "Cadastro de maquininhas, taxas e estimativa de custos por venda no cartão" };</script>
+<style>
+  .mq-estimate-note {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: var(--color-primary-light, #eef4fb); border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg); padding: 10px 14px; margin-bottom: 16px;
+    font-size: 12.5px; color: var(--gray-600); line-height: 1.5;
+  }
+  .mq-estimate-note i { color: var(--color-primary); margin-top: 2px; }
+  .mq-sim-select { max-width: 260px; }
+</style>
+</head>
+<body data-page="maquininhas">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Maquininhas</h2>
+            <p>Taxas de cartão/Pix e estimativa do custo pago às operadoras</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" id="btn-new-mq"><i class="fa-solid fa-plus"></i> Nova Maquininha</button>
+          </div>
+        </div>
+
+        <div id="mq-period-filter"></div>
+
+        <div class="filters-bar">
+          <div class="form-field mq-sim-select">
+            <label>Simular com a maquininha</label>
+            <select id="mq-sim"></select>
+          </div>
+        </div>
+
+        <div class="mq-estimate-note">
+          <i class="fa-solid fa-circle-info"></i>
+          <div>
+            <strong>Estimativa.</strong> As vendas registradas no sistema ainda não indicam qual maquininha foi usada em cada transação.
+            Os valores de taxa abaixo são calculados aplicando a taxa cadastrada da maquininha selecionada (ou a média das ativas)
+            sobre a receita recebida por cartão/Pix no período — não são o extrato exato da operadora.
+          </div>
+        </div>
+
+        <div class="kpi-grid" id="mq-summary" style="margin-bottom:16px;"></div>
+
+        <div class="card mb-16">
+          <div class="card-header"><div><h3>Receita x Taxa Estimada por Forma de Pagamento</h3><div class="card-header-sub">Crédito, débito e Pix — período selecionado</div></div></div>
+          <div class="card-body"><div id="chart-mq-pay"></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3>Maquininhas Cadastradas</h3><div class="card-header-sub" id="mq-count-sub"></div></div></div>
+          <div class="table-wrap"><table class="data-table" id="tbl-mq"></table></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/period-filter.js"></script>
+  <script src="assets/js/maquininhas.js"></script>
+</body>
+</html>

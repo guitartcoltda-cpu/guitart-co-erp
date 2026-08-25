@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Notificações WhatsApp · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Notificações WhatsApp", subtitle: "Confirmações, lembretes e alertas de clientes ausentes — envio manual" };</script>
+<style>
+  .nt-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border-color); }
+  .nt-row:last-child { border-bottom: none; }
+  .nt-row-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .nt-msg-preview { font-size: 12px; color: var(--gray-500); max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nt-type-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .nt-type-confirmacao { background: #e3eefb; color: #2a78d6; }
+  .nt-type-lembrete { background: #fdf2df; color: #b7791f; }
+  .nt-type-inatividade { background: #fbe6e6; color: #c23b3b; }
+  .nt-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+  .nt-bulkbar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; background: var(--gray-50); border-bottom: 1px solid var(--border-color); font-size: 12.5px; flex-wrap: wrap; }
+  .nt-select-cell { flex-shrink: 0; padding-top: 2px; }
+  .nt-detail-msg { background: var(--gray-50); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 14px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; }
+</style>
+</head>
+<body data-page="notificacoes">
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="env-banner">
+          <i class="fa-solid fa-robot"></i>
+          Esta tela acompanha o que os robôs do sistema já geraram sozinhos: confirmação assim que o cliente agenda, lembrete de véspera (gerado automaticamente a partir das 17h do dia anterior) e alerta de cliente ausente (com base no padrão de retorno de cada cliente). Como o sistema ainda é 100% offline (sem servidor), o envio em si continua manual — cada item abre uma conversa pronta no WhatsApp Web/App (wa.me) com um clique. Quando o sistema estiver publicado com Supabase/API do WhatsApp, o envio pode passar a ser automático de verdade, usando exatamente esses mesmos registros.
+        </div>
+
+        <div class="kpi-grid" id="nt-kpis" style="margin-bottom:16px;"></div>
+
+        <div class="filters-bar">
+          <div class="form-field"><label>Tipo</label>
+            <select id="nt-type">
+              <option value="">Todos</option>
+              <option value="confirmacao">Confirmação de Agendamento</option>
+              <option value="lembrete">Lembrete de Véspera</option>
+              <option value="inatividade">Cliente Ausente Há Tempo</option>
+            </select>
+          </div>
+          <div class="form-field"><label>Situação</label>
+            <select id="nt-status">
+              <option value="pendente">Pendentes</option>
+              <option value="enviada">Enviadas</option>
+              <option value="cancelada">Dispensadas</option>
+              <option value="">Todas</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><h3>Notificações</h3><div class="card-header-sub">Confirmações de agendamento, lembretes de véspera e alertas de clientes ausentes</div></div></div>
+          <div class="nt-bulkbar" id="nt-bulkbar" style="display:none;">
+            <label class="flex items-center gap-8"><input type="checkbox" id="nt-select-all"> <span id="nt-select-count">0 selecionado(s)</span></label>
+            <button class="btn btn-sm btn-primary" id="nt-bulk-open"><i class="fa-solid fa-paper-plane"></i> Abrir WhatsApp dos selecionados</button>
+            <button class="btn btn-sm btn-ghost" id="nt-bulk-dismiss">Dispensar selecionados</button>
+          </div>
+          <div class="card-body" id="nt-list"></div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/seed.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/notificacoes-page.js"></script>
+</body>
+</html>
