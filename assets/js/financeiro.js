@@ -109,6 +109,7 @@
             '<td class="text-num">' + Utils.fmtDate(t.date) + '</td>' +
             '<td>' + Utils.escapeHtml(t.description) +
               (t.saleId ? ' <span class="chip chip-sale" data-view-sale="' + t.saleId + '" style="cursor:pointer;" title="Ver todos os itens desta venda"><i class="fa-solid fa-receipt"></i> Venda</span>' : "") +
+              (t.attachment ? ' <a href="' + t.attachment.dataUrl + '" target="_blank" rel="noopener" title="Ver comprovante anexado"><i class="fa-solid fa-paperclip"></i></a>' : "") +
               '</td>' +
             '<td>' + (cat ? '<span class="chip">' + Utils.escapeHtml(cat.name) + '</span>' : "-") + '</td>' +
             '<td>' + Utils.escapeHtml(cc ? cc.name : "-") + '</td>' +
@@ -266,11 +267,13 @@
           clients.map(function (c) { return '<option value="' + c.id + '"' + (record.clientId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Funcionário (opcional)</label><select id="m-employee"><option value="">-</option>' +
           employees.map(function (e) { return '<option value="' + e.id + '"' + (record.employeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") + '</select></div>' +
-      '</div>';
+      '</div>' +
+      Utils.attachmentFieldHtml("m", "Comprovante (opcional)");
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="m-save">Salvar Lançamento</button>';
 
     var box = Modal.open({ title: "Editar Lançamento", bodyHtml: body, footHtml: foot });
+    var mAttachment = Utils.wireAttachmentField(box, "m", record.attachment || null);
 
     function populateCatCC(curType) {
       var catSel = box.querySelector("#m-cat");
@@ -312,7 +315,8 @@
         type: type, description: desc, amount: round2(amount), date: date,
         categoryId: box.querySelector("#m-cat").value, costCenterId: box.querySelector("#m-cc").value,
         paymentMethod: box.querySelector("#m-pay").value, status: box.querySelector("#m-status").value,
-        clientId: box.querySelector("#m-client").value || null, employeeId: box.querySelector("#m-employee").value || null
+        clientId: box.querySelector("#m-client").value || null, employeeId: box.querySelector("#m-employee").value || null,
+        attachment: mAttachment.get()
       };
 
       DB.update("transactions", record.id, patch);
@@ -365,10 +369,13 @@
       '<div class="small text-muted mb-16">Adicione um ou mais itens (serviços/produtos) — cada um pode ter descrição, categoria, centro de custo, profissional e valor próprios.</div>' +
       '<div id="tm-items"></div>' +
       '<button type="button" class="btn btn-sm btn-outline" id="tm-add-item"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
-      '<div class="sale-total-bar"><span>Total do lançamento</span><span id="tm-total">R$ 0,00</span></div>';
+      '<div class="sale-total-bar"><span>Total do lançamento</span><span id="tm-total">R$ 0,00</span></div>' +
+      '<div class="divider" style="margin:14px 0;"></div>' +
+      Utils.attachmentFieldHtml("tm", "Comprovante (opcional, aplica-se a todos os itens)");
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="tm-save">Salvar Lançamento</button>';
     var box = Modal.open({ title: "Novo Lançamento", wide: true, bodyHtml: body, footHtml: foot });
+    var tmAttachment = Utils.wireAttachmentField(box, "tm");
 
     function itemRowHtml(item, idx) {
       var filteredCats = catsForType(type);
@@ -488,7 +495,8 @@
           type: type, description: it.desc.trim(), amount: amount, date: date,
           categoryId: it.categoryId, costCenterId: it.costCenterId,
           paymentMethod: pay, status: status, clientId: clientId,
-          employeeId: it.employeeId || null, reconciled: false
+          employeeId: it.employeeId || null, reconciled: false,
+          attachment: tmAttachment.get()
         };
         if (isMulti) { rec.saleId = saleId; rec.saleItemIndex = idx; }
         return rec;

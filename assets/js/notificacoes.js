@@ -20,7 +20,9 @@
   var TYPE_LABELS = {
     confirmacao: "Confirmação de Agendamento",
     lembrete: "Lembrete de Véspera",
-    inatividade: "Cliente Ausente Há Tempo"
+    inatividade: "Cliente Ausente Há Tempo",
+    avaliacao: "Pedido de Avaliação",
+    pagamento_admin: "Pagamentos do Dia (Administradores)"
   };
 
   var INACTIVE_THRESHOLD_DAYS = 45; // regra de reserva p/ cliente sem histórico suficiente p/ estimar recorrência
@@ -58,6 +60,15 @@
       }
       return "Oi, " + ctx.clientFirstName + "! Faz tempo que a gente não te vê por aqui na Guitart & Co. (" + ctx.daysSince +
         " dias desde sua última visita). Que tal marcar um novo horário? Estamos com a agenda aberta esperando por você!";
+    },
+    avaliacao: function (ctx) {
+      return "Oi, " + ctx.clientFirstName + "! Passou pela Guitart & Co. hoje para " + (ctx.serviceName || "seu atendimento") +
+        (ctx.employeeName ? " com " + ctx.employeeName : "") + " — esperamos que tenha gostado! Podemos contar com uma nota de 0 a 10 " +
+        "e, se quiser, um comentário rápido sobre o atendimento? Isso nos ajuda muito a melhorar. Obrigado 🙏";
+    },
+    pagamento_admin: function (ctx) {
+      return "*Pagamentos de hoje (" + ctx.dateLabel + ")*\n" +
+        ctx.count + " pagamento(s) recebido(s), totalizando " + ctx.totalLabel + ".";
     }
   };
 
@@ -77,6 +88,47 @@
       type: "confirmacao", refId: appt.id, clientId: client.id, appointmentId: appt.id,
       status: "pendente", createdDate: Utils.todayISO(), meta: null
     });
+  }
+
+  // Chamado pela Agenda logo após concluir um atendimento (ver
+  // concludeAppointment em assets/js/agenda.js) — enfileira um pedido de
+  // avaliação/comentário para o cliente daquele atendimento (idempotente: 1
+  // por agendamento, igual à confirmação de agendamento acima).
+  function queueReviewRequest(appt) {
+    if (!appt || appt.status !== "concluido") return null;
+    if (hasNotification("avaliacao", appt.id)) return null;
+    var client = DB.get("clients", appt.clientId);
+    if (!client) return null;
+    return DB.insert("notifications", {
+      type: "avaliacao", refId: appt.id, clientId: client.id, appointmentId: appt.id,
+      status: "pendente", createdDate: Utils.todayISO(), meta: null
+    });
+  }
+
+  // Varre os pagamentos (transações com status "pago") registrados HOJE e,
+  // se houver ao menos um, garante 1 notificação pendente por administrador
+  // ativo (idempotente por dia — refId = adminId + data). Chamado em toda
+  // página do sistema via syncAll() (mesmo padrão do lembrete de véspera),
+  // então "automático" aqui significa: assim que um Administrador abrir o
+  // sistema depois de algum pagamento do dia, a notificação já está lá.
+  function syncDailyPaymentAlerts() {
+    var today = Utils.todayISO();
+    var todaysPayments = DB.all("transactions").filter(function (t) { return t.status === "pago" && t.date === today; });
+    if (!todaysPayments.length) return 0;
+    var total = todaysPayments.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0);
+    var admins = DB.all("users").filter(function (u) { return u.role === "Administrador" && u.active !== false; });
+    var created = 0;
+    admins.forEach(function (admin) {
+      var refId = admin.id + "_" + today;
+      if (hasNotification("pagamento_admin", refId)) return;
+      DB.insert("notifications", {
+        type: "pagamento_admin", refId: refId, clientId: null, appointmentId: null, adminUserId: admin.id,
+        status: "pendente", createdDate: today,
+        meta: { date: today, count: todaysPayments.length, total: Math.round(total * 100) / 100 }
+      });
+      created++;
+    });
+    return created;
   }
 
   // Varre os agendamentos de amanhã e garante 1 lembrete de véspera por
@@ -173,7 +225,7 @@
   // pela Agenda, ao criar o agendamento). Chamado em toda página do
   // sistema, não só em Notificações — ver layout.js.
   function syncAll() {
-    return { reminders: syncDayBeforeRemindersIfDue(), inactive: syncInactiveAlerts() };
+    return { reminders: syncDayBeforeRemindersIfDue(), inactive: syncInactiveAlerts(), dailyPayments: syncDailyPaymentAlerts() };
   }
 
   function contextFor(n) {
@@ -183,12 +235,14 @@
     var employee = appt ? DB.get("employees", appt.employeeId) : null;
     return {
       clientFirstName: firstName(client ? client.name : ""),
-      dateLabel: appt ? Utils.fmtDate(appt.date) : "",
+      dateLabel: (n.meta && n.meta.date) ? Utils.fmtDate(n.meta.date) : (appt ? Utils.fmtDate(appt.date) : ""),
       time: appt ? appt.time : "",
       serviceName: service ? service.name : (n.meta && n.meta.serviceName) || "",
       employeeName: employee ? employee.name : "",
       daysSince: (n.meta && n.meta.daysSince) || "",
-      avgGap: (n.meta && n.meta.avgGap) || ""
+      avgGap: (n.meta && n.meta.avgGap) || "",
+      count: (n.meta && n.meta.count) || 0,
+      totalLabel: (n.meta && n.meta.total != null && global.Utils) ? Utils.fmtMoney(n.meta.total) : ""
     };
   }
 
@@ -197,10 +251,25 @@
     return fn ? fn(contextFor(n)) : "";
   }
 
-  function linkFor(n) {
+  // Quem deve receber esta notificação: um cliente (a maioria dos tipos) ou
+  // um usuário Administrador (tipo pagamento_admin, ver
+  // syncDailyPaymentAlerts). Centraliza aqui para a tela de Notificações não
+  // precisar saber a diferença entre os dois casos.
+  function recipientFor(n) {
+    if (n.adminUserId) {
+      var admin = DB.get("users", n.adminUserId);
+      if (!admin) return null;
+      return { name: (admin.firstName + " " + admin.lastName).trim(), phone: admin.phone, photoDataUrl: null };
+    }
     var client = DB.get("clients", n.clientId);
     if (!client) return null;
-    return waLink(client.phone, messageFor(n));
+    return { name: client.name, phone: client.phone, photoDataUrl: client.photoDataUrl };
+  }
+
+  function linkFor(n) {
+    var recipient = recipientFor(n);
+    if (!recipient) return null;
+    return waLink(recipient.phone, messageFor(n));
   }
 
   function markSent(id) {
@@ -221,12 +290,15 @@
     TYPE_LABELS: TYPE_LABELS,
     waLink: waLink,
     queueBookingConfirmation: queueBookingConfirmation,
+    queueReviewRequest: queueReviewRequest,
     syncDayBeforeReminders: syncDayBeforeReminders,
     syncDayBeforeRemindersIfDue: syncDayBeforeRemindersIfDue,
     syncInactiveAlerts: syncInactiveAlerts,
+    syncDailyPaymentAlerts: syncDailyPaymentAlerts,
     syncAll: syncAll,
     messageFor: messageFor,
     linkFor: linkFor,
+    recipientFor: recipientFor,
     markSent: markSent,
     dismiss: dismiss
   };

@@ -12,6 +12,19 @@
 
   var SESSION_KEY = "salao_erp_session";
 
+  // Bloqueia o "bfcache" do navegador (Back/Forward Cache): sem isso, ao
+  // voltar para uma aba que ficou em segundo plano — muito comum no celular,
+  // ao trocar de app e voltar, ou ao apertar "voltar" depois de sair — o
+  // navegador pode reexibir a página exatamente como ficou congelada na
+  // memória, com os dados/sessão de QUEM ESTAVA LOGADO ANTES, sem rodar o
+  // JavaScript de novo. É esse o motivo mais provável do relato "depois de
+  // entrar com um novo login preciso atualizar a página para funcionar":
+  // um recarregamento forçado aqui garante que a página sempre reflete a
+  // sessão/dados atuais assim que volta a ficar visível.
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) location.reload();
+  });
+
   var CurrentUser = {
     get: function () {
       try {

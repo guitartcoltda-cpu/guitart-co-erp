@@ -107,13 +107,20 @@
     lines.push("*Resumo de Comissões — " + data.monthLabel + "*");
     lines.push("Data de corte: " + Utils.fmtDate(data.cutoff));
     lines.push("");
-    var total = 0;
+    var total = 0, totalReceita = 0;
     data.rows.forEach(function (r) {
-      lines.push("• " + r.employee.name + ": " + Utils.fmtMoney(r.devido));
+      // A pedido do cliente: além do valor da comissão, mostra a receita de
+      // serviços gerada pelo profissional e o percentual proporcional que a
+      // comissão representa sobre essa receita (mesma informação que já
+      // aparece na tabela da tela, só que resumida para o texto do WhatsApp).
+      var pct = r.serviceRevenue > 0 ? round2((r.devido / r.serviceRevenue) * 100) : 0;
+      lines.push("• " + r.employee.name + ": Receita gerada " + Utils.fmtMoney(r.serviceRevenue) + " · Comissão " + Utils.fmtMoney(r.devido) + " (" + pct + "% da receita)");
       total += r.devido;
+      totalReceita += r.serviceRevenue;
     });
     lines.push("");
-    lines.push("Total: " + Utils.fmtMoney(total));
+    lines.push("Receita total de serviços: " + Utils.fmtMoney(totalReceita));
+    lines.push("Total de comissões: " + Utils.fmtMoney(total));
     return lines.join("\n");
   }
 
@@ -207,7 +214,8 @@
       kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#2a78d6", "#e3eefb"),
       kpi("Comissão Paga", Utils.fmtMoney(totalPago), "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Saldo em Aberto", Utils.fmtMoney(totalAberto), "fa-hourglass-half", "#b7791f", "#fdf2df"),
-      kpi("Profissionais Comissionados", String(rows.length), "fa-users", "#4a3aa7", "#ece8f8")
+      kpi("Profissionais Comissionados", String(rows.length), "fa-users", "#4a3aa7", "#ece8f8"),
+      kpi("Descontos de Comissionamento Esporádico", Utils.fmtMoney(sporadicDiscountTotal()), "fa-scissors", "#c23b3b", "#fbe6e6")
     ].join("");
 
     Charts.bar({
@@ -609,9 +617,11 @@
       '<div class="form-field"><label>Valor a Pagar (R$)</label><input type="number" step="0.01" id="pay-amount" value="' + row.saldo + '"></div>' +
       '<div class="form-field"><label>Data do Pagamento</label><input type="date" id="pay-date" value="' + Utils.todayISO() + '"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="pay-method"><option>Transferência</option><option>Pix</option><option>Dinheiro</option></select></div>' +
-      '</div>';
+      '</div>' +
+      Utils.attachmentFieldHtml("pay", "Comprovante de Pagamento (opcional)");
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="pay-save">Confirmar Pagamento</button>';
     var box = Modal.open({ title: "Registrar Pagamento de Comissão", bodyHtml: body, footHtml: foot });
+    var payAttachment = Utils.wireAttachmentField(box, "pay");
     box.querySelector("#pay-save").addEventListener("click", function () {
       var amount = parseFloat(box.querySelector("#pay-amount").value);
       if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
@@ -620,13 +630,25 @@
         amount: round2(amount), date: box.querySelector("#pay-date").value, categoryId: commissionCatId(),
         costCenterId: DB.findOne("costCenters", function (c) { return c.key === "rh"; }) ? DB.findOne("costCenters", function (c) { return c.key === "rh"; }).id : null,
         paymentMethod: box.querySelector("#pay-method").value, status: "pago", employeeId: row.employee.id,
-        relatedMonth: selectedMonth, reconciled: false
+        relatedMonth: selectedMonth, reconciled: false,
+        attachment: payAttachment.get()
       });
       DB.log("Comissão", "Registrou pagamento de comissão de " + row.employee.name + " — " + Utils.fmtMoney(amount) + " (ref. " + Utils.monthLabel(selectedMonth + "-01") + ")");
       Modal.close();
       Toast.show("Pagamento de comissão registrado", "success");
       render();
     });
+  }
+
+  // Soma, em módulo, todos os lançamentos de "Desconto / dedução" (valor
+  // negativo em commissionBonuses) do mês selecionado, de todos os
+  // profissionais — separado do desconto automático de consumo interno
+  // (esse é recorrente/operacional, não "esporádico"). Ver openBonusModal.
+  function sporadicDiscountTotal() {
+    var total = DB.all("commissionBonuses")
+      .filter(function (b) { return b.month === selectedMonth && b.amount < 0; })
+      .reduce(function (s, b) { return s + b.amount; }, 0);
+    return round2(Math.abs(total));
   }
 
   function kpi(label, value, icon, color, bg) {

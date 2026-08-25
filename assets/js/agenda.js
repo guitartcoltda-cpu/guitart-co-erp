@@ -56,10 +56,14 @@
       }
       render();
     });
-    Utils.qs("#btn-prev-week").addEventListener("click", function () { selectedDate = Utils.addDays(selectedDate, -7); render(); });
-    Utils.qs("#btn-next-week").addEventListener("click", function () { selectedDate = Utils.addDays(selectedDate, 7); render(); });
-    Utils.qs("#btn-prev-month").addEventListener("click", function () { selectedDate = Utils.addMonths(selectedDate, -1); render(); });
-    Utils.qs("#btn-next-month").addEventListener("click", function () { selectedDate = Utils.addMonths(selectedDate, 1); render(); });
+    // Navegação principal da Visão do Dia é dia a dia (setas simples); as
+    // setas duplas pulam uma semana inteira, mantendo um atalho rápido sem
+    // voltar a ser a navegação padrão (a pedido do cliente: "passando dia
+    // após dia, não por semana").
+    Utils.qs("#btn-prev-week").addEventListener("click", function () { selectedDate = Utils.addDays(selectedDate, -1); render(); });
+    Utils.qs("#btn-next-week").addEventListener("click", function () { selectedDate = Utils.addDays(selectedDate, 1); render(); });
+    Utils.qs("#btn-prev-month").addEventListener("click", function () { selectedDate = Utils.addDays(selectedDate, -7); render(); });
+    Utils.qs("#btn-next-month").addEventListener("click", function () { selectedDate = Utils.addDays(selectedDate, 7); render(); });
     Utils.qs("#btn-new-appt").addEventListener("click", function () { openApptModal(null); });
     var occBtn = Utils.qs("#btn-new-occurrence");
     if (occBtn) occBtn.addEventListener("click", function () { openOccurrenceModal({ date: selectedDate }); });
@@ -159,9 +163,11 @@
     if (filterNote) {
       filterNote.textContent = hasFilter ? "Filtro ativo — os números acima também refletem o filtro selecionado." : "";
     }
-    var weLabel = Utils.parseDate(ws).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + " – " +
-      Utils.parseDate(Utils.addDays(ws, 6)).toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
-    document.getElementById("week-label").textContent = weLabel;
+    // O rótulo central mostra o dia selecionado (navegação é dia a dia); a
+    // faixa de dias abaixo continua mostrando a semana como referência
+    // rápida para pular para outro dia sem sair da visão do dia.
+    var dayLabel = Utils.parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+    document.getElementById("week-label").textContent = dayLabel;
 
     document.getElementById("day-title").textContent = "Agendamentos — " + Utils.parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
 
@@ -365,7 +371,7 @@
     var top = Math.round((startMin - GRID_START_MIN) * PX_PER_MIN);
     var height = Math.max(Math.round((endMin - startMin) * PX_PER_MIN), 24);
     return '<div class="cal-occ-block" style="top:' + top + 'px;height:' + height + 'px;" data-occ-id="' + o.id + '">' +
-      '<div class="cb-time">' + o.startTime + '–' + o.endTime + '</div>' +
+      '<div class="cb-time">' + o.startTime + '–' + o.endTime + (o.attachment ? ' <i class="fa-solid fa-paperclip" title="Com anexo"></i>' : '') + '</div>' +
       '<div class="cb-title"><i class="fa-solid fa-ban"></i> ' + Utils.escapeHtml(o.type || "Ausência") + '</div>' +
       (o.note ? '<div class="cb-meta">' + Utils.escapeHtml(o.note) + '</div>' : '') +
     '</div>';
@@ -433,10 +439,45 @@
       '<div class="form-field"><label>Início</label><input type="time" id="om-start" value="' + defaultStart + '"></div>' +
       '<div class="form-field"><label>Fim</label><input type="time" id="om-end" value="' + defaultEnd + '"></div>' +
       '<div class="form-field full"><label>Observações</label><textarea id="om-note" rows="3" placeholder="Ex.: Dentista, consulta médica...">' + (o && o.note ? Utils.escapeHtml(o.note) : "") + '</textarea></div>' +
+      '</div>' +
+      '<div class="divider" style="margin:14px 0;"></div>' +
+      '<div class="form-field full">' +
+        '<label>Anexo (atestado médico, comprovante etc.)</label>' +
+        '<div id="om-attach-preview" style="margin-bottom:8px;"></div>' +
+        '<label class="btn btn-sm btn-outline" style="cursor:pointer;">Anexar arquivo<input type="file" id="om-attach-input" accept="image/*,application/pdf" style="display:none;"></label>' +
+        ' <button type="button" class="btn btn-sm btn-ghost" id="om-attach-remove" style="display:none;">Remover anexo</button>' +
+        '<div class="small text-muted mt-8">Foto ou PDF do atestado médico, comprovante de conta ou outro documento que justifique a ocorrência. Tamanho máximo: 4MB.</div>' +
       '</div>';
     var delBtn = o ? '<button class="btn btn-ghost" id="om-delete" style="color:var(--color-danger);">Excluir</button>' : "";
     var foot = delBtn + '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="om-save">Salvar Ocorrência</button>';
     var box = Modal.open({ title: o ? "Editar Ocorrência" : "Registrar Ocorrência", bodyHtml: body, footHtml: foot });
+
+    var attachment = o && o.attachment ? o.attachment : null;
+    function renderAttachPreview() {
+      var el = box.querySelector("#om-attach-preview");
+      var removeBtn = box.querySelector("#om-attach-remove");
+      if (!attachment) { el.innerHTML = ""; removeBtn.style.display = "none"; return; }
+      var isImg = (attachment.type || "").indexOf("image/") === 0;
+      el.innerHTML = isImg
+        ? '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><img src="' + attachment.dataUrl + '" alt="Anexo" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);"></a>'
+        : '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> ' + Utils.escapeHtml(attachment.name) + '</a>';
+      removeBtn.style.display = "";
+    }
+    renderAttachPreview();
+    box.querySelector("#om-attach-input").addEventListener("change", function (ev) {
+      var file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      Utils.fileToAttachmentDataUrl(file, 4 * 1024 * 1024, function (result) {
+        if (!result) { Toast.show("Não foi possível carregar esse arquivo", "danger"); return; }
+        if (result.error === "toolarge") { Toast.show("Arquivo muito grande (máximo 4MB)", "danger"); return; }
+        attachment = result;
+        renderAttachPreview();
+      });
+    });
+    box.querySelector("#om-attach-remove").addEventListener("click", function () {
+      attachment = null;
+      renderAttachPreview();
+    });
 
     if (o) {
       box.querySelector("#om-delete").addEventListener("click", function () {
@@ -459,7 +500,8 @@
         type: box.querySelector("#om-type").value,
         startTime: box.querySelector("#om-start").value,
         endTime: box.querySelector("#om-end").value,
-        note: box.querySelector("#om-note").value.trim()
+        note: box.querySelector("#om-note").value.trim(),
+        attachment: attachment
       };
       if (!patch.date || !patch.startTime || !patch.endTime) { Toast.show("Informe data, início e fim", "danger"); return; }
       if (patch.endTime <= patch.startTime) { Toast.show("O horário de fim deve ser depois do início", "danger"); return; }
@@ -597,6 +639,10 @@
       });
 
       DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name + " (" + Utils.fmtMoney(amount) + ")" + (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
+      // Enfileira o pedido de avaliação por WhatsApp (envio manual, mesmo
+      // fluxo da confirmação de agendamento) — a pedido do cliente, toda
+      // conclusão de atendimento deve gerar esse pedido para o cliente.
+      if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", appt.id));
       Modal.close();
       Toast.show("Atendimento concluído e lançamento financeiro gerado", "success");
       render();
@@ -690,26 +736,76 @@
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
     var box = Modal.open({ title: a ? "Editar Agendamento" : "Novo Agendamento", wide: true, bodyHtml: body, footHtml: foot });
 
+    // Preenche o campo de comissão do profissional automaticamente com a
+    // taxa padrão cadastrada no funcionário (Funcionários → Comissão), sem
+    // travar a edição manual: só atualiza o campo se ele ainda não tiver
+    // sido alterado à mão pelo usuário (compara com o último valor que a
+    // própria função preencheu, guardado em data-auto-value).
+    function updateDefaultCommission() {
+      var commInput = box.querySelector("#am-comm-pct");
+      if (!commInput || a) return; // em edição de um agendamento existente não sobrescreve o valor já salvo
+      var empSel = box.querySelector("#am-employee");
+      var emp = empSel && empSel.value ? DB.get("employees", empSel.value) : null;
+      var autoVal = emp && emp.commissionRate != null ? String(emp.commissionRate) : "";
+      var lastAuto = commInput.getAttribute("data-auto-value") || "";
+      if (commInput.value === "" || commInput.value === lastAuto) {
+        commInput.value = autoVal;
+        commInput.setAttribute("data-auto-value", autoVal);
+      }
+    }
+
     function fillEmployeesFor(group) {
       var empSel = box.querySelector("#am-employee");
       var cands = employees.filter(function (e) { return ROLE_GROUP[e.role] === group; });
       var presetEmployeeId = a ? a.employeeId : presets.employeeId;
-      empSel.innerHTML = cands.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("");
+      empSel.innerHTML = cands.length
+        ? cands.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("")
+        : '<option value="">Nenhum profissional cadastrado para este serviço</option>';
+      updateDefaultCommission();
     }
     var serviceSel = box.querySelector("#am-service");
-    var initialGroup = serviceSel.options[serviceSel.selectedIndex] ? serviceSel.options[serviceSel.selectedIndex].getAttribute("data-group") : "Cabelo";
+    var initialOpt = serviceSel.options[serviceSel.selectedIndex];
+    var initialGroup = initialOpt ? initialOpt.getAttribute("data-group") : "Cabelo";
     fillEmployeesFor(initialGroup);
-    if (!a) box.querySelector("#am-price").value = serviceSel.options[serviceSel.selectedIndex].getAttribute("data-price");
+    // Sem nenhum serviço cadastrado (Configurações → Serviços) o <select> de
+    // Serviço fica vazio e não há opção selecionada — nada para preencher.
+    if (!a && initialOpt) box.querySelector("#am-price").value = initialOpt.getAttribute("data-price");
+    if (!a && !services.length) {
+      Toast.show("Nenhum serviço cadastrado ainda. Cadastre serviços em Configurações antes de criar agendamentos.", "danger");
+    }
 
     serviceSel.addEventListener("change", function () {
       var opt = serviceSel.options[serviceSel.selectedIndex];
+      if (!opt) return;
       fillEmployeesFor(opt.getAttribute("data-group"));
       box.querySelector("#am-price").value = opt.getAttribute("data-price");
     });
 
+    box.querySelector("#am-employee").addEventListener("change", updateDefaultCommission);
+
     box.querySelector("#am-has-assistant").addEventListener("change", function (e) {
       box.querySelector("#am-assistant-fields").style.display = e.target.checked ? "grid" : "none";
+      if (e.target.checked) updateDefaultAssistantCommission();
     });
+
+    // Mesma lógica de auto-preenchimento do campo do profissional, aplicada
+    // à comissão do assistente: usa a taxa cadastrada no funcionário
+    // escolhido como assistente, com 10% como valor de referência quando o
+    // funcionário não tem taxa própria definida.
+    function updateDefaultAssistantCommission() {
+      var pctInput = box.querySelector("#am-assistant-pct");
+      if (!pctInput || a) return;
+      var asstSel = box.querySelector("#am-assistant");
+      var asst = asstSel && asstSel.value ? DB.get("employees", asstSel.value) : null;
+      var autoVal = asst && asst.commissionRate != null ? String(asst.commissionRate) : "10";
+      var lastAuto = pctInput.getAttribute("data-auto-value") || "10";
+      if (pctInput.value === "" || pctInput.value === lastAuto) {
+        pctInput.value = autoVal;
+        pctInput.setAttribute("data-auto-value", autoVal);
+      }
+    }
+    var asstSelEl = box.querySelector("#am-assistant");
+    if (asstSelEl) asstSelEl.addEventListener("change", updateDefaultAssistantCommission);
 
     var newClientBtn = box.querySelector("#am-new-client");
     var newClientPanel = box.querySelector("#am-new-client-panel");
@@ -870,7 +966,12 @@
       // Enfileira a notificação de confirmação por WhatsApp (envio manual,
       // ver assets/js/notificacoes.js) — idempotente por agendamento, então
       // não duplica se o usuário só editar um agendamento já confirmado.
-      if (window.Notificacoes) Notificacoes.queueBookingConfirmation(savedAppt);
+      if (window.Notificacoes) {
+        Notificacoes.queueBookingConfirmation(savedAppt);
+        // Cobre também o caso de marcar "Concluído" direto pelo status deste
+        // formulário (fora do fluxo dedicado de concludeAppointment acima).
+        Notificacoes.queueReviewRequest(savedAppt);
+      }
       Modal.close();
       selectedDate = patch.date;
       render();

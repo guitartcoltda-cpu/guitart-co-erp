@@ -17,10 +17,10 @@
   }
 
   function init() {
+    // A pedido do cliente, a tela de login não exibe nenhuma orientação de
+    // acesso (nem o texto de demo offline, nem a dica de primeiro acesso).
     var hintEl = document.querySelector(".login-hint");
-    if (hintEl && DB.ONLINE_MODE) {
-      hintEl.innerHTML = 'Primeiro acesso? Use CPF <strong>000.000.000-00</strong>, senha <strong>123456</strong> (administrador). Novos acessos podem ser criados em Configurações → Acessos.';
-    }
+    if (hintEl) hintEl.remove();
 
     // Seed the database (if needed) BEFORE any authentication happens on
     // this page. Seed.run() calls DB.resetAll() internally, which wipes

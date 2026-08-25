@@ -324,6 +324,77 @@
       };
       reader.onerror = function () { callback(null); };
       reader.readAsDataURL(file);
+    },
+
+    // Reads ANY file (PDF, foto de atestado, comprovante etc.) as base64 e
+    // devolve um objeto { name, type, size, dataUrl } via callback(obj|null).
+    // Usado para anexos que não são a foto de perfil de alguém (ver
+    // fileToAvatarDataUrl acima) — ex.: anexo de ocorrência (atestado
+    // médico) e comprovante de pagamento. Como este sistema não tem um
+    // servidor de arquivos próprio (tudo mora dentro do blob JSON da
+    // tabela, no Supabase), limita o tamanho para não pesar demais a
+    // sincronização — arquivos maiores devem ser compactados/fotografados
+    // com menor resolução antes de anexar.
+    fileToAttachmentDataUrl: function (file, maxBytes, callback) {
+      maxBytes = maxBytes || 4 * 1024 * 1024; // 4MB
+      if (!file) { callback(null); return; }
+      if (file.size > maxBytes) {
+        callback({ error: "toolarge", maxBytes: maxBytes });
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function (ev) {
+        callback({ name: file.name, type: file.type || "application/octet-stream", size: file.size, dataUrl: ev.target.result });
+      };
+      reader.onerror = function () { callback(null); };
+      reader.readAsDataURL(file);
+    },
+
+    // ---- Campo de anexo genérico (comprovante de pagamento etc.) ----
+    // Gera o HTML de um campo "Anexar arquivo" com preview, e devolve (via
+    // Utils.wireAttachmentField) um objeto { get(), set(val) } para ler/
+    // definir o anexo atual — usado em qualquer modal que precise anexar um
+    // comprovante (pagamento de comissão, lançamento financeiro etc.), sem
+    // duplicar essa lógica em cada tela.
+    attachmentFieldHtml: function (idPrefix, label) {
+      return '<div class="form-field full">' +
+        '<label>' + (label || "Comprovante (opcional)") + '</label>' +
+        '<div id="' + idPrefix + '-attach-preview" style="margin-bottom:8px;"></div>' +
+        '<label class="btn btn-sm btn-outline" style="cursor:pointer;">Anexar arquivo<input type="file" id="' + idPrefix + '-attach-input" accept="image/*,application/pdf" style="display:none;"></label>' +
+        ' <button type="button" class="btn btn-sm btn-ghost" id="' + idPrefix + '-attach-remove" style="display:none;">Remover anexo</button>' +
+        '<div class="small text-muted mt-8">Foto ou PDF do comprovante. Tamanho máximo: 4MB.</div>' +
+        '</div>';
+    },
+    wireAttachmentField: function (box, idPrefix, existing) {
+      var attachment = existing || null;
+      var previewEl = box.querySelector("#" + idPrefix + "-attach-preview");
+      var removeBtn = box.querySelector("#" + idPrefix + "-attach-remove");
+      var inputEl = box.querySelector("#" + idPrefix + "-attach-input");
+      function renderPreview() {
+        if (!attachment) { previewEl.innerHTML = ""; removeBtn.style.display = "none"; return; }
+        var isImg = (attachment.type || "").indexOf("image/") === 0;
+        previewEl.innerHTML = isImg
+          ? '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><img src="' + attachment.dataUrl + '" alt="Anexo" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);"></a>'
+          : '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> ' + global.Utils.escapeHtml(attachment.name) + '</a>';
+        removeBtn.style.display = "";
+      }
+      renderPreview();
+      if (inputEl) {
+        inputEl.addEventListener("change", function (ev) {
+          var file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          global.Utils.fileToAttachmentDataUrl(file, 4 * 1024 * 1024, function (result) {
+            if (!result) { global.Toast.show("Não foi possível carregar esse arquivo", "danger"); return; }
+            if (result.error === "toolarge") { global.Toast.show("Arquivo muito grande (máximo 4MB)", "danger"); return; }
+            attachment = result;
+            renderPreview();
+          });
+        });
+      }
+      if (removeBtn) {
+        removeBtn.addEventListener("click", function () { attachment = null; renderPreview(); });
+      }
+      return { get: function () { return attachment; }, set: function (val) { attachment = val; renderPreview(); } };
     }
   };
 
@@ -372,12 +443,18 @@
       this._overlay = overlay;
       if (opts.onMount) opts.onMount(box);
       document.addEventListener("keydown", Modal._escHandler);
+      // Trava o scroll da página por trás enquanto o modal está aberto —
+      // sem isso, no celular, rolar até o fim do formulário do modal e
+      // continuar arrastando "vaza" o gesto para a página de baixo, dando
+      // a sensação de bug ao rolar a tela.
+      document.body.classList.add("modal-open-lock");
       return box;
     },
     close: function () {
       var ex = document.getElementById("active-modal-overlay");
       if (ex) ex.remove();
       document.removeEventListener("keydown", Modal._escHandler);
+      document.body.classList.remove("modal-open-lock");
     },
     _escHandler: function (e) { if (e.key === "Escape") Modal.close(); },
     confirm: function (opts) {

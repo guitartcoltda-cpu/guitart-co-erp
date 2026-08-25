@@ -67,20 +67,23 @@
         navHtml += '<li class="sidebar-section-label">' + item.section + '</li>';
       } else {
         var active = item.page === activePage ? " active" : "";
-        navHtml += '<li><a href="' + item.href + '" class="' + active.trim() + '">' +
+        navHtml += '<li><a href="' + item.href + '" class="' + active.trim() + '" title="' + item.label + '">' +
           '<span class="nav-icon"><i class="fa-solid ' + item.icon + '"></i></span>' +
           '<span>' + item.label + '</span></a></li>';
       }
     });
     navHtml += '</ul>';
 
-    var footHtml =
-      '<div class="sidebar-foot">' +
-        '<div>Ambiente de testes (offline)</div>' +
-        '<div style="opacity:.7;margin-top:2px;">Dados 100% fictícios</div>' +
-      '</div>';
+    // Mesmo cuidado do banner do Dashboard e da tela de login: nunca dar a
+    // entender que os dados são fictícios/de teste quando o sistema está de
+    // fato ligado ao banco de produção (Supabase).
+    var footHtml = (global.DB && DB.ONLINE_MODE)
+      ? '<div class="sidebar-foot"><div>Sistema em produção</div><div style="opacity:.7;margin-top:2px;">Dados reais e compartilhados</div></div>'
+      : '<div class="sidebar-foot"><div>Ambiente de testes (offline)</div><div style="opacity:.7;margin-top:2px;">Dados 100% fictícios</div></div>';
 
-    return '<aside class="sidebar" id="app-sidebar">' + brandHtml + navHtml + footHtml + '</aside>';
+    var collapseToggleHtml = '<button type="button" class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" title="Recolher/expandir menu"><i class="fa-solid fa-chevron-left"></i></button>';
+
+    return '<aside class="sidebar" id="app-sidebar">' + collapseToggleHtml + brandHtml + navHtml + footHtml + '</aside>';
   }
 
   function buildTopbar(meta) {
@@ -164,6 +167,21 @@
       a.addEventListener("click", closeSidebar);
     });
 
+    // Menu lateral recolhível (desktop): lembra a preferência do usuário
+    // neste navegador via localStorage, para o menu ficar do jeito que ele
+    // deixou da última vez ("mostrar somente se quisermos").
+    var COLLAPSE_KEY = "salao_erp_sidebar_collapsed";
+    var collapseToggle = document.getElementById("sidebar-collapse-toggle");
+    try {
+      if (localStorage.getItem(COLLAPSE_KEY) === "1") document.body.classList.add("sidebar-collapsed");
+    } catch (e) {}
+    if (collapseToggle) {
+      collapseToggle.addEventListener("click", function () {
+        var collapsed = document.body.classList.toggle("sidebar-collapsed");
+        try { localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (e) {}
+      });
+    }
+
     var toggle = document.getElementById("mobile-nav-toggle");
     if (toggle) {
       var mq = window.matchMedia("(max-width: 900px)");
@@ -182,8 +200,7 @@
     // Em modo online (Supabase), o banco é compartilhado por todo mundo —
     // nunca gera dados fictícios/reseta automaticamente aqui, senão o
     // primeiro aparelho novo a abrir o sistema apagaria os dados reais de
-    // todo mundo. A geração de dados fictícios continua disponível como
-    // ação manual e explícita em Configurações → Zona de Risco.
+    // todo mundo.
     if (DB.ONLINE_MODE) return;
     var seeded = DB.getSeedVersion();
     if (seeded !== DB.CURRENT_SEED_VERSION) {

@@ -80,6 +80,8 @@
       kpi("Confirmações", String(pendentes.filter(function (n) { return n.type === "confirmacao"; }).length), "fa-calendar-check", "#2a78d6", "#e3eefb"),
       kpi("Lembretes de Véspera", String(pendentes.filter(function (n) { return n.type === "lembrete"; }).length), "fa-bell", "#b7791f", "#fdf2df"),
       kpi("Clientes Ausentes", String(pendentes.filter(function (n) { return n.type === "inatividade"; }).length), "fa-user-clock", "#c23b3b", "#fbe6e6"),
+      kpi("Pedidos de Avaliação", String(pendentes.filter(function (n) { return n.type === "avaliacao"; }).length), "fa-star", "#b8923f", "#f6ecd3"),
+      kpi("Pagamentos do Dia", String(pendentes.filter(function (n) { return n.type === "pagamento_admin"; }).length), "fa-sack-dollar", "#1baf7a", "#e2f5ec"),
       kpi("Já Enviadas", String(all.filter(function (n) { return n.status === "enviada"; }).length), "fa-circle-check", "#1baf7a", "#e2f5ec")
     ].join("");
 
@@ -99,7 +101,7 @@
     Object.keys(selected).forEach(function (id) { if (!pendingIds[id]) delete selected[id]; });
 
     listEl.innerHTML = items.map(function (n) {
-      var client = DB.get("clients", n.clientId);
+      var recipient = Notificacoes.recipientFor(n);
       var message = Notificacoes.messageFor(n);
       var link = Notificacoes.linkFor(n);
       var statusBadge = n.status === "pendente" ? '<span class="badge badge-warning">Pendente</span>' :
@@ -116,9 +118,9 @@
       return '<div class="nt-row">' +
         '<div class="nt-row-main">' +
           checkboxHtml +
-          Utils.avatarHtml(client ? client.name : "?", client ? client.photoDataUrl : null) +
+          Utils.avatarHtml(recipient ? recipient.name : "?", recipient ? recipient.photoDataUrl : null) +
           '<div style="min-width:0;">' +
-            '<div class="flex items-center gap-8"><span class="font-bold">' + Utils.escapeHtml(client ? client.name : "Cliente removido") + '</span>' +
+            '<div class="flex items-center gap-8"><span class="font-bold">' + Utils.escapeHtml(recipient ? recipient.name : "Destinatário removido") + '</span>' +
               '<span class="nt-type-badge nt-type-' + n.type + '">' + (Notificacoes.TYPE_LABELS[n.type] || n.type) + '</span></div>' +
             '<div class="nt-msg-preview" title="' + Utils.escapeHtml(message) + '">' + Utils.escapeHtml(message) + '</div>' +
           '</div>' +
@@ -168,20 +170,20 @@
   function openDetailsModal(id) {
     var n = DB.get("notifications", id);
     if (!n) return;
-    var client = DB.get("clients", n.clientId);
+    var recipient = Notificacoes.recipientFor(n);
     var message = Notificacoes.messageFor(n);
     var link = Notificacoes.linkFor(n);
     var statusLabel = n.status === "pendente" ? "Pendente" : n.status === "enviada" ? "Enviada" : "Dispensada";
     var body =
       '<div class="flex items-center gap-8 mb-16">' +
-        Utils.avatarHtml(client ? client.name : "?", client ? client.photoDataUrl : null) +
+        Utils.avatarHtml(recipient ? recipient.name : "?", recipient ? recipient.photoDataUrl : null) +
         '<div>' +
-          '<div class="font-bold">' + Utils.escapeHtml(client ? client.name : "Cliente removido") + '</div>' +
+          '<div class="font-bold">' + Utils.escapeHtml(recipient ? recipient.name : "Destinatário removido") + '</div>' +
           '<div class="small text-muted">' + (Notificacoes.TYPE_LABELS[n.type] || n.type) + ' · ' + statusLabel + ' · ' + Utils.fmtDate(n.createdDate) + '</div>' +
         '</div>' +
       '</div>' +
       '<div class="nt-detail-msg">' + Utils.escapeHtml(message) + '</div>' +
-      (client && client.phone ? '<div class="small text-muted mt-8">Telefone: ' + Utils.escapeHtml(client.phone) + '</div>' : '<div class="small text-danger mt-8">Cliente sem telefone cadastrado — não é possível montar o link do WhatsApp.</div>');
+      (recipient && recipient.phone ? '<div class="small text-muted mt-8">Telefone: ' + Utils.escapeHtml(recipient.phone) + '</div>' : '<div class="small text-danger mt-8">Sem telefone cadastrado — não é possível montar o link do WhatsApp.</div>');
     var foot = '<button class="btn btn-secondary" data-close-modal>Fechar</button>';
     if (n.status === "pendente") {
       if (link) foot += '<a class="btn btn-primary" target="_blank" rel="noopener" href="' + link + '" id="ntd-open">Abrir WhatsApp</a>';

@@ -58,23 +58,6 @@
       e.target.value = "";
     });
 
-    Utils.qs("#btn-reset-data").addEventListener("click", function () {
-      Modal.confirm({
-        title: "Restaurar dados fictícios",
-        message: DB.ONLINE_MODE
-          ? "Isso apagará TODOS os dados atuais DE TODO O SISTEMA (de todos os usuários e aparelhos, não só deste computador) e gerará um novo conjunto de dados fictícios. Deseja continuar?"
-          : "Isso apagará TODOS os dados atuais (incluindo alterações manuais) e gerará um novo conjunto de dados fictícios. Deseja continuar?",
-        danger: true,
-        onConfirm: function () {
-          Seed.run();
-          DB.setSeedVersion();
-          DB.log("Backup", "Restaurou os dados fictícios (todos os dados anteriores foram substituídos)");
-          Toast.show("Dados fictícios recriados. Recarregando...", "success");
-          setTimeout(function () { location.reload(); }, 900);
-        }
-      });
-    });
-
     Utils.qs("#btn-new-user").addEventListener("click", function () { openUserModal(null); });
 
     Utils.qs("#log-search").addEventListener("input", Utils.debounce(function () { renderLog(); }, 250));
