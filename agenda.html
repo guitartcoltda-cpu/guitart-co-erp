@@ -35,7 +35,7 @@
   .ag-general-date { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: var(--gray-500); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color); }
 
   /* Visão do Dia — calendário em grade (colunas = profissionais, linhas = horário) */
-  .cal-scroll { overflow: auto; max-height: 680px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; }
+  .cal-scroll { overflow: auto; overscroll-behavior: contain; max-height: 680px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; }
   .cal-grid-inner { display: grid; min-width: 100%; width: max-content; }
   .cal-corner { position: sticky; top: 0; left: 0; z-index: 3; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
   .cal-col-header { position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); padding: 10px 6px; text-align: center; }
@@ -86,13 +86,13 @@
         <div id="ag-day-nav">
           <div class="flex items-center justify-between mb-16" style="gap:10px;flex-wrap:wrap;">
             <div class="flex items-center gap-6">
-              <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Mês anterior"><i class="fa-solid fa-angles-left"></i></button>
-              <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Semana anterior"><i class="fa-solid fa-chevron-left"></i></button>
+              <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Semana anterior"><i class="fa-solid fa-angles-left"></i></button>
+              <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>
             </div>
             <h3 id="week-label" style="font-size:14px;"></h3>
             <div class="flex items-center gap-6">
-              <button class="btn btn-icon btn-secondary" id="btn-next-week" title="Próxima semana"><i class="fa-solid fa-chevron-right"></i></button>
-              <button class="btn btn-icon btn-secondary" id="btn-next-month" title="Próximo mês"><i class="fa-solid fa-angles-right"></i></button>
+              <button class="btn btn-icon btn-secondary" id="btn-next-week" title="Próximo dia"><i class="fa-solid fa-chevron-right"></i></button>
+              <button class="btn btn-icon btn-secondary" id="btn-next-month" title="Próxima semana"><i class="fa-solid fa-angles-right"></i></button>
             </div>
           </div>
           <div class="week-strip" id="week-strip"></div>

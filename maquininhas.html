@@ -27,6 +27,17 @@
   }
   .mq-estimate-note i { color: var(--color-primary); margin-top: 2px; }
   .mq-sim-select { max-width: 260px; }
+  /* Aba de Conciliação de Maquininhas — mesmo padrão visual da Conciliação Bancária */
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare-table th, .compare-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+  .compare-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--gray-500); font-weight: 700; }
+  .compare-table td.compare-label { color: var(--gray-500); font-weight: 600; white-space: nowrap; }
+  .compare-table tr.compare-diff-row td { background: var(--gray-50); }
+  .compare-review-table td { vertical-align: top; }
+  .compare-review-table .ri-desc { font-weight: 600; }
+  .compare-review-table .ri-meta { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
+  .mqr-upload-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .mqr-upload-cols { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body data-page="maquininhas">
@@ -39,41 +50,103 @@
         <div class="toolbar">
           <div class="toolbar-title">
             <h2>Maquininhas</h2>
-            <p>Taxas de cartão/Pix e estimativa do custo pago às operadoras</p>
+            <p>Taxas de cartão/Pix, estimativa do custo pago às operadoras e conciliação do slip com o extrato</p>
           </div>
           <div class="toolbar-actions">
             <button class="btn btn-primary" id="btn-new-mq"><i class="fa-solid fa-plus"></i> Nova Maquininha</button>
           </div>
         </div>
 
-        <div id="mq-period-filter"></div>
+        <div class="tabs" id="mq-main-tabs" style="margin-bottom:16px;">
+          <button type="button" class="tab-btn active" data-mtab="cadastro">Cadastro e Taxas</button>
+          <button type="button" class="tab-btn" data-mtab="conciliacao">Conciliação de Lançamentos</button>
+        </div>
 
-        <div class="filters-bar">
-          <div class="form-field mq-sim-select">
-            <label>Simular com a maquininha</label>
-            <select id="mq-sim"></select>
+        <div id="mq-tab-cadastro">
+          <div id="mq-period-filter"></div>
+
+          <div class="filters-bar">
+            <div class="form-field mq-sim-select">
+              <label>Simular com a maquininha</label>
+              <select id="mq-sim"></select>
+            </div>
+          </div>
+
+          <div class="mq-estimate-note">
+            <i class="fa-solid fa-circle-info"></i>
+            <div>
+              <strong>Estimativa.</strong> As vendas registradas no sistema ainda não indicam qual maquininha foi usada em cada transação.
+              Os valores de taxa abaixo são calculados aplicando a taxa cadastrada da maquininha selecionada (ou a média das ativas)
+              sobre a receita recebida por cartão/Pix no período — não são o extrato exato da operadora.
+            </div>
+          </div>
+
+          <div class="kpi-grid" id="mq-summary" style="margin-bottom:16px;"></div>
+
+          <div class="card mb-16">
+            <div class="card-header"><div><h3>Receita x Taxa Estimada por Forma de Pagamento</h3><div class="card-header-sub">Crédito, débito e Pix — período selecionado</div></div></div>
+            <div class="card-body"><div id="chart-mq-pay"></div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><div><h3>Maquininhas Cadastradas</h3><div class="card-header-sub" id="mq-count-sub"></div></div></div>
+            <div class="table-wrap"><table class="data-table" id="tbl-mq"></table></div>
           </div>
         </div>
 
-        <div class="mq-estimate-note">
-          <i class="fa-solid fa-circle-info"></i>
-          <div>
-            <strong>Estimativa.</strong> As vendas registradas no sistema ainda não indicam qual maquininha foi usada em cada transação.
-            Os valores de taxa abaixo são calculados aplicando a taxa cadastrada da maquininha selecionada (ou a média das ativas)
-            sobre a receita recebida por cartão/Pix no período — não são o extrato exato da operadora.
+        <div id="mq-tab-conciliacao" style="display:none;">
+          <div class="small text-muted mb-16">Importe diariamente o slip de lançamentos da maquininha e o extrato da conta bancária, e concilie um contra o outro, lançamento por lançamento — mesmo princípio da Conciliação Bancária (sugestão automática, mas nada é confirmado sem revisão).</div>
+
+          <div class="kpi-grid" id="mqr-summary" style="margin-bottom:16px;"></div>
+
+          <div class="mqr-upload-cols mb-16">
+            <div class="card">
+              <div class="card-header"><div><h3>Importar Slip da Maquininha (CSV)</h3><div class="card-header-sub">Colunas esperadas: data, descrição e valor</div></div></div>
+              <div class="card-body">
+                <div class="upload-zone" id="upload-zone-slip">
+                  <div class="uz-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
+                  <div><strong>Arraste o slip (CSV) aqui</strong> ou clique para selecionar</div>
+                  <div class="small text-muted mt-8">Exportado do painel da operadora (Stone, Cielo, Rede, PagSeguro...)</div>
+                  <input type="file" id="file-input-slip" accept=".csv,text/csv" style="display:none;">
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div><h3>Importar Extrato Bancário (CSV)</h3><div class="card-header-sub">Colunas esperadas: data, descrição e valor</div></div></div>
+              <div class="card-body">
+                <div class="upload-zone" id="upload-zone-bank">
+                  <div class="uz-icon"><i class="fa-solid fa-file-arrow-up"></i></div>
+                  <div><strong>Arraste o extrato (CSV) aqui</strong> ou clique para selecionar</div>
+                  <div class="small text-muted mt-8">Exportado do internet banking</div>
+                  <input type="file" id="file-input-bank" accept=".csv,text/csv" style="display:none;">
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div class="kpi-grid" id="mq-summary" style="margin-bottom:16px;"></div>
+          <div class="filters-bar">
+            <div class="form-field"><label>De</label><input type="date" id="mqr-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="mqr-end"></div>
+            <div class="form-field"><label>Maquininha</label><select id="mqr-machine"><option value="">Todas</option></select></div>
+            <button class="btn btn-outline btn-sm" id="btn-mqr-auto-match"><i class="fa-solid fa-wand-magic-sparkles"></i> Conciliar sugestões automáticas</button>
+            <button class="btn btn-ghost btn-sm" id="btn-clear-mqr-filters">Limpar filtros</button>
+          </div>
 
-        <div class="card mb-16">
-          <div class="card-header"><div><h3>Receita x Taxa Estimada por Forma de Pagamento</h3><div class="card-header-sub">Crédito, débito e Pix — período selecionado</div></div></div>
-          <div class="card-body"><div id="chart-mq-pay"></div></div>
-        </div>
+          <div class="recon-cols">
+            <div class="card">
+              <div class="card-header"><div><h3>Slip da Maquininha</h3><div class="card-header-sub" id="mqr-slip-col-sub">Linhas importadas, ainda não conciliadas</div></div></div>
+              <div class="card-body" id="mqr-slip-list"></div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div><h3>Extrato Bancário</h3><div class="card-header-sub" id="mqr-bank-col-sub">Linhas importadas, ainda não conciliadas</div></div></div>
+              <div class="card-body" id="mqr-bank-list"></div>
+            </div>
+          </div>
 
-        <div class="card">
-          <div class="card-header"><div><h3>Maquininhas Cadastradas</h3><div class="card-header-sub" id="mq-count-sub"></div></div></div>
-          <div class="table-wrap"><table class="data-table" id="tbl-mq"></table></div>
+          <div class="card mt-16">
+            <div class="card-header"><div><h3>Histórico de Conciliações</h3><div class="card-header-sub">Pares já conciliados</div></div></div>
+            <div class="table-wrap"><table class="data-table" id="tbl-mqr-history"></table></div>
+          </div>
         </div>
 
       </main>
@@ -94,5 +167,20 @@
   <script src="assets/js/charts.js"></script>
   <script src="assets/js/period-filter.js"></script>
   <script src="assets/js/maquininhas.js"></script>
+  <script src="assets/js/maquininhas-conciliacao.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      Array.prototype.forEach.call(document.querySelectorAll("#mq-main-tabs .tab-btn"), function (btn) {
+        btn.addEventListener("click", function () {
+          Array.prototype.forEach.call(document.querySelectorAll("#mq-main-tabs .tab-btn"), function (b) { b.classList.remove("active"); });
+          btn.classList.add("active");
+          var tab = btn.getAttribute("data-mtab");
+          document.getElementById("mq-tab-cadastro").style.display = tab === "cadastro" ? "" : "none";
+          document.getElementById("mq-tab-conciliacao").style.display = tab === "conciliacao" ? "" : "none";
+          if (tab === "conciliacao" && window.MaquininhasConciliacao) MaquininhasConciliacao.render();
+        });
+      });
+    });
+  </script>
 </body>
 </html>
