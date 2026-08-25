@@ -17,6 +17,11 @@
   }
 
   function init() {
+    var hintEl = document.querySelector(".login-hint");
+    if (hintEl && DB.ONLINE_MODE) {
+      hintEl.innerHTML = 'Primeiro acesso? Use CPF <strong>000.000.000-00</strong>, senha <strong>123456</strong> (administrador). Novos acessos podem ser criados em Configurações → Acessos.';
+    }
+
     // Seed the database (if needed) BEFORE any authentication happens on
     // this page. Seed.run() calls DB.resetAll() internally, which wipes
     // users/activityLog back to defaults — if seeding were deferred to the
