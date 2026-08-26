@@ -68,22 +68,85 @@
     var occBtn = Utils.qs("#btn-new-occurrence");
     if (occBtn) occBtn.addEventListener("click", function () { openOccurrenceModal({ date: selectedDate }); });
 
-    // fast navigation: jump straight to any date instead of clicking week by week
-    var jumpInput = Utils.qs("#ag-date-jump");
-    jumpInput.value = selectedDate;
-    jumpInput.addEventListener("change", function () {
-      if (jumpInput.value) { selectedDate = jumpInput.value; render(); }
-    });
-    Utils.qs("#btn-jump-1m").addEventListener("click", function () { selectedDate = Utils.addMonths(selectedDate, 1); render(); });
-    Utils.qs("#btn-jump-3m").addEventListener("click", function () { selectedDate = Utils.addMonths(selectedDate, 3); render(); });
-    Utils.qs("#btn-jump-6m").addEventListener("click", function () { selectedDate = Utils.addMonths(selectedDate, 6); render(); });
-    Utils.qs("#btn-jump-year-end").addEventListener("click", function () {
-      var y = Utils.parseDate(selectedDate).getFullYear();
-      selectedDate = y + "-12-31";
-      render();
-    });
-
     render();
+  }
+
+  // ---- Mini calendário (substitui o antigo bloco "Ir para data" +1/3/6
+  // meses/Fim do ano) — grade de mês com navegação por seta, no mesmo
+  // espírito do calendário compacto usado por outros sistemas de agenda,
+  // porém no estilo visual próprio do Guitart & Co. `miniCalMonth` guarda
+  // apenas o mês sendo EXIBIDO no mini calendário — é independente de
+  // `selectedDate` para que navegar entre meses no mini calendário não
+  // troque o dia selecionado (e a lista de agendamentos) até o usuário
+  // realmente clicar em um dia.
+  var miniCalMonth = selectedDate;
+
+  function monthStartISO(iso) {
+    var d = Utils.parseDate(iso);
+    return Utils.toISODate(new Date(d.getFullYear(), d.getMonth(), 1));
+  }
+
+  function renderMiniCal() {
+    var el = document.getElementById("mini-cal");
+    if (!el) return;
+    var ref = Utils.parseDate(monthStartISO(miniCalMonth));
+    var year = ref.getFullYear(), month = ref.getMonth();
+    var firstDow = new Date(year, month, 1).getDay();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var prevMonthDays = new Date(year, month, 0).getDate();
+    var today = Utils.todayISO();
+    var monthLabel = ref.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+
+    var cellsHtml = "";
+    for (var i = 0; i < firstDow; i++) {
+      var leadNum = prevMonthDays - firstDow + 1 + i;
+      cellsHtml += '<div class="mini-cal-day mc-outside" data-nav="-1">' + leadNum + '</div>';
+    }
+    for (var day = 1; day <= daysInMonth; day++) {
+      var iso = Utils.toISODate(new Date(year, month, day));
+      var cls = "mini-cal-day";
+      if (iso === today) cls += " mc-today";
+      if (iso === selectedDate) cls += " mc-selected";
+      cellsHtml += '<div class="' + cls + '" data-date="' + iso + '">' + day + '</div>';
+    }
+    var totalCells = firstDow + daysInMonth;
+    var trailing = (Math.ceil(totalCells / 7) * 7) - totalCells;
+    for (var t = 0; t < trailing; t++) {
+      cellsHtml += '<div class="mini-cal-day mc-outside" data-nav="1">' + (t + 1) + '</div>';
+    }
+
+    el.innerHTML =
+      '<div class="mini-cal-head">' +
+        '<button type="button" id="mc-prev" title="Mês anterior"><i class="fa-solid fa-chevron-left"></i></button>' +
+        '<div class="mc-label">' + monthLabel + '</div>' +
+        '<button type="button" id="mc-next" title="Próximo mês"><i class="fa-solid fa-chevron-right"></i></button>' +
+      '</div>' +
+      '<div class="mini-cal-grid">' +
+        DOW_NAMES.map(function (n) { return '<div class="mini-cal-dow">' + n.slice(0, 1) + '</div>'; }).join("") +
+        cellsHtml +
+      '</div>';
+
+    el.querySelector("#mc-prev").addEventListener("click", function () {
+      miniCalMonth = Utils.addMonths(monthStartISO(miniCalMonth), -1);
+      renderMiniCal();
+    });
+    el.querySelector("#mc-next").addEventListener("click", function () {
+      miniCalMonth = Utils.addMonths(monthStartISO(miniCalMonth), 1);
+      renderMiniCal();
+    });
+    Utils.qsa(".mini-cal-day", el).forEach(function (cell) {
+      cell.addEventListener("click", function () {
+        var iso = cell.getAttribute("data-date");
+        if (iso) {
+          selectedDate = iso;
+          render();
+        } else {
+          var navDir = Number(cell.getAttribute("data-nav"));
+          miniCalMonth = Utils.addMonths(monthStartISO(miniCalMonth), navDir);
+          renderMiniCal();
+        }
+      });
+    });
   }
 
   function clearFilters() {
@@ -171,8 +234,8 @@
 
     document.getElementById("day-title").textContent = "Agendamentos — " + Utils.parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" });
 
-    var jumpInput = document.getElementById("ag-date-jump");
-    if (jumpInput) jumpInput.value = selectedDate;
+    miniCalMonth = selectedDate;
+    renderMiniCal();
 
     renderDayCalendar();
   }
