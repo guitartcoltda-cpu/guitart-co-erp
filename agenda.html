@@ -55,6 +55,31 @@
   .cal-block .cb-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cal-block .cb-meta { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cal-occ-block { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 7px; font-size: 11px; border-left: 3px solid #888; color: #555; cursor: pointer; overflow: hidden; background-color: #ececec; background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(0,0,0,.05) 6px, rgba(0,0,0,.05) 12px); }
+
+  /* Mini calendário — substitui o antigo bloco "Ir para data" +1/3/6 meses */
+  .mini-cal { background: #fff; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; margin-bottom: 16px; max-width: 320px; }
+  .mini-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .mini-cal-head .mc-label { font-weight: 800; font-size: 13px; text-transform: capitalize; }
+  .mini-cal-head button { background: none; border: none; cursor: pointer; color: var(--gray-500); font-size: 13px; padding: 4px 10px; border-radius: var(--radius-sm); }
+  .mini-cal-head button:hover { background: var(--gray-50); color: var(--gray-800); }
+  .mini-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .mini-cal-dow { text-align: center; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--gray-400); padding: 4px 0 6px; }
+  .mini-cal-day { text-align: center; font-size: 12.5px; padding: 7px 0; border-radius: 999px; cursor: pointer; color: var(--gray-700); }
+  .mini-cal-day:hover { background: var(--gray-100); }
+  .mini-cal-day.mc-outside { color: var(--gray-300); }
+  .mini-cal-day.mc-today { border: 1px solid var(--color-accent); font-weight: 700; }
+  .mini-cal-day.mc-selected { background: var(--color-primary); color: #fff; font-weight: 700; }
+  @media (max-width: 900px) {
+    .mini-cal { max-width: 100%; }
+    /* Corrige o "double scroll" no celular: a grade da Visão do Dia (colunas
+       por profissional) ganhava uma barra de rolagem vertical própria,
+       limitada a 680px, dentro da rolagem normal da página — em telas
+       sensíveis ao toque isso trava/engasga o gesto de subir e descer,
+       porque o toque às vezes é capturado pela grade em vez da página.
+       No celular a grade some do eixo vertical (a página inteira rola
+       normalmente) e mantém só a rolagem horizontal entre profissionais. */
+    .cal-scroll { max-height: none; }
+  }
 </style>
 </head>
 <body data-page="agenda">
@@ -97,13 +122,7 @@
           </div>
           <div class="week-strip" id="week-strip"></div>
 
-          <div class="filters-bar" style="margin-bottom:16px;">
-            <div class="form-field"><label>Ir para data</label><input type="date" id="ag-date-jump"></div>
-            <button class="btn btn-sm btn-outline" id="btn-jump-1m" type="button">+1 mês</button>
-            <button class="btn btn-sm btn-outline" id="btn-jump-3m" type="button">+3 meses</button>
-            <button class="btn btn-sm btn-outline" id="btn-jump-6m" type="button">+6 meses</button>
-            <button class="btn btn-sm btn-outline" id="btn-jump-year-end" type="button">Fim do ano</button>
-          </div>
+          <div class="mini-cal" id="mini-cal"></div>
         </div>
 
         <div class="filters-bar" id="ag-period-filters" style="display:none;margin-bottom:16px;">
