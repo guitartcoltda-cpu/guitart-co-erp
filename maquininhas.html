@@ -38,6 +38,12 @@
   .compare-review-table .ri-meta { font-size: 11px; color: var(--gray-500); margin-top: 2px; }
   .mqr-upload-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 900px) { .mqr-upload-cols { grid-template-columns: 1fr; } }
+  /* Grid de taxas por número de parcelas (2x a 18x) no cadastro da maquininha */
+  .mq-inst-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 6px; }
+  .mq-inst-cell { display: flex; flex-direction: column; gap: 3px; }
+  .mq-inst-cell label { font-size: 11px; color: var(--gray-500); font-weight: 600; }
+  .mq-inst-cell input { width: 100%; padding: 6px 7px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); font-size: 12.5px; }
+  @media (max-width: 900px) { .mq-inst-grid { grid-template-columns: repeat(3, 1fr); } }
 </style>
 </head>
 <body data-page="maquininhas">
