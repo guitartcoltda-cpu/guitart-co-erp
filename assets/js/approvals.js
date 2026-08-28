@@ -12,12 +12,27 @@
 
   var TYPE_LABELS = {
     comissao_agendamento: "Alteração de comissão",
-    desconto_consumo: "Desconto em consumo de insumo"
+    desconto_consumo: "Desconto em consumo de insumo",
+    parcelamento_venda: "Parcelamento acima de 3x"
   };
 
   function isAdmin() {
     var u = global.CurrentUser && global.CurrentUser.get ? global.CurrentUser.get() : null;
     return !!(u && u.role === "Administrador");
+  }
+
+  // Quem pode aprovar/recusar solicitações pendentes: todo Administrador,
+  // mais qualquer usuário com a permissão "Pode aprovar solicitações"
+  // (Configurações → Permissões — campo `canApprove` no cadastro do
+  // usuário), sem precisar ser Administrador. Sempre lê o registro atual
+  // no banco (não a sessão em cache), para uma permissão concedida por um
+  // admin valer já na próxima navegação da pessoa, sem precisar deslogar.
+  function canApprove() {
+    var u = global.CurrentUser && global.CurrentUser.get ? global.CurrentUser.get() : null;
+    if (!u) return false;
+    if (u.role === "Administrador") return true;
+    var dbUser = global.DB ? DB.get("users", u.id) : null;
+    return !!(dbUser && dbUser.canApprove);
   }
 
   function currentUserLabel() {
@@ -87,7 +102,7 @@
   // Só aparece para Administrador; para os demais o container fica vazio.
   function renderBadge(containerEl) {
     if (!containerEl) return;
-    if (!isAdmin()) { containerEl.innerHTML = ""; return; }
+    if (!canApprove()) { containerEl.innerHTML = ""; return; }
     var n = countPending();
     if (!n) { containerEl.innerHTML = ""; return; }
     containerEl.innerHTML = '<a href="configuracoes.html?tab=aprovacoes" class="approvals-badge" title="Solicitações pendentes de aprovação">' +
@@ -97,6 +112,7 @@
   global.Approvals = {
     TYPE_LABELS: TYPE_LABELS,
     isAdmin: isAdmin,
+    canApprove: canApprove,
     request: request,
     listPending: listPending,
     countPending: countPending,

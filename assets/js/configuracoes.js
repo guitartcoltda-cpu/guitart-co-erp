@@ -247,6 +247,18 @@
     var fullCb = Utils.qs("#perm-full-access");
     fullCb.checked = fullAccess;
 
+    // "Pode aprovar solicitações": independente do acesso a telas, decide
+    // se esta pessoa aparece com os botões Aprovar/Recusar na aba
+    // Aprovações (e no sininho do topo) mesmo sem ser Administrador — ver
+    // Approvals.canApprove() em approvals.js.
+    var approveCb = Utils.qs("#perm-can-approve");
+    if (approveCb) {
+      var isAdminUser = u.role === "Administrador";
+      approveCb.checked = isAdminUser || !!u.canApprove;
+      approveCb.disabled = isAdminUser; // Administrador já aprova por padrão
+      approveCb.title = isAdminUser ? "Administradores já podem aprovar solicitações por padrão" : "";
+    }
+
     Utils.qs("#perm-checklist").innerHTML = items.map(function (it) {
       var checked = fullAccess || u.allowedPages.indexOf(it.href) !== -1;
       return '<label class="flex items-center gap-8">' +
@@ -288,9 +300,11 @@
         }
       }
 
-      DB.update("users", u.id, { allowedPages: allowedPages });
+      var canApproveVal = approveCb ? approveCb.checked : !!u.canApprove;
+      DB.update("users", u.id, { allowedPages: allowedPages, canApprove: canApproveVal });
       var desc = "Atualizou as permissões de acesso de " + u.firstName + " " + u.lastName +
-        " (" + (allowedPages === null ? "acesso total" : allowedPages.length + " tela(s) liberada(s)") + ")";
+        " (" + (allowedPages === null ? "acesso total" : allowedPages.length + " tela(s) liberada(s)") + ")" +
+        (canApproveVal && u.role !== "Administrador" ? " — pode aprovar solicitações" : "");
       DB.log("Configurações", desc);
       Toast.show("Permissões atualizadas", "success");
 
@@ -316,6 +330,17 @@
     },
     desconto_consumo: function (payload) {
       if (window.Consumo) Consumo.applyDiscount(payload.consumptionId, payload.discountAmount);
+    },
+    // Venda parcelada acima de 3x no crédito (ver openNewTxnModal em
+    // financeiro.js): os lançamentos só foram montados, não gravados — são
+    // inseridos de fato agora que um administrador (ou aprovador) autorizou.
+    parcelamento_venda: function (payload) {
+      var records = payload.records || [];
+      if (records.length > 1) {
+        DB.batch(function () { records.forEach(function (r) { DB.insert("transactions", r); }); });
+      } else if (records.length === 1) {
+        DB.insert("transactions", records[0]);
+      }
     }
   };
 
@@ -331,18 +356,18 @@
       Utils.emptyTable(tbl, "fa-user-check", "Nenhuma solicitação de aprovação até agora");
       return;
     }
-    var isAdmin = window.Approvals && Approvals.isAdmin();
+    var canApprove = window.Approvals && Approvals.canApprove();
     var statusBadge = { pendente: '<span class="badge badge-warning">Pendente</span>', aprovada: '<span class="badge badge-success">Aprovada</span>', recusada: '<span class="badge badge-gray">Recusada</span>' };
     tbl.innerHTML = '<thead><tr><th>Solicitação</th><th>Tipo</th><th>Solicitado por</th><th>Data</th><th>Status</th><th></th></tr></thead><tbody>' +
       list.map(function (a) {
         var actions = "";
-        if (a.status === "pendente" && isAdmin) {
+        if (a.status === "pendente" && canApprove) {
           actions = '<div class="flex gap-6">' +
             '<button class="btn btn-sm btn-primary" data-approve="' + a.id + '">Aprovar</button>' +
             '<button class="btn btn-sm btn-ghost" data-reject="' + a.id + '">Recusar</button>' +
             '</div>';
         } else if (a.status === "pendente") {
-          actions = '<span class="small text-muted">Aguardando Administrador</span>';
+          actions = '<span class="small text-muted">Aguardando aprovação</span>';
         } else {
           actions = '<span class="small text-muted">' + Utils.escapeHtml(a.decidedByName || "-") + ' · ' + Utils.fmtDateTime(a.decidedAt) + '</span>';
         }

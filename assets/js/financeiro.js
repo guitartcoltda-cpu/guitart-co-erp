@@ -113,7 +113,7 @@
               '</td>' +
             '<td>' + (cat ? '<span class="chip">' + Utils.escapeHtml(cat.name) + '</span>' : "-") + '</td>' +
             '<td>' + Utils.escapeHtml(cc ? cc.name : "-") + '</td>' +
-            '<td>' + Utils.escapeHtml(t.paymentMethod || "-") + '</td>' +
+            '<td>' + Utils.escapeHtml(t.paymentMethod || "-") + (t.installments > 1 ? ' <span class="small text-muted">(' + t.installments + 'x)</span>' : "") + '</td>' +
             '<td>' + statusBadge(t.status) + '</td>' +
             '<td class="text-right text-num ' + (t.type === "receita" ? "text-success" : "text-danger") + '">' + (t.type === "receita" ? "+" : "-") + " " + Utils.fmtMoney(t.amount) + '</td>' +
             '<td>' + (t.reconciled ? '<span class="badge badge-success"><i class="fa-solid fa-check"></i> Sim</span>' : '<span class="badge badge-gray">Não</span>') + '</td>' +
@@ -259,6 +259,8 @@
           ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Boleto"].map(function (p) {
             return '<option value="' + p + '"' + (record.paymentMethod === p ? " selected" : "") + '>' + p + '</option>';
           }).join("") + '</select></div>' +
+        '<div class="form-field" id="m-installments-field" style="display:' + (record.paymentMethod === "Cartão de Crédito" ? "" : "none") + ';"><label>Parcelas</label><select id="m-installments">' +
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (n) { return '<option value="' + n + '"' + ((record.installments || 1) === n ? " selected" : "") + '>' + n + 'x' + (n === 1 ? " (à vista)" : "") + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Status</label><select id="m-status">' +
           '<option value="pago"' + (record.status === "pago" ? " selected" : "") + '>Pago</option>' +
           '<option value="pendente"' + (record.status === "pendente" ? " selected" : "") + '>Pendente</option>' +
@@ -303,6 +305,12 @@
       });
     });
 
+    var mPaySel = box.querySelector("#m-pay");
+    var mInstField = box.querySelector("#m-installments-field");
+    mPaySel.addEventListener("change", function () {
+      mInstField.style.display = mPaySel.value === "Cartão de Crédito" ? "" : "none";
+    });
+
     box.querySelector("#m-save").addEventListener("click", function () {
       var desc = box.querySelector("#m-desc").value.trim();
       var amount = parseFloat(box.querySelector("#m-amount").value);
@@ -311,13 +319,16 @@
       if (!date) { Toast.show("Informe a data", "danger"); return; }
       if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
 
+      var payMethod = box.querySelector("#m-pay").value;
       var patch = {
         type: type, description: desc, amount: round2(amount), date: date,
         categoryId: box.querySelector("#m-cat").value, costCenterId: box.querySelector("#m-cc").value,
-        paymentMethod: box.querySelector("#m-pay").value, status: box.querySelector("#m-status").value,
+        paymentMethod: payMethod, status: box.querySelector("#m-status").value,
         clientId: box.querySelector("#m-client").value || null, employeeId: box.querySelector("#m-employee").value || null,
         attachment: mAttachment.get()
       };
+      if (payMethod === "Cartão de Crédito") patch.installments = parseInt(box.querySelector("#m-installments").value, 10) || 1;
+      else patch.installments = null;
 
       DB.update("transactions", record.id, patch);
       DB.log("Lançamento", "Atualizou o lançamento \"" + desc + "\" (" + Utils.fmtMoney(amount) + ")");
@@ -364,8 +375,11 @@
         '<div class="form-field"><label>Data</label><input type="date" id="tm-date" value="' + Utils.todayISO() + '"></div>' +
         '<div class="form-field"><label>Forma de Pagamento</label><select id="tm-pay">' +
           ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Boleto"].map(function (p) { return '<option value="' + p + '">' + p + '</option>'; }).join("") + '</select></div>' +
+        '<div class="form-field" id="tm-installments-field" style="display:none;"><label>Parcelas</label><select id="tm-installments">' +
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (n) { return '<option value="' + n + '">' + n + 'x' + (n === 1 ? " (à vista)" : "") + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Status</label><select id="tm-status"><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>' +
       '</div>' +
+      '<div class="small text-muted mb-16" id="tm-installments-note" style="display:none;"><i class="fa-solid fa-circle-info"></i> Parcelamento acima de 3x precisa de autorização de um administrador — a venda será enviada para aprovação em vez de salva na hora.</div>' +
       '<div class="small text-muted mb-16">Adicione um ou mais itens (serviços/produtos) — cada um pode ter descrição, categoria, centro de custo, profissional e valor próprios.</div>' +
       '<div id="tm-items"></div>' +
       '<button type="button" class="btn btn-sm btn-outline" id="tm-add-item"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
@@ -448,6 +462,23 @@
       renderItems();
     });
 
+    // Parcelamento (só faz sentido em Cartão de Crédito): mostra o seletor
+    // de parcelas e o aviso de que acima de 3x precisa de aprovação de um
+    // administrador (ver Approvals/APPROVAL_APPLY em configuracoes.js).
+    var paySel = box.querySelector("#tm-pay");
+    var instField = box.querySelector("#tm-installments-field");
+    var instSelect = box.querySelector("#tm-installments");
+    var instNote = box.querySelector("#tm-installments-note");
+    function syncInstallmentsVisibility() {
+      var isCredit = paySel.value === "Cartão de Crédito";
+      instField.style.display = isCredit ? "" : "none";
+      if (!isCredit) instSelect.value = "1";
+      instNote.style.display = (isCredit && parseInt(instSelect.value, 10) > 3) ? "" : "none";
+    }
+    paySel.addEventListener("change", syncInstallmentsVisibility);
+    instSelect.addEventListener("change", syncInstallmentsVisibility);
+    syncInstallmentsVisibility();
+
     Utils.qsa(".tab-btn", box.querySelector("#modal-type-tabs")).forEach(function (btn) {
       btn.addEventListener("click", function () {
         Utils.qsa(".tab-btn", box.querySelector("#modal-type-tabs")).forEach(function (b) { b.classList.remove("active"); });
@@ -487,6 +518,7 @@
       var isMulti = validItems.length > 1;
       var saleId = isMulti ? DB.uid("venda") : null;
       var total = 0;
+      var installments = (pay === "Cartão de Crédito") ? (parseInt(instSelect.value, 10) || 1) : 1;
 
       function buildRecord(it, idx) {
         var amount = round2(parseFloat(it.amount));
@@ -499,17 +531,37 @@
           attachment: tmAttachment.get()
         };
         if (isMulti) { rec.saleId = saleId; rec.saleItemIndex = idx; }
+        if (pay === "Cartão de Crédito") rec.installments = installments;
         return rec;
+      }
+
+      var records = validItems.map(function (it, idx) { return buildRecord(it, idx); });
+
+      // Parcelamento em cartão de crédito acima de 3x precisa de autorização
+      // de um administrador (ou de quem tiver a permissão "Pode aprovar
+      // solicitações") — em vez de gravar na hora, a venda vira uma
+      // solicitação pendente na aba Aprovações; só é lançada de fato quando
+      // aprovada (ver APPROVAL_APPLY em configuracoes.js).
+      if (pay === "Cartão de Crédito" && installments > 3) {
+        var summary = "Venda em " + installments + "x no crédito — " +
+          (records.length > 1 ? records.length + " item(ns), total " : "") +
+          Utils.fmtMoney(round2(records.reduce(function (s, r) { return s + r.amount; }, 0))) +
+          (clientId ? (" — " + ((DB.get("clients", clientId) || {}).name || "")) : "");
+        Approvals.request("parcelamento_venda", summary, { records: records, isMulti: isMulti, saleId: saleId });
+        Toast.show("Parcelamento acima de 3x enviado para aprovação de um administrador.", "info", 5000);
+        Modal.close();
+        render();
+        return;
       }
 
       if (isMulti) {
         DB.batch(function () {
-          validItems.forEach(function (it, idx) { DB.insert("transactions", buildRecord(it, idx)); });
+          records.forEach(function (rec) { DB.insert("transactions", rec); });
         });
-        DB.log("Lançamento", "Registrou um lançamento com " + validItems.length + " itens — total " + Utils.fmtMoney(round2(total)));
-        Toast.show("Lançamento registrado com " + validItems.length + " itens", "success");
+        DB.log("Lançamento", "Registrou um lançamento com " + records.length + " itens — total " + Utils.fmtMoney(round2(total)));
+        Toast.show("Lançamento registrado com " + records.length + " itens", "success");
       } else {
-        var rec = buildRecord(validItems[0], 0);
+        var rec = records[0];
         DB.insert("transactions", rec);
         DB.log("Lançamento", "Criou o lançamento \"" + rec.description + "\" (" + Utils.fmtMoney(rec.amount) + ")");
         Toast.show("Lançamento criado", "success");
