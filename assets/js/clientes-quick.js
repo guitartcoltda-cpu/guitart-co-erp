@@ -66,6 +66,7 @@
   function wireInlinePanel(container, idPrefix, onCreated, onCancel) {
     var nameInput = container.querySelector("#" + idPrefix + "-name");
     var phoneInput = container.querySelector("#" + idPrefix + "-phone");
+    Utils.wirePhoneMask(phoneInput);
     wireImportButton(container, idPrefix + "-import-contact", nameInput, phoneInput);
     container.querySelector("#" + idPrefix + "-save").addEventListener("click", function () {
       var name = nameInput.value.trim();

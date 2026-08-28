@@ -6,11 +6,6 @@
   });
 
   function init() {
-    var envBanner = document.querySelector(".env-banner");
-    if (envBanner && DB.ONLINE_MODE) {
-      envBanner.innerHTML = '<i class="fa-solid fa-circle-info"></i> Sistema em produção — os dados são reais e compartilhados entre todos os usuários e aparelhos.';
-    }
-
     var pfCtrl = PeriodFilter.mount(document.getElementById("dash-period-filter"), {
       defaultPreset: "mes",
       label: "Período",

@@ -17,11 +17,6 @@
   }
 
   function init() {
-    // A pedido do cliente, a tela de login não exibe nenhuma orientação de
-    // acesso (nem o texto de demo offline, nem a dica de primeiro acesso).
-    var hintEl = document.querySelector(".login-hint");
-    if (hintEl) hintEl.remove();
-
     // Seed the database (if needed) BEFORE any authentication happens on
     // this page. Seed.run() calls DB.resetAll() internally, which wipes
     // users/activityLog back to defaults — if seeding were deferred to the

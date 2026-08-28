@@ -160,6 +160,7 @@
       (showImport ? '<div class="mt-8">' + ClientesQuick.importButtonHtml("cm-import-contact") + '</div>' : "");
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cm-save">Salvar Cliente</button>';
     var box = Modal.open({ title: c ? "Editar Cliente" : "Novo Cliente", bodyHtml: body, footHtml: foot });
+    Utils.wirePhoneMask(box.querySelector("#cm-phone"));
     if (showImport) ClientesQuick.wireImportButton(box, "cm-import-contact", box.querySelector("#cm-name"), box.querySelector("#cm-phone"));
     box.querySelector("#cm-save").addEventListener("click", function () {
       var name = box.querySelector("#cm-name").value.trim();

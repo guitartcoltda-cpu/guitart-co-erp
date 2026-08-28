@@ -165,6 +165,7 @@
       var digits = Utils.onlyDigits(e.target.value).slice(0, 11);
       e.target.value = digits.length === 11 ? Utils.fmtCPF(digits) : digits;
     });
+    Utils.wirePhoneMask(box.querySelector("#usr-phone"));
     box.querySelector("#usr-pass").addEventListener("input", function (e) {
       e.target.value = Utils.onlyDigits(e.target.value).slice(0, 20);
     });

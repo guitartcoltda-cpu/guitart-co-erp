@@ -11,7 +11,7 @@
     // de cliente ausente por recorrência) já roda em toda página do
     // sistema — ver assets/js/layout.js. Esta tela só acompanha o que os
     // robôs já colocaram na fila (e, para confirmação/lembrete, dispara o
-    // envio manual via wa.me — ver env-banner acima da lista).
+    // envio manual via wa.me).
 
     Utils.qs("#nt-type").addEventListener("change", function (e) { filters.type = e.target.value; render(); });
     Utils.qs("#nt-status").addEventListener("change", function (e) { filters.status = e.target.value; selected = {}; render(); });

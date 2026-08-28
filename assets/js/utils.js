@@ -230,6 +230,27 @@
       return true;
     },
 
+    // Trava de caracteres do campo de telefone — mesmo espírito da máscara
+    // que o campo de CPF já tinha, mas até agora faltava aqui. Formata
+    // "(11) 98765-4321" à medida que a pessoa digita e limita a 11 dígitos
+    // (DDD + celular), impedindo que sobre lixo/tamanho errado salvo no
+    // cadastro — é exatamente esse tipo de número mal formado que fazia o
+    // robô de notificações por WhatsApp falhar ao montar o link wa.me.
+    wirePhoneMask: function (input) {
+      if (!input) return;
+      input.setAttribute("maxlength", "15"); // tamanho de "(11) 98765-4321"
+      input.addEventListener("input", function (e) {
+        var digits = Utils.onlyDigits(e.target.value).slice(0, 11);
+        var out = "";
+        if (digits.length === 0) out = "";
+        else if (digits.length <= 2) out = "(" + digits;
+        else if (digits.length <= 6) out = "(" + digits.slice(0, 2) + ") " + digits.slice(2);
+        else if (digits.length <= 10) out = "(" + digits.slice(0, 2) + ") " + digits.slice(2, 6) + "-" + digits.slice(6);
+        else out = "(" + digits.slice(0, 2) + ") " + digits.slice(2, 7) + "-" + digits.slice(7);
+        e.target.value = out;
+      });
+    },
+
     // Formata um telefone já validado (10 ou 11 dígitos) como
     // "(11) 98765-4321" / "(11) 3456-7890", para exibição.
     fmtPhoneBR: function (phone) {

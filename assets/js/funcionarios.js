@@ -122,6 +122,7 @@
       '<div class="small text-muted mt-8">O CPF é usado, entre outras coisas, para restringir automaticamente o Extrato do Profissional — a pessoa que fizer login com esse CPF só enxerga a própria comissão lá.</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="em-save">Salvar Funcionário</button>';
     var box = Modal.open({ title: e ? "Editar Funcionário" : "Novo Funcionário", wide: true, bodyHtml: body, footHtml: foot });
+    Utils.wirePhoneMask(box.querySelector("#em-phone"));
 
     box.querySelector("#em-photo-input").addEventListener("change", function (ev) {
       var file = ev.target.files && ev.target.files[0];

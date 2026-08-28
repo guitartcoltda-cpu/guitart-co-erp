@@ -74,12 +74,10 @@
     });
     navHtml += '</ul>';
 
-    // Mesmo cuidado do banner do Dashboard e da tela de login: nunca dar a
-    // entender que os dados são fictícios/de teste quando o sistema está de
-    // fato ligado ao banco de produção (Supabase).
-    var footHtml = (global.DB && DB.ONLINE_MODE)
-      ? '<div class="sidebar-foot"><div>Sistema em produção</div><div style="opacity:.7;margin-top:2px;">Dados reais e compartilhados</div></div>'
-      : '<div class="sidebar-foot"><div>Ambiente de testes (offline)</div><div style="opacity:.7;margin-top:2px;">Dados 100% fictícios</div></div>';
+    // A pedido do cliente, o rodapé do menu não exibe mais nenhum aviso de
+    // ambiente (nem "produção", nem "offline/fictício") — deixa o sistema
+    // com cara de produto acabado, não de protótipo.
+    var footHtml = "";
 
     var collapseToggleHtml = '<button type="button" class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" title="Recolher/expandir menu"><i class="fa-solid fa-chevron-left"></i></button>';
 
