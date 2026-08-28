@@ -76,6 +76,34 @@ table { border-collapse: collapse; width: 100%; }
 
 img.avatar-img, .avatar { flex-shrink: 0; }
 
+/* ---------------- Tela de carregamento entre páginas ----------------
+   Toda página protegida abre com esse overlay cobrindo a tela por cima
+   do HTML "cru" (menu/topo ainda vazios, dados ainda não chegaram do
+   servidor). Sem isso, por uma fração de segundo aparece uma versão
+   "quebrada" da tela (sem o menu lateral, sem o cabeçalho) que depois
+   muda de repente assim que os dados chegam — daí a sensação de
+   travamento/mudança de formato ao trocar de página. Com o overlay,
+   quem usa o sistema vê só um carregamento comum, e a tela final
+   aparece pronta de uma vez. Escondido via JS (layout.js) assim que o
+   menu/cabeçalho e os dados da página estão prontos. */
+.page-loading-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 22px;
+  background: #0c0c0d;
+  transition: opacity .25s ease;
+}
+.page-loading-overlay.is-hidden { opacity: 0; pointer-events: none; }
+.page-loading-logo { max-width: 160px; width: 60%; height: auto; opacity: .95; }
+.page-loading-spinner {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.18);
+  border-top-color: var(--color-accent, #d4a94f);
+  animation: page-loading-spin .7s linear infinite;
+}
+@keyframes page-loading-spin { to { transform: rotate(360deg); } }
+
 /* ---------------- Layout shell ---------------- */
 .app-shell { display: flex; min-height: 100vh; }
 
