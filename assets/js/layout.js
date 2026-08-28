@@ -193,6 +193,23 @@
     }
   }
 
+  // Esconde a tela de carregamento (ver o overlay/CSS/rede-de-segurança
+  // colados no <body> de cada página) só depois de um "macrotask" — ou
+  // seja, depois que TODOS os `DB.ready.then(...)` já pendentes tiverem
+  // rodado, não só o desse arquivo. Como o próprio script de cada tela
+  // (dashboard.js, agenda.js, etc.) também popula seus dados dentro de
+  // um `DB.ready.then(...)`, e promises resolvem seus `.then` na ordem
+  // em que foram registrados, um `setTimeout` aqui garante que o menu
+  // lateral/cabeçalho E os dados da tela já estão desenhados antes da
+  // tela final aparecer de uma vez — sem o "pisca e muda de formato" de
+  // antes.
+  function hideLoadingOverlay() {
+    setTimeout(function () {
+      var ov = document.getElementById("page-loading-overlay");
+      if (ov) ov.classList.add("is-hidden");
+    }, 0);
+  }
+
   function ensureSeed() {
     if (!global.Seed) return;
     // Em modo online (Supabase), o banco é compartilhado por todo mundo —
@@ -220,6 +237,7 @@
     DB.ready.then(function () {
       ensureSeed();
       render();
+      hideLoadingOverlay();
     });
   });
 
