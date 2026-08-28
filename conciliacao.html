@@ -32,6 +32,19 @@
 <script>window.PAGE_META = { title: "Conciliação Bancária", subtitle: "Importe o extrato e bata os lançamentos do banco com o sistema" };</script>
 </head>
 <body data-page="conciliacao">
+  <div id="page-loading-overlay" class="page-loading-overlay">
+    <img src="assets/img/logo-guitart.png" alt="Guitart & Co." class="page-loading-logo">
+    <div class="page-loading-spinner"></div>
+  </div>
+  <script>
+    // Rede de segurança: se por algum motivo o JavaScript da página
+    // travar/falhar antes de esconder este overlay (ver layout.js),
+    // não deixa a tela presa num carregamento infinito.
+    setTimeout(function () {
+      var ov = document.getElementById("page-loading-overlay");
+      if (ov) ov.classList.add("is-hidden");
+    }, 8000);
+  </script>
   <div class="app-shell">
     <div id="sidebar-placeholder"></div>
     <div class="main-area">
