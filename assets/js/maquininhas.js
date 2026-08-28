@@ -143,10 +143,10 @@
       Utils.emptyTable(tbl, "fa-credit-card", "Nenhuma maquininha cadastrada", "Cadastre a primeira maquininha e suas taxas de crédito, débito e Pix.");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Maquininha</th><th>Operadora</th><th class="text-right">Crédito</th><th class="text-right">Débito</th><th class="text-right">Pix</th><th class="text-right">Antecipação</th><th>Status</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr><th>Maquininha</th><th>Operadora</th><th class="text-right">Crédito à Vista</th><th class="text-right">Débito</th><th class="text-right">Pix</th><th class="text-right">Antecipação</th><th>Status</th><th></th></tr></thead><tbody>' +
       machines.map(function (m) {
         return '<tr>' +
-          '<td><span class="font-bold">' + Utils.escapeHtml(m.name) + '</span></td>' +
+          '<td><span class="font-bold">' + Utils.escapeHtml(m.name) + '</span>' + (m.cnpj ? '<div class="small text-muted">' + Utils.escapeHtml(m.cnpj) + '</div>' : '') + '</td>' +
           '<td class="small text-muted">' + Utils.escapeHtml(m.operator || "-") + '</td>' +
           '<td class="text-right text-num">' + fmtPct(m.feeCreditPercent) + '</td>' +
           '<td class="text-right text-num">' + fmtPct(m.feeDebitPercent) + '</td>' +
@@ -154,12 +154,14 @@
           '<td class="text-right text-num">' + (m.anticipationFeePercent ? fmtPct(m.anticipationFeePercent) : '<span class="text-muted">-</span>') + '</td>' +
           '<td>' + (m.active !== false ? '<span class="badge badge-success">Ativa</span>' : '<span class="badge badge-gray">Inativa</span>') + '</td>' +
           '<td><div class="flex gap-6">' +
+            '<button class="btn btn-icon btn-ghost" data-parcelas="' + m.id + '" title="Ver tabela de parcelamento"><i class="fa-solid fa-table-list"></i></button>' +
             '<button class="btn btn-icon btn-ghost" data-edit="' + m.id + '" title="Editar"><i class="fa-solid fa-pen"></i></button>' +
             '<button class="btn btn-icon btn-ghost" data-del="' + m.id + '" title="Excluir"><i class="fa-solid fa-trash"></i></button>' +
           '</div></td></tr>';
       }).join("") + '</tbody>';
 
     Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openMqModal(b.getAttribute("data-edit")); }); });
+    Utils.qsa("[data-parcelas]", tbl).forEach(function (b) { b.addEventListener("click", function () { openParcelasModal(b.getAttribute("data-parcelas")); }); });
     Utils.qsa("[data-del]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-del");
@@ -179,6 +181,26 @@
     });
   }
 
+  // Exibe a tabela completa de taxas por número de parcelas (2x a 18x) de
+  // uma maquininha, cadastrada em "Tabela de Parcelamento (Crédito)" no
+  // formulário — não cabe nas colunas da lista principal, então fica numa
+  // janela à parte, somente leitura.
+  function openParcelasModal(id) {
+    var m = DB.get("cardMachines", id);
+    if (!m) return;
+    var fees = m.installmentFeesCredit || {};
+    var rows = '<tr><td>1x (à vista)</td><td class="text-right text-num">' + fmtPct(m.feeCreditPercent) + '</td></tr>';
+    for (var n = 2; n <= 18; n++) {
+      var v = fees[String(n)];
+      if (v === undefined || v === null || v === "") continue;
+      rows += '<tr><td>' + n + 'x</td><td class="text-right text-num">' + fmtPct(v) + '</td></tr>';
+    }
+    var body = '<div class="table-wrap"><table class="data-table"><thead><tr><th>Parcelas</th><th class="text-right">Taxa</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      (m.notes ? '<div class="small text-muted mt-12">' + Utils.escapeHtml(m.notes) + '</div>' : '');
+    var foot = '<button class="btn btn-secondary" data-close-modal>Fechar</button>';
+    Modal.open({ title: "Tabela de Parcelamento — " + m.name, bodyHtml: body, footHtml: foot });
+  }
+
   function fmtPct(v) { return (v || 0).toFixed(2) + "%"; }
   function round2(n) { return Math.round(n * 100) / 100; }
 
@@ -188,17 +210,39 @@
       '<div class="kpi-delta text-muted" style="color:var(--gray-500);">' + Utils.escapeHtml(sub) + '</div></div>';
   }
 
+  // Linhas do grid de parcelamento (crédito) do formulário: 2x a 18x —
+  // cobre as tabelas de operadoras como Getnet (até 12x) e PagBank (até
+  // 18x, com faixas). Deixar em branco = a maquininha não parcela nessa
+  // quantidade.
+  function installmentGridHtml(m) {
+    var fees = (m && m.installmentFeesCredit) || {};
+    var cells = "";
+    for (var n = 2; n <= 18; n++) {
+      var v = fees[String(n)];
+      cells += '<div class="mq-inst-cell"><label>' + n + 'x</label>' +
+        '<input type="number" step="0.01" min="0" class="mq-inst-input" data-n="' + n + '" value="' + (v !== undefined && v !== null ? v : "") + '"></div>';
+    }
+    return '<div class="mq-inst-grid">' + cells + '</div>';
+  }
+
   function openMqModal(id) {
     var m = id ? DB.get("cardMachines", id) : null;
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Nome da Maquininha</label><input type="text" id="mq-name" placeholder="Ex.: Stone, Cielo POS 2..." value="' + (m ? Utils.escapeHtml(m.name) : "") + '"></div>' +
       '<div class="form-field"><label>Operadora / Adquirente</label><input type="text" id="mq-operator" placeholder="Ex.: Stone, Cielo, Rede, PagSeguro..." value="' + (m ? Utils.escapeHtml(m.operator || "") : "") + '"></div>' +
       '<div class="form-field"><label>Status</label><select id="mq-active"><option value="true"' + (!m || m.active !== false ? " selected" : "") + '>Ativa</option><option value="false"' + (m && m.active === false ? " selected" : "") + '>Inativa</option></select></div>' +
-      '<div class="form-field"><label>Taxa Crédito (%)</label><input type="number" step="0.01" min="0" id="mq-fee-credit" value="' + (m ? m.feeCreditPercent : "") + '"></div>' +
-      '<div class="form-field"><label>Taxa Débito (%)</label><input type="number" step="0.01" min="0" id="mq-fee-debit" value="' + (m ? m.feeDebitPercent : "") + '"></div>' +
+      '<div class="form-field"><label>CNPJ Cadastrado</label><input type="text" id="mq-cnpj" placeholder="00.000.000/0000-00" value="' + (m ? Utils.escapeHtml(m.cnpj || "") : "") + '"></div>' +
+      '<div class="form-field"><label>CEP</label><input type="text" id="mq-cep" placeholder="00000-000" value="' + (m ? Utils.escapeHtml(m.cep || "") : "") + '"></div>' +
+      '<div class="form-field full"><label>Endereço</label><input type="text" id="mq-address" placeholder="Rua, número, bairro..." value="' + (m ? Utils.escapeHtml(m.address || "") : "") + '"></div>' +
+      '<div class="form-field"><label>Taxa Débito à Vista (%)</label><input type="number" step="0.01" min="0" id="mq-fee-debit" value="' + (m ? m.feeDebitPercent : "") + '"></div>' +
+      '<div class="form-field"><label>Taxa Crédito à Vista (%)</label><input type="number" step="0.01" min="0" id="mq-fee-credit" value="' + (m ? m.feeCreditPercent : "") + '"></div>' +
       '<div class="form-field"><label>Taxa Pix (%)</label><input type="number" step="0.01" min="0" id="mq-fee-pix" value="' + (m ? (m.feePixPercent != null ? m.feePixPercent : 0) : 0) + '"></div>' +
       '<div class="form-field"><label>Taxa de Antecipação (%)</label><input type="number" step="0.01" min="0" id="mq-fee-antecip" value="' + (m ? (m.anticipationFeePercent || "") : "") + '"></div>' +
       '<div class="form-field"><label>Outras Taxas/Impostos (%)</label><input type="number" step="0.01" min="0" id="mq-fee-other" value="' + (m ? (m.otherTaxesPercent || "") : "") + '"></div>' +
+      '<div class="form-field full">' +
+        '<label>Tabela de Parcelamento (Crédito) — taxa por nº de parcelas</label>' +
+        installmentGridHtml(m) +
+      '</div>' +
       '<div class="form-field full"><label>Observações</label><textarea id="mq-notes" rows="2" placeholder="Ex.: taxa negociada, prazo de recebimento, aluguel de equipamento...">' + (m ? Utils.escapeHtml(m.notes || "") : "") + '</textarea></div>' +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="mq-save">Salvar Maquininha</button>';
@@ -207,15 +251,27 @@
     box.querySelector("#mq-save").addEventListener("click", function () {
       var name = box.querySelector("#mq-name").value.trim();
       if (!name) { Toast.show("Informe o nome da maquininha", "danger"); return; }
+      var installmentFeesCredit = {};
+      Utils.qsa(".mq-inst-input", box).forEach(function (inp) {
+        var v = inp.value.trim();
+        if (v === "") return;
+        var n = inp.getAttribute("data-n");
+        var pct = parseFloat(v);
+        if (!isNaN(pct)) installmentFeesCredit[n] = pct;
+      });
       var patch = {
         name: name,
         operator: box.querySelector("#mq-operator").value.trim(),
         active: box.querySelector("#mq-active").value === "true",
+        cnpj: box.querySelector("#mq-cnpj").value.trim(),
+        cep: box.querySelector("#mq-cep").value.trim(),
+        address: box.querySelector("#mq-address").value.trim(),
         feeCreditPercent: parseFloat(box.querySelector("#mq-fee-credit").value) || 0,
         feeDebitPercent: parseFloat(box.querySelector("#mq-fee-debit").value) || 0,
         feePixPercent: parseFloat(box.querySelector("#mq-fee-pix").value) || 0,
         anticipationFeePercent: parseFloat(box.querySelector("#mq-fee-antecip").value) || 0,
         otherTaxesPercent: parseFloat(box.querySelector("#mq-fee-other").value) || 0,
+        installmentFeesCredit: installmentFeesCredit,
         notes: box.querySelector("#mq-notes").value.trim()
       };
       if (m) {
