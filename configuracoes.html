@@ -78,13 +78,13 @@
         </div>
 
         <div class="tab-panel" id="p-approvals">
-          <div class="toolbar"><div class="small text-muted">Solicitações de alteração de comissão e de desconto em consumo de insumos, feitas por qualquer usuário — só um Administrador pode aprovar ou recusar.</div></div>
+          <div class="toolbar"><div class="small text-muted">Solicitações de alteração de comissão, desconto em consumo de insumos e parcelamento acima de 3x, feitas por qualquer usuário — só um Administrador ou alguém com a permissão "Pode aprovar solicitações" (aba Permissões) pode aprovar ou recusar.</div></div>
           <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-approvals"></table></div></div>
         </div>
 
         <div class="tab-panel" id="p-perms">
           <div class="toolbar">
-            <div class="small text-muted">Escolha quais telas cada usuário pode acessar. Um usuário sem restrições marcada vê o sistema inteiro (inclusive telas novas que forem adicionadas depois).</div>
+            <div class="small text-muted">Escolha quais telas cada usuário pode abrir. Um usuário sem restrição marcada pode abrir o sistema inteiro, incluindo telas que ainda vierem a ser criadas — sem precisar liberar uma por uma quando isso acontecer. Isso não tem relação com melhorias/atualizações do sistema em si: essas chegam para todo mundo de qualquer forma; aqui é só sobre quais telas cada pessoa pode abrir.</div>
           </div>
           <div class="grid-2">
             <div class="card">
@@ -98,7 +98,11 @@
               <div class="card-body">
                 <label class="flex items-center gap-8 mb-16">
                   <input type="checkbox" id="perm-full-access">
-                  <span><strong>Acesso total</strong> — vê todas as telas do sistema (inclusive novas telas futuras)</span>
+                  <span><strong>Acesso total</strong> — pode abrir todas as telas do sistema, inclusive as que forem criadas mais adiante (sem precisar marcar uma por uma quando isso acontecer)</span>
+                </label>
+                <label class="flex items-center gap-8 mb-16">
+                  <input type="checkbox" id="perm-can-approve">
+                  <span><strong>Pode aprovar solicitações</strong> — mesmo sem ser Administrador, aparece com os botões de aprovar/recusar na aba Aprovações (alteração de comissão, desconto em consumo, parcelamento acima de 3x)</span>
                 </label>
                 <div id="perm-checklist" class="form-grid"></div>
                 <button class="btn btn-primary mt-16" id="btn-save-perms">Salvar Permissões</button>
