@@ -129,19 +129,86 @@
     return out;
   }
 
+  // ---------------------------------------------------------------
+  // IndexedDB — usado (só em modo online) como cópia local de reserva
+  // COMPLETA, fotos/anexos incluídos. A cota do localStorage costuma
+  // travar perto de 5-10MB (era a causa do "armazenamento cheio" — um
+  // punhado de comprovantes/fotos em base64 já estourava isso), enquanto
+  // o IndexedDB tem uma cota muito maior (na prática, uma fatia grande do
+  // espaço livre em disco) — dá para guardar a base local inteira sem
+  // precisar tirar nada dela. Se o IndexedDB não estiver disponível por
+  // algum motivo, cai de volta para o localStorage enxuto (sem fotos/
+  // anexos) como reserva de segurança.
+  var IDB_NAME = "salaoErpIDB_v1";
+  var IDB_STORE = "kv";
+  var IDB_KEY = "db_mirror";
+
+  function idbOpen() {
+    return new Promise(function (resolve, reject) {
+      if (!global.indexedDB) { reject(new Error("IndexedDB indisponível neste navegador")); return; }
+      var req = global.indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function () {
+        if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = function () { resolve(req.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+
+  function idbGetMirror() {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve) {
+        try {
+          var tx = db.transaction(IDB_STORE, "readonly");
+          var req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+          req.onsuccess = function () { resolve(req.result || null); };
+          req.onerror = function () { resolve(null); };
+        } catch (e) { resolve(null); }
+      });
+    }).catch(function () { return null; });
+  }
+
+  function idbSetMirror(value) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        try {
+          var tx = db.transaction(IDB_STORE, "readwrite");
+          tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+          tx.oncomplete = function () { resolve(true); };
+          tx.onerror = function () { reject(tx.error); };
+        } catch (e) { reject(e); }
+      });
+    });
+  }
+
   function persistLocalMirror() {
+    if (ONLINE_MODE) {
+      // Guarda o `_cache` completo (com fotos/anexos) no IndexedDB — sem
+      // precisar tirar nada, já que a cota é bem maior que a do
+      // localStorage. É "fire and forget": a tela já foi atualizada pelo
+      // cache em memória, isso aqui é só a reserva para o caso de a
+      // internet cair no meio do uso.
+      idbSetMirror(_cache).catch(function (e) {
+        console.error("Erro ao salvar cópia local (IndexedDB) dos dados — tentando reserva enxuta no localStorage", e);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(stripLargeFieldsForMirror(_cache)));
+        } catch (e2) {
+          console.error("Erro ao salvar cópia local (localStorage) dos dados", e2);
+          // Nenhuma das duas reservas locais funcionou — mas o Supabase já
+          // tem os dados (remoteUpsert roda à parte, na hora da escrita),
+          // então não vale interromper quem está trabalhando com um
+          // alerta vermelho por causa só da cópia de reserva.
+        }
+      });
+      return;
+    }
+    // Modo offline: localStorage é a ÚNICA cópia dos dados — se não
+    // couber, o usuário precisa saber.
     try {
-      var toStore = ONLINE_MODE ? stripLargeFieldsForMirror(_cache) : _cache;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(_cache));
     } catch (e) {
       console.error("Erro ao salvar cópia local dos dados", e);
-      // Em modo offline o localStorage é a ÚNICA cópia dos dados — se não
-      // couber, o usuário precisa saber. Em modo online o Supabase já
-      // salvou (remoteUpsert roda à parte, na hora da escrita), então uma
-      // falha aqui é só a cópia local de reserva não caber no navegador —
-      // não vale interromper quem está trabalhando com um alerta vermelho
-      // toda vez que isso acontecer.
-      if (global.Toast && !ONLINE_MODE) global.Toast.show("Erro ao salvar cópia local (armazenamento cheio?)", "danger");
+      if (global.Toast) global.Toast.show("Erro ao salvar cópia local (armazenamento cheio?)", "danger");
     }
   }
 
@@ -191,31 +258,41 @@
   }
 
   function bootstrapOnline() {
-    var stored = loadLocalMirror();
-    _cache = stored ? fillMissingTables(stored) : emptyDB();
+    // Cópia local de reserva: tenta o IndexedDB (cota grande, guarda tudo
+    // incluindo fotos/anexos); se não achar nada lá (primeira vez rodando
+    // esta versão), cai para a reserva antiga e enxuta que já estava no
+    // localStorage, só para não perder a continuidade de quem já usava o
+    // sistema. Isso só é usado como ponto de partida — nada é desenhado na
+    // tela antes de DB.ready, então esse valor nunca aparece "errado" para
+    // quem está usando; ele só importa de verdade se a internet cair antes
+    // da busca abaixo terminar (ver o .catch mais adiante).
+    idbGetMirror().then(function (idbStored) {
+      var stored = idbStored || loadLocalMirror();
+      _cache = stored ? fillMissingTables(stored) : emptyDB();
 
-    var fetches = TABLES.map(function (t) {
-      return supa.from(t).select("data").then(function (res) {
-        if (res.error) throw res.error;
-        return { table: t, rows: res.data || [] };
+      var fetches = TABLES.map(function (t) {
+        return supa.from(t).select("data").then(function (res) {
+          if (res.error) throw res.error;
+          return { table: t, rows: res.data || [] };
+        });
       });
-    });
 
-    Promise.all(fetches).then(function (results) {
-      var fresh = {};
-      results.forEach(function (r) { fresh[r.table] = rowsToTableData(r.table, r.rows); });
-      fillMissingTables(fresh);
-      // mesma rede de segurança do modo offline: nunca ficar sem usuário
-      if (!fresh.users || !fresh.users.length) fresh.users = emptyDB().users;
-      _cache = fresh;
-      persistLocalMirror();
-      _readyResolve();
-    }).catch(function (err) {
-      console.error("Falha ao sincronizar com o Supabase — usando a última cópia salva neste aparelho.", err);
-      if (global.Toast) {
-        global.Toast.show("Sem conexão com o servidor — mostrando a última cópia salva neste aparelho.", "danger");
-      }
-      _readyResolve();
+      Promise.all(fetches).then(function (results) {
+        var fresh = {};
+        results.forEach(function (r) { fresh[r.table] = rowsToTableData(r.table, r.rows); });
+        fillMissingTables(fresh);
+        // mesma rede de segurança do modo offline: nunca ficar sem usuário
+        if (!fresh.users || !fresh.users.length) fresh.users = emptyDB().users;
+        _cache = fresh;
+        persistLocalMirror();
+        _readyResolve();
+      }).catch(function (err) {
+        console.error("Falha ao sincronizar com o Supabase — usando a última cópia salva neste aparelho.", err);
+        if (global.Toast) {
+          global.Toast.show("Sem conexão com o servidor — mostrando a última cópia salva neste aparelho.", "danger");
+        }
+        _readyResolve();
+      });
     });
   }
 
