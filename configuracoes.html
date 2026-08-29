@@ -133,9 +133,9 @@
               </div>
             </div>
             <div class="card">
-              <div class="card-header"><h3>Backup Local</h3></div>
+              <div class="card-header"><h3>Backup</h3></div>
               <div class="card-body">
-                <p class="small text-muted mb-16">Exporte todos os dados para um arquivo JSON, ou restaure a partir de um backup anterior. Os dados ficam salvos apenas no navegador (localStorage) — mantenha um backup se for limpar o cache.</p>
+                <p class="small text-muted mb-16">Exporte todos os dados do sistema (o mesmo banco compartilhado usado por todo mundo) para um arquivo JSON, ou restaure a partir de um backup anterior. É um instantâneo manual para guardar/conferir — o banco de dados de verdade continua sendo o Supabase, não este arquivo.</p>
                 <div class="flex gap-8">
                   <button class="btn btn-secondary" id="btn-export-json"><i class="fa-solid fa-file-export"></i> Exportar Backup (JSON)</button>
                   <button class="btn btn-secondary" id="btn-import-json"><i class="fa-solid fa-file-import"></i> Importar Backup</button>
@@ -156,7 +156,6 @@
   <script src="assets/js/db.js"></script>
   <script src="assets/js/auth.js"></script>
   <script src="assets/js/utils.js"></script>
-  <script src="assets/js/seed.js"></script>
   <script src="assets/js/approvals.js"></script>
   <script src="assets/js/recorrencia.js"></script>
   <script src="assets/js/notificacoes.js"></script>
