@@ -1,14 +1,22 @@
 (function () {
   "use strict";
 
-  var ROLES = ["Cabeleireiro(a)", "Manicure e Pedicure", "Esteticista", "Maquiador(a)", "Recepcionista", "Gerente", "Financeiro/Administrativo"];
   var filt = { role: "", status: "", search: "" };
+
+  // Cargo -> grupo de serviço (Cabelo/Unhas/Estética/Maquiagem/"") que a
+  // pessoa realiza — cadastrados em Configurações → Cargos. Usado aqui só
+  // para sugerir automaticamente se um funcionário novo "realiza serviços"
+  // com base no cargo escolhido (ver openEmpModal).
+  function roleGroupOf(roleName) {
+    var r = DB.getRoles().find(function (x) { return x.name === roleName; });
+    return r ? r.group : "";
+  }
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
   function init() {
     var roleSel = Utils.qs("#e-role");
-    ROLES.forEach(function (r) { var o = document.createElement("option"); o.value = r; o.textContent = r; roleSel.appendChild(o); });
+    DB.getRoles().forEach(function (r) { var o = document.createElement("option"); o.value = r.name; o.textContent = r.name; roleSel.appendChild(o); });
     roleSel.addEventListener("change", function (e) { filt.role = e.target.value; render(); });
     Utils.qs("#e-status").addEventListener("change", function (e) { filt.status = e.target.value; render(); });
     Utils.qs("#e-search").addEventListener("input", Utils.debounce(function (e) { filt.search = e.target.value.toLowerCase(); render(); }, 200));
@@ -97,7 +105,14 @@
 
   function openEmpModal(id) {
     var e = id ? DB.get("employees", id) : null;
+    var roles = DB.getRoles();
     var photoDataUrl = e ? (e.photoDataUrl || null) : null;
+    // "Realiza serviços": controla se a pessoa aparece com uma coluna
+    // própria na Visão do Dia da Agenda (ver activeEmployees em agenda.js).
+    // Funcionário já existente sem esse campo salvo (cadastros de antes
+    // desse recurso existir): mantém o comportamento de sempre — aparecia
+    // na Agenda quando o cargo tinha um grupo de serviço associado.
+    var performsServices = e && e.performsServices !== undefined ? !!e.performsServices : !!roleGroupOf(e ? e.role : roles[0] && roles[0].name);
     var body =
       '<div class="flex items-center gap-16 mb-16">' +
         '<div id="em-photo-preview">' + Utils.avatarHtml(e ? e.name : "Novo", photoDataUrl, "avatar-lg") + '</div>' +
@@ -109,8 +124,10 @@
       '</div>' +
       '<div class="form-grid">' +
       '<div class="form-field full"><label>Nome Completo</label><input type="text" id="em-name" value="' + (e ? Utils.escapeHtml(e.name) : "") + '"></div>' +
-      '<div class="form-field"><label>Cargo</label><select id="em-role">' + ROLES.map(function (r) { return '<option value="' + r + '"' + (e && e.role === r ? " selected" : "") + '>' + r + '</option>'; }).join("") + '</select></div>' +
+      '<div class="form-field"><label>Cargo</label><select id="em-role">' + roles.map(function (r) { return '<option value="' + Utils.escapeHtml(r.name) + '"' + (e && e.role === r.name ? " selected" : "") + '>' + Utils.escapeHtml(r.name) + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Status</label><select id="em-status"><option value="ativo"' + (e && e.status === "ativo" ? " selected" : "") + '>Ativo</option><option value="inativo"' + (e && e.status === "inativo" ? " selected" : "") + '>Inativo</option></select></div>' +
+      '<div class="form-field"><label>Este profissional realiza serviços?</label><select id="em-performs"><option value="1"' + (performsServices ? " selected" : "") + '>Sim</option><option value="0"' + (!performsServices ? " selected" : "") + '>Não</option></select>' +
+        '<div class="hint">Só quem tem essa opção em "Sim" ganha uma coluna própria na Visão do Dia da Agenda. Útil para marcar um assistente que também atende sozinho.</div></div>' +
       '<div class="form-field"><label>Telefone (com DDD)</label><input type="tel" id="em-phone" placeholder="(11) 98765-4321" value="' + (e ? Utils.escapeHtml(e.phone) : "") + '"></div>' +
       '<div class="form-field"><label>E-mail</label><input type="email" id="em-email" value="' + (e ? Utils.escapeHtml(e.email) : "") + '"></div>' +
       '<div class="form-field"><label>CPF</label><input type="text" id="em-cpf" placeholder="000.000.000-00" value="' + (e && e.cpf ? Utils.fmtCPF(e.cpf) : "") + '"></div>' +
@@ -123,6 +140,21 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="em-save">Salvar Funcionário</button>';
     var box = Modal.open({ title: e ? "Editar Funcionário" : "Novo Funcionário", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wirePhoneMask(box.querySelector("#em-phone"));
+
+    // Cadastro novo: ao trocar o Cargo, sugere automaticamente "Realiza
+    // serviços" com base no grupo de serviço do cargo escolhido — mas só
+    // enquanto a pessoa não tiver mexido nesse campo à mão (mesmo padrão
+    // usado para o preenchimento automático de comissão na Agenda).
+    if (!e) {
+      box.querySelector("#em-performs").addEventListener("change", function () {
+        box.querySelector("#em-performs").setAttribute("data-touched", "1");
+      });
+      box.querySelector("#em-role").addEventListener("change", function (ev) {
+        var performsSel = box.querySelector("#em-performs");
+        if (performsSel.getAttribute("data-touched")) return;
+        performsSel.value = roleGroupOf(ev.target.value) ? "1" : "0";
+      });
+    }
 
     box.querySelector("#em-photo-input").addEventListener("change", function (ev) {
       var file = ev.target.files && ev.target.files[0];
@@ -156,6 +188,7 @@
         hireDate: box.querySelector("#em-hire").value, birthday: box.querySelector("#em-birthday").value || null,
         baseSalary: parseFloat(box.querySelector("#em-salary").value) || 0,
         commissionRate: parseFloat(box.querySelector("#em-comm").value) || 0,
+        performsServices: box.querySelector("#em-performs").value === "1",
         photoDataUrl: photoDataUrl
       };
       if (e) { DB.update("employees", e.id, patch); DB.log("Funcionário", "Atualizou o funcionário " + name); Toast.show("Funcionário atualizado", "success"); }

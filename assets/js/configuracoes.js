@@ -16,6 +16,7 @@
     Utils.qs("#btn-new-cc").addEventListener("click", function () { openCcModal(null); });
     Utils.qs("#btn-new-cat").addEventListener("click", function () { openCatModal(null); });
     Utils.qs("#btn-new-srv").addEventListener("click", function () { openSrvModal(null); });
+    Utils.qs("#btn-new-role").addEventListener("click", function () { openRoleModal(null); });
 
     Utils.qs("#cfg-company").value = (DB.getSettings() || {}).companyName || "";
     Utils.qs("#btn-save-company").addEventListener("click", function () {
@@ -71,7 +72,7 @@
       else Utils.qs("#perm-card").style.display = "none";
     });
 
-    renderCC(); renderCat(); renderSrv(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
+    renderCC(); renderCat(); renderSrv(); renderRoles(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
 
     // Deep-link vindo do sininho de aprovações no topbar (?tab=aprovacoes).
     if (/tab=aprovacoes/.test(location.search)) {
@@ -541,6 +542,65 @@
       if (c) DB.update("categories", c.id, patch); else DB.insert("categories", patch);
       DB.log("Configurações", (c ? "Atualizou" : "Criou") + " a categoria " + name);
       Modal.close(); Toast.show("Categoria salva", "success"); renderCat();
+    });
+  }
+
+  // ---------------- Cargos ----------------
+  // Diferente de Centros de Custo/Categorias/Serviços, cargos não são uma
+  // tabela própria no Supabase — ficam guardados em settings.roles (ver
+  // DB.getRoles/DB.saveRoles em db.js), então o CRUD aqui mexe direto
+  // nesse array em vez de usar DB.insert/update/remove.
+  var ROLE_GROUPS = ["", "Cabelo", "Unhas", "Estética", "Maquiagem"];
+  function renderRoles() {
+    var list = DB.getRoles();
+    var employees = DB.all("employees");
+    var tbl = Utils.qs("#tbl-roles");
+    tbl.innerHTML = '<thead><tr><th>Cargo</th><th>Grupo de Serviço</th><th class="text-right">Funcionários</th><th></th></tr></thead><tbody>' +
+      list.map(function (r) {
+        var count = employees.filter(function (e) { return e.role === r.name; }).length;
+        return '<tr><td class="font-bold">' + Utils.escapeHtml(r.name) + '</td>' +
+          '<td>' + (r.group ? '<span class="chip">' + Utils.escapeHtml(r.group) + '</span>' : '<span class="text-muted small">-</span>') + '</td>' +
+          '<td class="text-right">' + count + '</td>' +
+          '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-role="' + r.id + '"><i class="fa-solid fa-pen"></i></button>' +
+          '<button class="btn btn-icon btn-ghost" data-del-role="' + r.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
+      }).join("") + '</tbody>';
+    Utils.qsa("[data-edit-role]", tbl).forEach(function (b) { b.addEventListener("click", function () { openRoleModal(b.getAttribute("data-edit-role")); }); });
+    Utils.qsa("[data-del-role]", tbl).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var id = b.getAttribute("data-del-role");
+        var role = list.find(function (r) { return r.id === id; });
+        if (role && employees.some(function (e) { return e.role === role.name; })) { Toast.show("Existem funcionários cadastrados com este cargo", "danger"); return; }
+        Modal.confirm({ title: "Excluir cargo", message: "Confirma a exclusão?", danger: true, onConfirm: function () {
+          DB.saveRoles(DB.getRoles().filter(function (r) { return r.id !== id; }));
+          if (role) DB.log("Configurações", "Excluiu o cargo " + role.name);
+          Toast.show("Excluído", "success"); renderRoles();
+        } });
+      });
+    });
+  }
+  function openRoleModal(id) {
+    var list = DB.getRoles();
+    var r = id ? list.find(function (x) { return x.id === id; }) : null;
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><label>Nome do Cargo</label><input type="text" id="role-name" value="' + (r ? Utils.escapeHtml(r.name) : "") + '"></div>' +
+      '<div class="form-field"><label>Grupo de Serviço</label><select id="role-group">' + ROLE_GROUPS.map(function (g) { return '<option value="' + g + '"' + (r && r.group === g ? " selected" : "") + '>' + (g || "Nenhum (não atende clientes)") + '</option>'; }).join("") + '</select></div>' +
+      '</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="role-save">Salvar</button>';
+    var box = Modal.open({ title: r ? "Editar Cargo" : "Novo Cargo", bodyHtml: body, footHtml: foot });
+    box.querySelector("#role-save").addEventListener("click", function () {
+      var name = box.querySelector("#role-name").value.trim();
+      if (!name) { Toast.show("Informe o nome do cargo", "danger"); return; }
+      var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!r || x.id !== r.id); });
+      if (dup) { Toast.show("Já existe um cargo com este nome", "danger"); return; }
+      var group = box.querySelector("#role-group").value;
+      if (r) {
+        DB.saveRoles(list.map(function (x) { return x.id === r.id ? Object.assign({}, x, { name: name, group: group }) : x; }));
+        DB.log("Configurações", "Atualizou o cargo " + name);
+      } else {
+        DB.saveRoles(list.concat([{ id: DB.uid("rol"), name: name, group: group }]));
+        DB.log("Configurações", "Criou o cargo " + name);
+      }
+      Modal.close(); Toast.show("Cargo salvo", "success"); renderRoles();
     });
   }
 

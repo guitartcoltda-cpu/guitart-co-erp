@@ -75,6 +75,24 @@
     return (prefix ? prefix + "_" : "") + t + rand;
   }
 
+  // Cargos (funções dos funcionários) — configuráveis em Configurações →
+  // Cargos. Ficam guardados dentro de settings.roles (sem precisar de uma
+  // tabela nova no Supabase) em vez de hardcoded no código como antes.
+  // "group" é o mesmo agrupamento usado em Configurações → Serviços
+  // (Cabelo/Unhas/Estética/Maquiagem) — liga o cargo ao tipo de serviço que
+  // a pessoa realiza; deixe em branco para cargos que não atendem clientes
+  // diretamente (Recepcionista, Gerente, Assistente sem flag de atendimento etc.).
+  var DEFAULT_ROLES = [
+    { id: "rol_cabeleireiro", name: "Cabeleireiro(a)", group: "Cabelo" },
+    { id: "rol_manicure", name: "Manicure e Pedicure", group: "Unhas" },
+    { id: "rol_esteticista", name: "Esteticista", group: "Estética" },
+    { id: "rol_maquiador", name: "Maquiador(a)", group: "Maquiagem" },
+    { id: "rol_recepcionista", name: "Recepcionista", group: "" },
+    { id: "rol_gerente", name: "Gerente", group: "" },
+    { id: "rol_financeiro", name: "Financeiro/Administrativo", group: "" },
+    { id: "rol_assistente", name: "Assistente", group: "" }
+  ];
+
   var _cache = null;
 
   // ---------------------------------------------------------------
@@ -423,6 +441,30 @@
       persist();
       remoteReplaceSettings(db.settings);
       return db.settings;
+    },
+
+    // Cargos (ver DEFAULT_ROLES acima). Na primeira leitura, se ainda não
+    // existir nenhum cargo salvo (sistemas já em produção antes desse
+    // recurso existir), semeia a lista com os mesmos nomes que já estavam
+    // fixos no código — para não deixar nenhum funcionário já cadastrado
+    // com um cargo "orfão" — mais o novo cargo "Assistente".
+    getRoles: function () {
+      var db = load();
+      var current = (db.settings && db.settings.roles) || [];
+      if (!current.length) {
+        current = DEFAULT_ROLES.slice();
+        db.settings = Object.assign({}, db.settings, { roles: current });
+        persist();
+        remoteReplaceSettings(db.settings);
+      }
+      return current;
+    },
+    saveRoles: function (list) {
+      var db = load();
+      db.settings = Object.assign({}, db.settings, { roles: list });
+      persist();
+      remoteReplaceSettings(db.settings);
+      return db.settings.roles;
     },
 
     exportJSON: function () {
