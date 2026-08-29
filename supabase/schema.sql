@@ -41,7 +41,8 @@ declare
     'products', 'stockMovements', 'transactions', 'appointments',
     'bankLines', 'commissionPayouts', 'settings', 'users', 'activityLog',
     'commissionBonuses', 'occurrences', 'cardMachines',
-    'productConsumptions', 'notifications', 'approvals', 'chamados'
+    'productConsumptions', 'notifications', 'approvals', 'chamados',
+    'timeClockEntries'
   ];
 begin
   foreach t in array tables loop
