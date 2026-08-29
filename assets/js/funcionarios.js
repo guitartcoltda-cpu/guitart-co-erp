@@ -3,14 +3,11 @@
 
   var filt = { role: "", status: "", search: "" };
 
-  // Cargo -> grupo de serviço (Cabelo/Unhas/Estética/Maquiagem/"") que a
-  // pessoa realiza — cadastrados em Configurações → Cargos. Usado aqui só
-  // para sugerir automaticamente se um funcionário novo "realiza serviços"
-  // com base no cargo escolhido (ver openEmpModal).
-  function roleGroupOf(roleName) {
-    var r = DB.getRoles().find(function (x) { return x.name === roleName; });
-    return r ? r.group : "";
-  }
+  // Cargos que sempre contaram como "realiza serviços" antes desse campo
+  // existir no funcionário — usado só para sugerir o valor padrão do campo
+  // "Realiza serviços" ao editar alguém já cadastrado antes desse recurso
+  // (ver openEmpModal). Mesma lista usada em agenda.js (LEGACY_SERVICE_ROLES).
+  var LEGACY_SERVICE_ROLES = ["Cabeleireiro(a)", "Manicure e Pedicure", "Esteticista", "Maquiador(a)"];
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -111,8 +108,9 @@
     // própria na Visão do Dia da Agenda (ver activeEmployees em agenda.js).
     // Funcionário já existente sem esse campo salvo (cadastros de antes
     // desse recurso existir): mantém o comportamento de sempre — aparecia
-    // na Agenda quando o cargo tinha um grupo de serviço associado.
-    var performsServices = e && e.performsServices !== undefined ? !!e.performsServices : !!roleGroupOf(e ? e.role : roles[0] && roles[0].name);
+    // na Agenda quando o cargo já era um dos que atendiam cliente.
+    // Cadastro novo: começa em "Não" (o cargo por si só não decide mais isso).
+    var performsServices = e ? (e.performsServices !== undefined ? !!e.performsServices : LEGACY_SERVICE_ROLES.indexOf(e.role) !== -1) : false;
     var body =
       '<div class="flex items-center gap-16 mb-16">' +
         '<div id="em-photo-preview">' + Utils.avatarHtml(e ? e.name : "Novo", photoDataUrl, "avatar-lg") + '</div>' +
@@ -140,21 +138,6 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="em-save">Salvar Funcionário</button>';
     var box = Modal.open({ title: e ? "Editar Funcionário" : "Novo Funcionário", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wirePhoneMask(box.querySelector("#em-phone"));
-
-    // Cadastro novo: ao trocar o Cargo, sugere automaticamente "Realiza
-    // serviços" com base no grupo de serviço do cargo escolhido — mas só
-    // enquanto a pessoa não tiver mexido nesse campo à mão (mesmo padrão
-    // usado para o preenchimento automático de comissão na Agenda).
-    if (!e) {
-      box.querySelector("#em-performs").addEventListener("change", function () {
-        box.querySelector("#em-performs").setAttribute("data-touched", "1");
-      });
-      box.querySelector("#em-role").addEventListener("change", function (ev) {
-        var performsSel = box.querySelector("#em-performs");
-        if (performsSel.getAttribute("data-touched")) return;
-        performsSel.value = roleGroupOf(ev.target.value) ? "1" : "0";
-      });
-    }
 
     box.querySelector("#em-photo-input").addEventListener("change", function (ev) {
       var file = ev.target.files && ev.target.files[0];

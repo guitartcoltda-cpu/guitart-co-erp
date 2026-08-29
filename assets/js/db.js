@@ -78,19 +78,16 @@
   // Cargos (funções dos funcionários) — configuráveis em Configurações →
   // Cargos. Ficam guardados dentro de settings.roles (sem precisar de uma
   // tabela nova no Supabase) em vez de hardcoded no código como antes.
-  // "group" é o mesmo agrupamento usado em Configurações → Serviços
-  // (Cabelo/Unhas/Estética/Maquiagem) — liga o cargo ao tipo de serviço que
-  // a pessoa realiza; deixe em branco para cargos que não atendem clientes
-  // diretamente (Recepcionista, Gerente, Assistente sem flag de atendimento etc.).
+  // É só uma lista de nomes (sem vínculo com grupo de serviço).
   var DEFAULT_ROLES = [
-    { id: "rol_cabeleireiro", name: "Cabeleireiro(a)", group: "Cabelo" },
-    { id: "rol_manicure", name: "Manicure e Pedicure", group: "Unhas" },
-    { id: "rol_esteticista", name: "Esteticista", group: "Estética" },
-    { id: "rol_maquiador", name: "Maquiador(a)", group: "Maquiagem" },
-    { id: "rol_recepcionista", name: "Recepcionista", group: "" },
-    { id: "rol_gerente", name: "Gerente", group: "" },
-    { id: "rol_financeiro", name: "Financeiro/Administrativo", group: "" },
-    { id: "rol_assistente", name: "Assistente", group: "" }
+    { id: "rol_cabeleireiro", name: "Cabeleireiro(a)" },
+    { id: "rol_manicure", name: "Manicure e Pedicure" },
+    { id: "rol_esteticista", name: "Esteticista" },
+    { id: "rol_maquiador", name: "Maquiador(a)" },
+    { id: "rol_recepcionista", name: "Recepcionista" },
+    { id: "rol_gerente", name: "Gerente" },
+    { id: "rol_financeiro", name: "Financeiro/Administrativo" },
+    { id: "rol_assistente", name: "Assistente" }
   ];
 
   var _cache = null;

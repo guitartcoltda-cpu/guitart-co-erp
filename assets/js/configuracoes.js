@@ -549,17 +549,16 @@
   // Diferente de Centros de Custo/Categorias/Serviços, cargos não são uma
   // tabela própria no Supabase — ficam guardados em settings.roles (ver
   // DB.getRoles/DB.saveRoles em db.js), então o CRUD aqui mexe direto
-  // nesse array em vez de usar DB.insert/update/remove.
-  var ROLE_GROUPS = ["", "Cabelo", "Unhas", "Estética", "Maquiagem"];
+  // nesse array em vez de usar DB.insert/update/remove. É só uma lista de
+  // nomes (sem vínculo com grupo de serviço).
   function renderRoles() {
     var list = DB.getRoles();
     var employees = DB.all("employees");
     var tbl = Utils.qs("#tbl-roles");
-    tbl.innerHTML = '<thead><tr><th>Cargo</th><th>Grupo de Serviço</th><th class="text-right">Funcionários</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr><th>Cargo</th><th class="text-right">Funcionários</th><th></th></tr></thead><tbody>' +
       list.map(function (r) {
         var count = employees.filter(function (e) { return e.role === r.name; }).length;
         return '<tr><td class="font-bold">' + Utils.escapeHtml(r.name) + '</td>' +
-          '<td>' + (r.group ? '<span class="chip">' + Utils.escapeHtml(r.group) + '</span>' : '<span class="text-muted small">-</span>') + '</td>' +
           '<td class="text-right">' + count + '</td>' +
           '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-role="' + r.id + '"><i class="fa-solid fa-pen"></i></button>' +
           '<button class="btn btn-icon btn-ghost" data-del-role="' + r.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
@@ -583,7 +582,6 @@
     var r = id ? list.find(function (x) { return x.id === id; }) : null;
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Nome do Cargo</label><input type="text" id="role-name" value="' + (r ? Utils.escapeHtml(r.name) : "") + '"></div>' +
-      '<div class="form-field"><label>Grupo de Serviço</label><select id="role-group">' + ROLE_GROUPS.map(function (g) { return '<option value="' + g + '"' + (r && r.group === g ? " selected" : "") + '>' + (g || "Nenhum (não atende clientes)") + '</option>'; }).join("") + '</select></div>' +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="role-save">Salvar</button>';
     var box = Modal.open({ title: r ? "Editar Cargo" : "Novo Cargo", bodyHtml: body, footHtml: foot });
@@ -592,12 +590,11 @@
       if (!name) { Toast.show("Informe o nome do cargo", "danger"); return; }
       var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!r || x.id !== r.id); });
       if (dup) { Toast.show("Já existe um cargo com este nome", "danger"); return; }
-      var group = box.querySelector("#role-group").value;
       if (r) {
-        DB.saveRoles(list.map(function (x) { return x.id === r.id ? Object.assign({}, x, { name: name, group: group }) : x; }));
+        DB.saveRoles(list.map(function (x) { return x.id === r.id ? Object.assign({}, x, { name: name }) : x; }));
         DB.log("Configurações", "Atualizou o cargo " + name);
       } else {
-        DB.saveRoles(list.concat([{ id: DB.uid("rol"), name: name, group: group }]));
+        DB.saveRoles(list.concat([{ id: DB.uid("rol"), name: name }]));
         DB.log("Configurações", "Criou o cargo " + name);
       }
       Modal.close(); Toast.show("Cargo salvo", "success"); renderRoles();

@@ -390,7 +390,7 @@
     var headerHtml = '<div class="cal-corner"></div>' + cols.map(function (e) {
       return '<div class="cal-col-header">' + Utils.avatarHtml(e.name, e.photoDataUrl) +
         '<div class="cch-name">' + Utils.escapeHtml(e.name) + '</div>' +
-        '<div class="cch-role">' + Utils.escapeHtml(roleGroupOf(e.role) || e.role || "") + '</div></div>';
+        '<div class="cch-role">' + Utils.escapeHtml(e.role || "") + '</div></div>';
     }).join("");
 
     var colsHtml = cols.map(function (e) {
@@ -712,28 +712,23 @@
 
   function round2(n) { return Math.round(n * 100) / 100; }
 
-  // Cargo -> grupo de serviço (Cabelo/Unhas/Estética/Maquiagem/""), agora
-  // configurável em Configurações → Cargos (ver DB.getRoles em db.js) em
-  // vez de fixo no código. Usado para sugerir profissionais compatíveis
-  // com o grupo do serviço selecionado ao criar um agendamento — não é o
-  // que decide quem ganha coluna própria na Visão do Dia (isso é o campo
-  // performsServices do funcionário, ver activeEmployees abaixo).
-  function roleGroupOf(roleName) {
-    var r = DB.getRoles().find(function (x) { return x.name === roleName; });
-    return r ? r.group : "";
-  }
+  // Cargos que sempre contaram como "realiza serviços" antes desse campo
+  // existir no funcionário (ver employeePerformsServices) — usado só como
+  // valor padrão para quem já estava cadastrado antes desse recurso, para
+  // não mudar o comportamento de ninguém que já existia.
+  var LEGACY_SERVICE_ROLES = ["Cabeleireiro(a)", "Manicure e Pedicure", "Esteticista", "Maquiador(a)"];
   // Funcionário sem o campo performsServices salvo (cadastros de antes
   // desse recurso existir): mantém o comportamento de sempre — aparecia
-  // na Agenda quando o cargo tinha um grupo de serviço associado.
+  // na Agenda quando o cargo era um dos que já atendiam cliente.
   function employeePerformsServices(e) {
-    return e.performsServices !== undefined ? !!e.performsServices : !!roleGroupOf(e.role);
+    return e.performsServices !== undefined ? !!e.performsServices : LEGACY_SERVICE_ROLES.indexOf(e.role) !== -1;
   }
 
   function openApptModal(id, presets) {
     presets = presets || {};
     var a = id ? DB.get("appointments", id) : null;
     var services = DB.all("services").sort(function (x, y) { return x.group.localeCompare(y.group) || x.name.localeCompare(y.name); });
-    var employees = DB.all("employees").filter(function (e) { return e.status === "ativo" && roleGroupOf(e.role); });
+    var employees = DB.all("employees").filter(function (e) { return e.status === "ativo" && employeePerformsServices(e); }).sort(function (x, y) { return x.name.localeCompare(y.name); });
     var allActiveEmployees = DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (x, y) { return x.name.localeCompare(y.name); });
     var clients = DB.all("clients").sort(function (x, y) { return x.name.localeCompare(y.name); });
 
@@ -826,19 +821,20 @@
       }
     }
 
-    function fillEmployeesFor(group) {
+    // Lista todos os funcionários que realizam serviços (ver
+    // employeePerformsServices) como opção de Profissional — não filtra
+    // mais por um grupo de serviço específico do cargo.
+    function fillEmployeesFor() {
       var empSel = box.querySelector("#am-employee");
-      var cands = employees.filter(function (e) { return roleGroupOf(e.role) === group; });
       var presetEmployeeId = a ? a.employeeId : presets.employeeId;
-      empSel.innerHTML = cands.length
-        ? cands.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("")
-        : '<option value="">Nenhum profissional cadastrado para este serviço</option>';
+      empSel.innerHTML = employees.length
+        ? employees.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("")
+        : '<option value="">Nenhum profissional cadastrado</option>';
       updateDefaultCommission();
     }
     var serviceSel = box.querySelector("#am-service");
     var initialOpt = serviceSel.options[serviceSel.selectedIndex];
-    var initialGroup = initialOpt ? initialOpt.getAttribute("data-group") : "Cabelo";
-    fillEmployeesFor(initialGroup);
+    fillEmployeesFor();
     // Sem nenhum serviço cadastrado (Configurações → Serviços) o <select> de
     // Serviço fica vazio e não há opção selecionada — nada para preencher.
     if (!a && initialOpt) box.querySelector("#am-price").value = initialOpt.getAttribute("data-price");
@@ -849,7 +845,6 @@
     serviceSel.addEventListener("change", function () {
       var opt = serviceSel.options[serviceSel.selectedIndex];
       if (!opt) return;
-      fillEmployeesFor(opt.getAttribute("data-group"));
       box.querySelector("#am-price").value = opt.getAttribute("data-price");
     });
 
