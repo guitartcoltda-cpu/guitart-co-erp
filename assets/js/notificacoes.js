@@ -227,6 +227,30 @@
     return { reminders: syncDayBeforeRemindersIfDue(), inactive: syncInactiveAlerts(), dailyPayments: syncDailyPaymentAlerts() };
   }
 
+  // syncInactiveAlerts() varre TODOS os clientes x agendamentos concluídos
+  // toda vez que roda — como layout.js chama syncAll() em toda página do
+  // sistema (não só em Notificações), isso significava refazer essa varredura
+  // completa a cada troca de tela, deixando a navegação mais lenta à medida
+  // que a base cresce. Como as inserções aqui são idempotentes (ver
+  // hasNotification acima — nunca duplica), não tem problema nenhum rodar de
+  // tempos em tempos em vez de a cada clique: usa uma marca no localStorage
+  // (compartilhada entre abas) para só repetir a varredura depois de alguns
+  // minutos.
+  var SYNC_THROTTLE_MS = 3 * 60 * 1000;
+  var SYNC_THROTTLE_KEY = "salaoErpNotifSyncAt_v1";
+
+  function syncThrottled() {
+    try {
+      var last = Number(localStorage.getItem(SYNC_THROTTLE_KEY) || 0);
+      if (Date.now() - last < SYNC_THROTTLE_MS) return null;
+      localStorage.setItem(SYNC_THROTTLE_KEY, String(Date.now()));
+    } catch (e) {
+      // localStorage indisponível — sem como marcar, então segue e roda
+      // mesmo assim (mesmo comportamento de antes desse ajuste).
+    }
+    return syncAll();
+  }
+
   function contextFor(n) {
     var client = DB.get("clients", n.clientId);
     var appt = n.appointmentId ? DB.get("appointments", n.appointmentId) : null;
@@ -295,6 +319,7 @@
     syncInactiveAlerts: syncInactiveAlerts,
     syncDailyPaymentAlerts: syncDailyPaymentAlerts,
     syncAll: syncAll,
+    syncThrottled: syncThrottled,
     messageFor: messageFor,
     linkFor: linkFor,
     recipientFor: recipientFor,

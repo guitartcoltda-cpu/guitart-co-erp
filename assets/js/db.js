@@ -93,6 +93,30 @@
   var _cache = null;
 
   // ---------------------------------------------------------------
+  // Cache curto de navegação: evita refazer as 21 consultas ao Supabase
+  // a cada troca de tela (o sistema é multi-página, então normalmente
+  // cada navegação recarregava tudo do zero). Se já buscamos os dados
+  // frescos há pouco tempo NESTA MESMA ABA do navegador, a próxima tela
+  // usa direto o espelho completo do IndexedDB em vez de esperar 21
+  // consultas de novo — abre na hora. Gravações (insert/update/remove)
+  // continuam indo pro Supabase imediatamente em qualquer tela, sempre;
+  // isso só encurta a busca inicial de leitura. Uma aba nova (sem essa
+  // marca na sessionStorage) sempre busca fresco do servidor primeiro.
+  var BOOT_CACHE_KEY = "salaoErpBootFreshAt_v1";
+  var BOOT_CACHE_TTL_MS = 20000;
+
+  function readBootCacheFreshAt() {
+    try {
+      var raw = sessionStorage.getItem(BOOT_CACHE_KEY);
+      return raw ? Number(raw) : 0;
+    } catch (e) { return 0; }
+  }
+
+  function markBootCacheFresh() {
+    try { sessionStorage.setItem(BOOT_CACHE_KEY, String(Date.now())); } catch (e) {}
+  }
+
+  // ---------------------------------------------------------------
   // Espelho local (localStorage): reserva de leitura rápida/recente,
   // não a fonte de verdade — o Supabase é quem manda.
   // ---------------------------------------------------------------
@@ -249,6 +273,14 @@
         return;
       }
 
+      // Ver comentário do BOOT_CACHE_KEY acima: pula a busca no Supabase se
+      // já temos um espelho completo (IndexedDB) e ele foi atualizado há
+      // pouco, nesta mesma aba.
+      if (idbStored && (Date.now() - readBootCacheFreshAt()) < BOOT_CACHE_TTL_MS) {
+        _readyResolve();
+        return;
+      }
+
       var fetches = TABLES.map(function (t) {
         return supa.from(t).select("data").then(function (res) {
           if (res.error) throw res.error;
@@ -264,6 +296,7 @@
         if (!fresh.users || !fresh.users.length) fresh.users = emptyDB().users;
         _cache = fresh;
         persistLocalMirror();
+        markBootCacheFresh();
         _readyResolve();
       }).catch(function (err) {
         console.error("Falha ao sincronizar com o Supabase — usando a última cópia salva neste aparelho.", err);

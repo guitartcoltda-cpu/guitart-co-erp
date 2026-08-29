@@ -127,7 +127,7 @@
     // de "automático" sem um servidor rodando com o navegador fechado. A
     // tela de Notificações WhatsApp só passa a acompanhar o que já foi
     // gerado (ver notificacoes-page.js).
-    if (global.Notificacoes) global.Notificacoes.syncAll();
+    if (global.Notificacoes) global.Notificacoes.syncThrottled();
 
     var logoutBtn = document.getElementById("btn-logout");
     if (logoutBtn) {
