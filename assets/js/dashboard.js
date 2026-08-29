@@ -85,6 +85,33 @@
       btn.addEventListener("click", function () { openKpiDetail(btn.getAttribute("data-kpi-detail")); });
     });
 
+    // KPIs da Agenda — vieram da tela de Agenda (que agora foca só no
+    // calendário) para reunir todos os indicadores do sistema aqui no
+    // Dashboard. São sempre "hoje" / "próximos 7 dias" / "mês atual" — não
+    // acompanham o filtro de período acima (que é sobre Receita/Despesa).
+    var agToday = Utils.todayISO();
+    var agTodayCount = appointments.filter(function (a) { return a.date === agToday; }).length;
+    var agConcludedToday = appointments.filter(function (a) { return a.date === agToday && a.status === "concluido"; }).length;
+    var agMonthKey = Utils.monthKey(agToday);
+    var agCanceledMonth = appointments.filter(function (a) { return Utils.monthKey(a.date) === agMonthKey && a.status === "cancelado"; }).length;
+    var agUpcoming7 = appointments.filter(function (a) { return a.status === "agendado" && a.date >= agToday && a.date <= Utils.addDays(agToday, 7); }).length;
+    var agendaKpis = [
+      { label: "Agendamentos Hoje", value: String(agTodayCount), icon: "fa-calendar-day", color: "#2a78d6", bg: "#e3eefb" },
+      { label: "Concluídos Hoje", value: String(agConcludedToday), icon: "fa-circle-check", color: "#1baf7a", bg: "#e2f5ec" },
+      { label: "Próximos 7 dias", value: String(agUpcoming7), icon: "fa-calendar-week", color: "#b8923f", bg: "#f6ecd3" },
+      { label: "Cancelados no Mês", value: String(agCanceledMonth), icon: "fa-calendar-xmark", color: "#c23b3b", bg: "#fbe6e6" }
+    ];
+    var agGrid = document.getElementById("agenda-kpi-grid");
+    if (agGrid) {
+      agGrid.innerHTML = agendaKpis.map(function (k) {
+        return '<div class="kpi-card">' +
+          '<div class="kpi-icon" style="background:' + k.bg + ';color:' + k.color + ';"><i class="fa-solid ' + k.icon + '"></i></div>' +
+          '<div class="kpi-label">' + k.label + '</div>' +
+          '<div class="kpi-value">' + k.value + '</div>' +
+          '</div>';
+      }).join("");
+    }
+
     // ---- Detalhe por KPI ("..." no card) --------------------------------
     // Cada card mostra um número resumido; este menu abre a composição por
     // trás dele, sem precisar sair do Dashboard ou ir caçar em outra tela.

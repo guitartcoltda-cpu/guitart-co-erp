@@ -2,7 +2,7 @@
   "use strict";
 
   var selectedDate = Utils.todayISO();
-  var filt = { employee: "", status: "" };
+  var filt = { employee: "", service: "", status: "" };
   var viewMode = "dia"; // "dia" | "geral" — geral shows every appointment across all dates, not scoped to a single day
   var periodStart = Utils.todayISO();
   var periodEnd = "";
@@ -23,6 +23,11 @@
       var o = document.createElement("option"); o.value = e.id; o.textContent = e.name; empSel.appendChild(o);
     });
     empSel.addEventListener("change", function (e) { filt.employee = e.target.value; render(); });
+    var srvSel = Utils.qs("#ag-service");
+    DB.all("services").sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (s) {
+      var o = document.createElement("option"); o.value = s.id; o.textContent = s.name; srvSel.appendChild(o);
+    });
+    srvSel.addEventListener("change", function (e) { filt.service = e.target.value; render(); });
     Utils.qs("#ag-status").addEventListener("change", function (e) { filt.status = e.target.value; render(); });
     var clearBtn = Utils.qs("#btn-ag-clear-filters");
     if (clearBtn) clearBtn.addEventListener("click", clearFilters);
@@ -37,6 +42,7 @@
         btn.classList.add("active");
         viewMode = btn.getAttribute("data-view");
         Utils.qs("#ag-day-nav").style.display = viewMode === "dia" ? "" : "none";
+        Utils.qs("#ag-day-nav-main").style.display = viewMode === "dia" ? "" : "none";
         Utils.qs("#ag-period-filters").style.display = viewMode === "geral" ? "" : "none";
         render();
       });
@@ -52,6 +58,7 @@
         viewMode = "dia";
         Utils.qsa(".tab-btn", Utils.qs("#ag-view-tabs")).forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-view") === "dia"); });
         Utils.qs("#ag-day-nav").style.display = "";
+        Utils.qs("#ag-day-nav-main").style.display = "";
         Utils.qs("#ag-period-filters").style.display = "none";
       }
       render();
@@ -150,10 +157,12 @@
   }
 
   function clearFilters() {
-    filt = { employee: "", status: "" };
+    filt = { employee: "", service: "", status: "" };
     var empSel = document.getElementById("ag-employee");
+    var srvSel = document.getElementById("ag-service");
     var statusSel = document.getElementById("ag-status");
     if (empSel) empSel.value = "";
+    if (srvSel) srvSel.value = "";
     if (statusSel) statusSel.value = "";
     render();
   }
@@ -167,21 +176,7 @@
   function render() {
     var appointments = DB.all("appointments");
     var today = Utils.todayISO();
-
-    var todayCount = appointments.filter(function (a) { return a.date === today; }).length;
-    var concludedToday = appointments.filter(function (a) { return a.date === today && a.status === "concluido"; }).length;
-    var mk = Utils.monthKey(today);
-    var canceledMonth = appointments.filter(function (a) { return Utils.monthKey(a.date) === mk && a.status === "cancelado"; }).length;
-    var upcoming7 = appointments.filter(function (a) { return a.status === "agendado" && a.date >= today && a.date <= Utils.addDays(today, 7); }).length;
-
-    document.getElementById("agenda-summary").innerHTML = [
-      kpi("Agendamentos Hoje", String(todayCount), "fa-calendar-day", "#2a78d6", "#e3eefb"),
-      kpi("Concluídos Hoje", String(concludedToday), "fa-circle-check", "#1baf7a", "#e2f5ec"),
-      kpi("Próximos 7 dias", String(upcoming7), "fa-calendar-week", "#b8923f", "#f6ecd3"),
-      kpi("Cancelados no Mês", String(canceledMonth), "fa-calendar-xmark", "#c23b3b", "#fbe6e6")
-    ].join("");
-
-    var hasFilter = !!(filt.employee || filt.status);
+    var hasFilter = !!(filt.employee || filt.service || filt.status);
     var filterNote = document.getElementById("ag-filter-note");
 
     if (viewMode === "geral") {
@@ -211,6 +206,7 @@
       var count = dayAppts.filter(function (a) {
         if (a.status === "cancelado" && !filt.status) return false;
         if (filt.employee && a.employeeId !== filt.employee) return false;
+        if (filt.service && a.serviceId !== filt.service) return false;
         if (filt.status && a.status !== filt.status) return false;
         return true;
       }).length;
@@ -250,6 +246,7 @@
       if (periodStart && a.date < periodStart) return false;
       if (periodEnd && a.date > periodEnd) return false;
       if (filt.employee && a.employeeId !== filt.employee) return false;
+      if (filt.service && a.serviceId !== filt.service) return false;
       if (filt.status && a.status !== filt.status) return false;
       return true;
     }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
@@ -374,6 +371,7 @@
 
     var dayAppts = DB.all("appointments").filter(function (a) {
       if (a.date !== selectedDate) return false;
+      if (filt.service && a.serviceId !== filt.service) return false;
       if (filt.status && a.status !== filt.status) return false;
       return true;
     });
@@ -712,10 +710,6 @@
     });
   }
 
-  function kpi(label, value, icon, color, bg) {
-    return '<div class="kpi-card"><div class="kpi-icon" style="background:' + bg + ';color:' + color + ';"><i class="fa-solid ' + icon + '"></i></div>' +
-      '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
-  }
   function round2(n) { return Math.round(n * 100) / 100; }
 
   var ROLE_GROUP = { "Cabeleireiro(a)": "Cabelo", "Manicure e Pedicure": "Unhas", "Esteticista": "Estética", "Maquiador(a)": "Maquiagem" };
