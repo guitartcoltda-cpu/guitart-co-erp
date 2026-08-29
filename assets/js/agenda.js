@@ -402,7 +402,7 @@
     }).join("");
 
     listEl.innerHTML =
-      '<div class="cal-scroll"><div class="cal-grid-inner" style="grid-template-columns:64px repeat(' + cols.length + ', minmax(150px,1fr));">' +
+      '<div class="cal-scroll"><div class="cal-grid-inner" style="grid-template-columns:56px repeat(' + cols.length + ', minmax(128px,1fr));">' +
         headerHtml +
         '<div class="cal-time-axis" style="height:' + totalHeight + 'px;">' + hourLabels + '</div>' +
         colsHtml +
