@@ -1,13 +1,10 @@
 /* ============================================================
    Configuração de ambiente do Guitart & Co.
 
-   Deixe SUPABASE_URL e SUPABASE_ANON_KEY vazios ("") para o sistema
-   rodar 100% offline (localStorage), exatamente como a versão baixada
-   em zip — é o padrão deste arquivo.
-
-   Para ligar o sistema ao Supabase (modo online, com dados
-   compartilhados entre todos os aparelhos), preencha os dois valores
-   abaixo com o que aparece em Supabase → Project Settings → API:
+   Chaves de conexão com o Supabase (banco de dados real, compartilhado
+   entre todos os aparelhos/pessoas que usam o sistema) — sem elas o
+   sistema não tem como carregar nem salvar nada (ver assets/js/db.js).
+   Valores em Supabase → Project Settings → API:
      - SUPABASE_URL      -> campo "Project URL"
      - SUPABASE_ANON_KEY -> campo "anon public" (a chave pública, NUNCA
                               a "service_role", que é secreta)

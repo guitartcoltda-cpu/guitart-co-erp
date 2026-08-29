@@ -323,8 +323,9 @@
     // Reads an image File selected in a <input type="file">, downsizes it
     // client-side (via canvas, cropped to a square) and returns a compact
     // base64 JPEG data URL through callback(dataUrl|null). This app has no
-    // backend/file storage — everything lives inside the localStorage JSON
-    // blob — so keeping the photo small matters to avoid bloating it.
+    // dedicated file storage — the image stays embedded as base64 inside
+    // the record's own JSON (in the Supabase jsonb column) — so keeping
+    // the photo small matters to avoid bloating it.
     fileToAvatarDataUrl: function (file, maxSize, callback) {
       maxSize = maxSize || 160;
       if (!file) { callback(null); return; }

@@ -210,32 +210,14 @@
     }, 0);
   }
 
-  function ensureSeed() {
-    if (!global.Seed) return;
-    // Em modo online (Supabase), o banco é compartilhado por todo mundo —
-    // nunca gera dados fictícios/reseta automaticamente aqui, senão o
-    // primeiro aparelho novo a abrir o sistema apagaria os dados reais de
-    // todo mundo.
-    if (DB.ONLINE_MODE) return;
-    var seeded = DB.getSeedVersion();
-    if (seeded !== DB.CURRENT_SEED_VERSION) {
-      global.Seed.run();
-      DB.setSeedVersion();
-    }
-  }
-
   document.addEventListener("DOMContentLoaded", function () {
     // If this page is about to be redirected to login.html (see the inline
-    // guard script in <head> and assets/js/auth.js), skip seeding/rendering
+    // guard script in <head> and assets/js/auth.js), skip rendering
     // entirely. Without this, a brief "flash" render on an unauthenticated
-    // visit can race the redirect and trigger the one-time seed here before
-    // the user even reaches the login screen — harmless on its own, but any
-    // work done during that flash (like activity-log writes right after
-    // login) could get shadowed by it. Simplest fix: do nothing on a page
-    // we're about to leave anyway.
+    // visit can race the redirect — harmless on its own, but simplest fix
+    // is to do nothing on a page we're about to leave anyway.
     if (global.CurrentUser && !global.CurrentUser.isLoginPage() && !global.CurrentUser.get()) return;
     DB.ready.then(function () {
-      ensureSeed();
       render();
       hideLoadingOverlay();
     });

@@ -3,29 +3,7 @@
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
-  function ensureSeed() {
-    if (!window.Seed) return;
-    // Em modo online (Supabase) o banco é compartilhado por todo mundo —
-    // nunca gerar dados fictícios/resetar automaticamente aqui (ver a
-    // mesma lógica/comentário em layout.js).
-    if (DB.ONLINE_MODE) return;
-    var seeded = DB.getSeedVersion();
-    if (seeded !== DB.CURRENT_SEED_VERSION) {
-      window.Seed.run();
-      DB.setSeedVersion();
-    }
-  }
-
   function init() {
-    // Seed the database (if needed) BEFORE any authentication happens on
-    // this page. Seed.run() calls DB.resetAll() internally, which wipes
-    // users/activityLog back to defaults — if seeding were deferred to the
-    // first authenticated page (as it used to be), a fresh install's very
-    // first "entrou no sistema" log entry would get wiped out moments after
-    // being written. Doing it here guarantees seeding is already done by
-    // the time DB.log() records the login.
-    ensureSeed();
-
     // if already logged in, skip straight past the login screen
     var existing = CurrentUser.get();
     if (existing && DB.get("users", existing.id) && DB.get("users", existing.id).active) {

@@ -81,10 +81,10 @@
   // "convenience, not real security" spirit documented in LEIA-ME.md — a
   // user with DevTools open can always bypass this).
   if (!CurrentUser.isLoginPage()) {
-    // Aguarda o cache do DB estar pronto (instantâneo em modo offline; em
-    // modo online, aguarda a primeira busca no Supabase) antes de revalidar
-    // a sessão — evita reprovar por engano um usuário válido só porque os
-    // dados ainda não chegaram do servidor neste carregamento de página.
+    // Aguarda o cache do DB estar pronto (a primeira busca no Supabase)
+    // antes de revalidar a sessão — evita reprovar por engano um usuário
+    // válido só porque os dados ainda não chegaram do servidor neste
+    // carregamento de página.
     // Isso não reintroduz o "flash" de conteúdo protegido que esse guard
     // evita: layout.js e o script de cada tela também só desenham algo na
     // tela depois de DB.ready, então nada aparece antes dessa checagem.

@@ -1,6 +1,6 @@
 /* ============================================================
-   Salão ERP — Notificações via WhatsApp (outbox offline)
-   Este app é 100% estático/offline e não tem backend, então não é
+   Salão ERP — Notificações via WhatsApp (outbox)
+   O sistema não integra com a API oficial do WhatsApp, então não é
    possível disparar mensagens sozinho. O que este módulo faz:
    1) Identifica automaticamente 3 situações (confirmação de
       agendamento, lembrete de véspera, cliente inativo há tempo) e
@@ -9,10 +9,9 @@
    2) A tela de Notificações (notificacoes.html) lista esses itens e
       monta o link wa.me com a mensagem pronta — quem estiver no
       salão clica em "Abrir WhatsApp" e confirma o envio manualmente.
-   Quando o projeto subir com backend (GitHub/Supabase), o disparo
-   automático via API do WhatsApp pode plugar exatamente nesse mesmo
-   fluxo — trocando o clique manual por uma chamada de API sobre os
-   mesmos registros de `notifications`.
+   Se um dia integrar a API do WhatsApp Business, o disparo automático
+   pode plugar exatamente nesse mesmo fluxo — trocando o clique manual
+   por uma chamada de API sobre os mesmos registros de `notifications`.
    ============================================================ */
 (function (global) {
   "use strict";

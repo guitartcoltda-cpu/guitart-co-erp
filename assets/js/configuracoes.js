@@ -38,9 +38,7 @@
       reader.onload = function (ev) {
         Modal.confirm({
           title: "Importar backup",
-          message: DB.ONLINE_MODE
-            ? "Isso substituirá todos os dados atuais DE TODO O SISTEMA (de todos os usuários e aparelhos) pelos dados do arquivo importado. Deseja continuar?"
-            : "Isso substituirá todos os dados atuais pelos dados do arquivo importado. Deseja continuar?",
+          message: "Isso substituirá todos os dados atuais DE TODO O SISTEMA (de todos os usuários e aparelhos) pelos dados do arquivo importado. Deseja continuar?",
           danger: true,
           onConfirm: function () {
             try {
