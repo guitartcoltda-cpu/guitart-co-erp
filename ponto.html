@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      if (!sessionStorage.getItem('salao_erp_session')) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Ponto · Guitart & Co.</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="stylesheet" href="assets/css/style.css">
+<script>window.PAGE_META = { title: "Ponto", subtitle: "Bater ponto — entrada, almoço e saída" };</script>
+</head>
+<body data-page="ponto">
+  <div id="page-loading-overlay" class="page-loading-overlay">
+    <img src="assets/img/logo-guitart.png" alt="Guitart & Co." class="page-loading-logo">
+    <div class="page-loading-spinner"></div>
+  </div>
+  <script>
+    setTimeout(function () {
+      var ov = document.getElementById("page-loading-overlay");
+      if (ov) ov.classList.add("is-hidden");
+    }, 8000);
+  </script>
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Ponto</h2>
+            <p>Escolha seu nome na lista, confira o que vai ser registrado e tire uma selfie para confirmar</p>
+          </div>
+        </div>
+
+        <div id="ponto-picker" class="card">
+          <div class="card-header"><h3>Quem está batendo ponto?</h3></div>
+          <div class="card-body">
+            <div id="ponto-emp-grid" class="ponto-emp-grid"></div>
+            <div id="ponto-emp-empty" class="empty-state" style="display:none;">
+              <div class="es-icon"><i class="fa-solid fa-user-clock"></i></div>
+              <h4>Nenhum funcionário está marcado para bater ponto</h4>
+              <p class="small text-muted">Ative em Funcionários → editar → "Bate ponto pelo sistema?"</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="ponto-confirm" class="card" style="display:none;">
+          <div class="card-header"><h3>Confirmar registro</h3></div>
+          <div class="card-body">
+            <div id="ponto-confirm-body"></div>
+          </div>
+        </div>
+
+        <div id="ponto-done" class="card" style="display:none;">
+          <div class="card-body">
+            <div id="ponto-done-body"></div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script src="assets/js/ponto.js"></script>
+</body>
+</html>
