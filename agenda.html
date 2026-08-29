@@ -69,6 +69,24 @@
   .mini-cal-day.mc-outside { color: var(--gray-300); }
   .mini-cal-day.mc-today { border: 1px solid var(--color-accent); font-weight: 700; }
   .mini-cal-day.mc-selected { background: var(--color-primary); color: #fff; font-weight: 700; }
+  /* Layout em duas colunas: barra lateral fixa (mini calendário, filtros,
+     legenda) + coluna principal com a navegação de dia e o calendário —
+     junta num só lugar o que antes ficava empilhado em blocos separados
+     acima da grade, deixando o calendário visível mais cedo na tela. */
+  .ag-layout { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+  .ag-rail { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
+  .ag-rail-card .card-header { padding: 14px 18px; }
+  .ag-rail-card .card-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+  .ag-legend-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--gray-700); }
+  .ag-legend-dot { width: 12px; height: 12px; border-radius: 4px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.08); }
+  .ag-main-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .ag-main-nav .ag-nav-controls { display: flex; align-items: center; gap: 6px; }
+  .ag-main-nav #week-label { font-size: 14px; font-weight: 700; min-width: 190px; text-align: center; }
+  @media (max-width: 1100px) {
+    .ag-layout { grid-template-columns: 1fr; }
+    .ag-rail { position: static; order: 2; }
+    .ag-main { order: 1; }
+  }
   @media (max-width: 900px) {
     .mini-cal { max-width: 100%; }
     /* Corrige o "double scroll" no celular: a grade da Visão do Dia (colunas
@@ -108,52 +126,70 @@
             <p>Agendamentos de horários por cliente, profissional e serviço</p>
           </div>
           <div class="toolbar-actions">
-            <button class="btn btn-secondary" id="btn-today"><i class="fa-solid fa-calendar-day"></i> Hoje</button>
             <button class="btn btn-secondary" id="btn-new-occurrence"><i class="fa-solid fa-triangle-exclamation"></i> Registrar Ocorrência</button>
             <button class="btn btn-primary" id="btn-new-appt"><i class="fa-solid fa-plus"></i> Novo Agendamento</button>
           </div>
         </div>
 
-        <div class="kpi-grid" id="agenda-summary" style="margin-bottom:16px;"></div>
-
-        <div class="tabs" id="ag-view-tabs" style="margin-bottom:16px;">
-          <button type="button" class="tab-btn active" data-view="dia">Visão do Dia</button>
-          <button type="button" class="tab-btn" data-view="geral">Visão Geral (todos os dias)</button>
-        </div>
-
-        <div id="ag-day-nav">
-          <div class="flex items-center justify-between mb-16" style="gap:10px;flex-wrap:wrap;">
-            <div class="flex items-center gap-6">
-              <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Semana anterior"><i class="fa-solid fa-angles-left"></i></button>
-              <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>
+        <div class="ag-layout">
+          <aside class="ag-rail">
+            <div id="ag-day-nav">
+              <div class="mini-cal" id="mini-cal"></div>
             </div>
-            <h3 id="week-label" style="font-size:14px;"></h3>
-            <div class="flex items-center gap-6">
-              <button class="btn btn-icon btn-secondary" id="btn-next-week" title="Próximo dia"><i class="fa-solid fa-chevron-right"></i></button>
-              <button class="btn btn-icon btn-secondary" id="btn-next-month" title="Próxima semana"><i class="fa-solid fa-angles-right"></i></button>
+
+            <div class="card ag-rail-card">
+              <div class="card-header"><h3>Filtros</h3></div>
+              <div class="card-body">
+                <div class="filters-bar" id="ag-period-filters" style="display:none;">
+                  <div class="form-field"><label>De</label><input type="date" id="ag-period-start"></div>
+                  <div class="form-field"><label>Até</label><input type="date" id="ag-period-end"></div>
+                  <div class="small text-muted">Deixe "Até" em branco para ver todos os agendamentos futuros sem limite.</div>
+                </div>
+                <div class="form-field"><label>Profissional</label><select id="ag-employee"><option value="">Todos</option></select></div>
+                <div class="form-field"><label>Serviço</label><select id="ag-service"><option value="">Todos</option></select></div>
+                <div class="form-field"><label>Situação</label><select id="ag-status"><option value="">Todas</option><option value="agendado">Agendado</option><option value="concluido">Concluído</option><option value="faltou">Faltou</option><option value="cancelado">Cancelado</option></select></div>
+                <button class="btn btn-sm btn-secondary" id="btn-ag-clear-filters" type="button">Limpar Filtros</button>
+                <div class="small text-muted" id="ag-filter-note"></div>
+              </div>
+            </div>
+
+            <div class="card ag-rail-card">
+              <div class="card-header"><h3>Legenda</h3></div>
+              <div class="card-body">
+                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#2a78d6;"></span> Agendado</div>
+                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#1baf7a;"></span> Concluído</div>
+                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#b7791f;"></span> Faltou</div>
+                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#999;"></span> Cancelado</div>
+                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#888;"></span> Ocorrência / Bloqueio</div>
+              </div>
+            </div>
+          </aside>
+
+          <div class="ag-main">
+            <div class="tabs" id="ag-view-tabs" style="margin-bottom:16px;">
+              <button type="button" class="tab-btn active" data-view="dia">Visão do Dia</button>
+              <button type="button" class="tab-btn" data-view="geral">Visão Geral (todos os dias)</button>
+            </div>
+
+            <div id="ag-day-nav-main">
+              <div class="ag-main-nav">
+                <div class="ag-nav-controls">
+                  <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Semana anterior"><i class="fa-solid fa-angles-left"></i></button>
+                  <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>
+                  <button class="btn btn-secondary" id="btn-today"><i class="fa-solid fa-calendar-day"></i> Hoje</button>
+                  <button class="btn btn-icon btn-secondary" id="btn-next-week" title="Próximo dia"><i class="fa-solid fa-chevron-right"></i></button>
+                  <button class="btn btn-icon btn-secondary" id="btn-next-month" title="Próxima semana"><i class="fa-solid fa-angles-right"></i></button>
+                </div>
+                <h3 id="week-label"></h3>
+              </div>
+              <div class="week-strip" id="week-strip"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><div><h3 id="day-title">Agendamentos</h3></div></div>
+              <div class="card-body" id="day-list"></div>
             </div>
           </div>
-          <div class="week-strip" id="week-strip"></div>
-
-          <div class="mini-cal" id="mini-cal"></div>
-        </div>
-
-        <div class="filters-bar" id="ag-period-filters" style="display:none;margin-bottom:16px;">
-          <div class="form-field"><label>De</label><input type="date" id="ag-period-start"></div>
-          <div class="form-field"><label>Até</label><input type="date" id="ag-period-end"></div>
-          <div class="small text-muted" style="align-self:center;">Deixe "Até" em branco para ver todos os agendamentos futuros sem limite.</div>
-        </div>
-
-        <div class="filters-bar">
-          <div class="form-field"><label>Profissional</label><select id="ag-employee"><option value="">Todos</option></select></div>
-          <div class="form-field"><label>Status</label><select id="ag-status"><option value="">Todos</option><option value="agendado">Agendado</option><option value="concluido">Concluído</option><option value="faltou">Faltou</option><option value="cancelado">Cancelado</option></select></div>
-          <button class="btn btn-sm btn-secondary" id="btn-ag-clear-filters" type="button">Limpar Filtros</button>
-          <div class="small text-muted" id="ag-filter-note" style="align-self:center;"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header"><div><h3 id="day-title">Agendamentos</h3></div></div>
-          <div class="card-body" id="day-list"></div>
         </div>
 
       </main>
