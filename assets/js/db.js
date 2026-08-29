@@ -26,7 +26,8 @@
     "products", "stockMovements", "transactions", "appointments",
     "bankLines", "commissionPayouts", "settings", "users", "activityLog",
     "commissionBonuses", "occurrences", "cardMachines",
-    "productConsumptions", "notifications", "approvals", "chamados"
+    "productConsumptions", "notifications", "approvals", "chamados",
+    "timeClockEntries"
   ];
 
   var ENV = global.ENV || {};

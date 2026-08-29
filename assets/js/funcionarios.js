@@ -111,6 +111,11 @@
     // na Agenda quando o cargo já era um dos que atendiam cliente.
     // Cadastro novo: começa em "Não" (o cargo por si só não decide mais isso).
     var performsServices = e ? (e.performsServices !== undefined ? !!e.performsServices : LEGACY_SERVICE_ROLES.indexOf(e.role) !== -1) : false;
+    // Controla se essa pessoa aparece na lista de quem bate ponto (tela
+    // Ponto) — quem não estiver marcado aqui simplesmente não vê o próprio
+    // nome na lista de bater ponto. Todo cadastro (novo ou já existente)
+    // começa em "Não"; é uma opção que precisa ser ligada manualmente.
+    var requiresTimeClock = e ? !!e.requiresTimeClock : false;
     var body =
       '<div class="flex items-center gap-16 mb-16">' +
         '<div id="em-photo-preview">' + Utils.avatarHtml(e ? e.name : "Novo", photoDataUrl, "avatar-lg") + '</div>' +
@@ -126,6 +131,8 @@
       '<div class="form-field"><label>Status</label><select id="em-status"><option value="ativo"' + (e && e.status === "ativo" ? " selected" : "") + '>Ativo</option><option value="inativo"' + (e && e.status === "inativo" ? " selected" : "") + '>Inativo</option></select></div>' +
       '<div class="form-field"><label>Este profissional realiza serviços?</label><select id="em-performs"><option value="1"' + (performsServices ? " selected" : "") + '>Sim</option><option value="0"' + (!performsServices ? " selected" : "") + '>Não</option></select>' +
         '<div class="hint">Só quem tem essa opção em "Sim" ganha uma coluna própria na Visão do Dia da Agenda. Útil para marcar um assistente que também atende sozinho.</div></div>' +
+      '<div class="form-field"><label>Bate ponto pelo sistema?</label><select id="em-timeclock"><option value="1"' + (requiresTimeClock ? " selected" : "") + '>Sim</option><option value="0"' + (!requiresTimeClock ? " selected" : "") + '>Não</option></select>' +
+        '<div class="hint">Só quem tem essa opção em "Sim" aparece na lista de nomes da tela Ponto.</div></div>' +
       '<div class="form-field"><label>Telefone (com DDD)</label><input type="tel" id="em-phone" placeholder="(11) 98765-4321" value="' + (e ? Utils.escapeHtml(e.phone) : "") + '"></div>' +
       '<div class="form-field"><label>E-mail</label><input type="email" id="em-email" value="' + (e ? Utils.escapeHtml(e.email) : "") + '"></div>' +
       '<div class="form-field"><label>CPF</label><input type="text" id="em-cpf" placeholder="000.000.000-00" value="' + (e && e.cpf ? Utils.fmtCPF(e.cpf) : "") + '"></div>' +
@@ -172,6 +179,7 @@
         baseSalary: parseFloat(box.querySelector("#em-salary").value) || 0,
         commissionRate: parseFloat(box.querySelector("#em-comm").value) || 0,
         performsServices: box.querySelector("#em-performs").value === "1",
+        requiresTimeClock: box.querySelector("#em-timeclock").value === "1",
         photoDataUrl: photoDataUrl
       };
       if (e) { DB.update("employees", e.id, patch); DB.log("Funcionário", "Atualizou o funcionário " + name); Toast.show("Funcionário atualizado", "success"); }

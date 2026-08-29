@@ -11,6 +11,7 @@
     { page: "agenda", href: "agenda.html", icon: "fa-calendar-days", label: "Agenda" },
     { page: "alertas", href: "alertas.html", icon: "fa-bell", label: "Central de Alertas" },
     { page: "notificacoes", href: "notificacoes.html", icon: "fa-comment-sms", label: "Notificações WhatsApp" },
+    { page: "ponto", href: "ponto.html", icon: "fa-fingerprint", label: "Bater Ponto" },
     { section: "Cadastros" },
     { page: "clientes", href: "clientes.html", icon: "fa-users", label: "Clientes" },
     { page: "funcionarios", href: "funcionarios.html", icon: "fa-id-badge", label: "Funcionários" },
@@ -25,6 +26,7 @@
     { page: "dre", href: "dre.html", icon: "fa-chart-line", label: "Fluxo de Caixa / DRE" },
     { section: "Operações" },
     { page: "estoque", href: "estoque.html", icon: "fa-boxes-stacked", label: "Estoque" },
+    { page: "ponto-gestao", href: "ponto-gestao.html", icon: "fa-user-clock", label: "Gestão de Ponto" },
     { section: "Sistema" },
     { page: "chamados", href: "chamados.html", icon: "fa-headset", label: "Chamados" },
     { page: "configuracoes", href: "configuracoes.html", icon: "fa-gear", label: "Configurações" }
