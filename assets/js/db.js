@@ -100,12 +100,48 @@
     return null;
   }
 
+  // Em modo online, tira das fotos (employees/clients.photoDataUrl) e dos
+  // anexos (transactions/occurrences/commissionPayouts.attachment.dataUrl)
+  // o base64 antes de gravar a cópia local — só nessa cópia, o `_cache` em
+  // memória usado pela tela continua com tudo. Esses campos, em base64,
+  // são o que mais rápido enche a cota de localStorage do navegador
+  // (5-10MB típico) e travam TODA gravação local seguinte, mesmo em
+  // tabelas sem nenhuma foto/anexo — já que a cópia local salva o banco
+  // inteiro de uma vez. Em modo online isso é seguro: o Supabase (não o
+  // localStorage) já é a fonte de verdade, e a cópia local existe só como
+  // cache rápido/reserva se a internet cair no meio do uso.
+  function stripLargeFieldsForMirror(db) {
+    var out = {};
+    Object.keys(db).forEach(function (table) {
+      var val = db[table];
+      if (!Array.isArray(val)) { out[table] = val; return; }
+      out[table] = val.map(function (rec) {
+        if (!rec || typeof rec !== "object") return rec;
+        var hasPhoto = !!rec.photoDataUrl;
+        var hasAttachment = !!(rec.attachment && rec.attachment.dataUrl);
+        if (!hasPhoto && !hasAttachment) return rec;
+        var clone = Object.assign({}, rec);
+        if (hasPhoto) clone.photoDataUrl = null;
+        if (hasAttachment) clone.attachment = Object.assign({}, clone.attachment, { dataUrl: null });
+        return clone;
+      });
+    });
+    return out;
+  }
+
   function persistLocalMirror() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(_cache));
+      var toStore = ONLINE_MODE ? stripLargeFieldsForMirror(_cache) : _cache;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
     } catch (e) {
       console.error("Erro ao salvar cópia local dos dados", e);
-      if (global.Toast) global.Toast.show("Erro ao salvar cópia local (armazenamento cheio?)", "danger");
+      // Em modo offline o localStorage é a ÚNICA cópia dos dados — se não
+      // couber, o usuário precisa saber. Em modo online o Supabase já
+      // salvou (remoteUpsert roda à parte, na hora da escrita), então uma
+      // falha aqui é só a cópia local de reserva não caber no navegador —
+      // não vale interromper quem está trabalhando com um alerta vermelho
+      // toda vez que isso acontecer.
+      if (global.Toast && !ONLINE_MODE) global.Toast.show("Erro ao salvar cópia local (armazenamento cheio?)", "danger");
     }
   }
 
