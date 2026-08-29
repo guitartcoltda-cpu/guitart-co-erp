@@ -138,8 +138,10 @@
         appts.map(function (a) {
           var s = services.find(function (x) { return x.id === a.serviceId; });
           var e = employees.find(function (x) { return x.id === a.employeeId; });
+          var asst = a.assistantId ? employees.find(function (x) { return x.id === a.assistantId; }) : null;
           var statusBadge = a.status === "concluido" ? '<span class="badge badge-success">Concluído</span>' : a.status === "agendado" ? '<span class="badge badge-info">Agendado</span>' : '<span class="badge badge-danger">Cancelado</span>';
-          return '<tr><td class="text-num">' + Utils.fmtDate(a.date) + ' ' + a.time + '</td><td>' + Utils.escapeHtml(s ? s.name : "-") + '</td><td>' + Utils.escapeHtml(e ? e.name : "-") + '</td><td>' + statusBadge + '</td><td class="text-right text-num">' + Utils.fmtMoney(a.price) + '</td></tr>';
+          var profCell = Utils.escapeHtml(e ? e.name : "-") + (asst ? '<br><span class="small text-muted">com assistente: ' + Utils.escapeHtml(asst.name) + '</span>' : '');
+          return '<tr><td class="text-num">' + Utils.fmtDate(a.date) + ' ' + a.time + '</td><td>' + Utils.escapeHtml(s ? s.name : "-") + '</td><td>' + profCell + '</td><td>' + statusBadge + '</td><td class="text-right text-num">' + Utils.fmtMoney(a.price) + '</td></tr>';
         }).join("") + '</tbody></table></div>' : '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-calendar"></i></div><h4>Sem atendimentos registrados</h4></div>');
 
     Modal.open({ title: "Histórico — " + c.name, bodyHtml: body, wide: true, footHtml: '<button class="btn btn-secondary" data-close-modal>Fechar</button>' });
