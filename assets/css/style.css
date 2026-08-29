@@ -708,4 +708,33 @@ body.modal-open-lock { overflow: hidden; }
   .toolbar-title h2 { font-size: 17px; }
   .card-header { flex-direction: column; align-items: flex-start; gap: 8px; }
   .nt-msg-preview { max-width: 200px; }
+  .ponto-emp-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ---- Ponto (bater ponto) ---- */
+.ponto-emp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.ponto-emp-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 2px;
+  padding: 16px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .15s, box-shadow .15s;
+}
+.ponto-emp-card:hover { border-color: var(--color-accent, #2a78d6); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.ponto-thumb {
+  width: 48px; height: 48px; border-radius: var(--radius-sm);
+  background-size: cover; background-position: center;
+  border: 1px solid var(--border-color); cursor: pointer; flex-shrink: 0;
+}
 }
