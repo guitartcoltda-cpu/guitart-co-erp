@@ -40,8 +40,8 @@
   .cal-corner { position: sticky; top: 0; left: 0; z-index: 3; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
   .cal-col-header { position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); padding: 10px 6px; text-align: center; }
   .cal-col-header .avatar { margin: 0 auto 4px; }
-  .cal-col-header .cch-name { font-weight: 800; font-size: 12.5px; }
-  .cal-col-header .cch-role { font-size: 10.5px; color: var(--gray-500); }
+  .cal-col-header .cch-name { font-weight: 800; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cal-col-header .cch-role { font-size: 10.5px; color: var(--gray-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cal-time-axis { position: sticky; left: 0; z-index: 1; background: #fff; border-right: 1px solid var(--border-color); }
   .cal-hour-label { position: absolute; left: 0; right: 0; font-size: 10.5px; color: var(--gray-500); padding: 0 6px; transform: translateY(-50%); }
   .cal-col { position: relative; border-right: 1px solid var(--border-color); cursor: pointer; background-image: repeating-linear-gradient(to bottom, var(--border-color) 0, var(--border-color) 1px, transparent 1px, transparent 100%); background-repeat: repeat-y; }
@@ -73,7 +73,14 @@
      legenda) + coluna principal com a navegação de dia e o calendário —
      junta num só lugar o que antes ficava empilhado em blocos separados
      acima da grade, deixando o calendário visível mais cedo na tela. */
-  .ag-layout { display: grid; grid-template-columns: 300px 1fr; gap: 20px; align-items: start; }
+  .ag-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+  /* min-width:0 é essencial aqui: sem isso, a grade de calendário (que usa
+     width:max-content para os cartões de profissional) força a coluna
+     inteira — e a página toda — a ficar mais larga que a tela em vez de
+     rolar só dentro da própria caixa (.cal-scroll), fazendo tudo parecer
+     "espremido"/ampliado em notebooks com resolução menor ou escala do
+     Windows acima de 100%. */
+  .ag-main { min-width: 0; }
   .ag-rail { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
   .ag-rail-card .card-header { padding: 14px 18px; }
   .ag-rail-card .card-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
