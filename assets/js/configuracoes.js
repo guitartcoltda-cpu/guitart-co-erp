@@ -91,12 +91,14 @@
       Utils.emptyTable(tbl, "fa-user", "Nenhum acesso cadastrado");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th>Criado em</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Funcionário vinculado</th><th>Status</th><th>Criado em</th><th></th></tr></thead><tbody>' +
       list.map(function (u) {
+        var emp = u.employeeId ? DB.get("employees", u.employeeId) : null;
         return '<tr>' +
           '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(u.firstName + " " + u.lastName) + '</div>' + Utils.escapeHtml(u.firstName + " " + u.lastName) + '</div></td>' +
           '<td class="text-num">' + Utils.fmtCPF(u.cpf) + '</td>' +
           '<td>' + Utils.escapeHtml(u.role) + '</td>' +
+          '<td>' + (emp ? Utils.escapeHtml(emp.name) : '<span class="text-muted">—</span>') + '</td>' +
           '<td>' + (u.active ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-gray">Inativo</span>') + '</td>' +
           '<td class="small text-muted">' + Utils.fmtDate(u.createdAt) + '</td>' +
           '<td><div class="flex gap-6">' +
@@ -133,8 +135,11 @@
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-del-user");
         var u = DB.get("users", id);
+        var emp = u && u.employeeId ? DB.get("employees", u.employeeId) : null;
         Modal.confirm({
-          title: "Excluir acesso", message: "Confirma a exclusão deste acesso? Essa ação não pode ser desfeita.", danger: true,
+          title: "Excluir acesso",
+          message: "Confirma a exclusão deste acesso?" + (emp ? " O funcionário " + emp.name + " deixará de conseguir fazer login (o cadastro dele em Funcionários não é afetado)." : "") + " Essa ação não pode ser desfeita.",
+          danger: true,
           onConfirm: function () {
             DB.remove("users", id);
             if (u) DB.log("Acesso", "Excluiu o acesso de " + u.firstName + " " + u.lastName);
@@ -148,7 +153,9 @@
 
   function openUserModal(id) {
     var u = id ? DB.get("users", id) : null;
-    var body = '<div class="form-grid">' +
+    var emp = u && u.employeeId ? DB.get("employees", u.employeeId) : null;
+    var body = (emp ? '<div class="small text-muted mb-16"><i class="fa-solid fa-circle-info"></i> Este acesso está vinculado ao funcionário <strong>' + Utils.escapeHtml(emp.name) + '</strong>. Nome, CPF e telefone normalmente são editados por lá (Funcionários → editar), mas também podem ser ajustados aqui se precisar.</div>' : '') +
+      '<div class="form-grid">' +
       '<div class="form-field"><label>CPF</label><input type="text" id="usr-cpf" maxlength="14" placeholder="000.000.000-00" value="' + (u ? Utils.fmtCPF(u.cpf) : "") + '"></div>' +
       '<div class="form-field"><label>Perfil</label><select id="usr-role">' + ROLE_OPTIONS.map(function (r) { return '<option value="' + r + '"' + (u && u.role === r ? " selected" : "") + '>' + r + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Nome</label><input type="text" id="usr-first" value="' + (u ? Utils.escapeHtml(u.firstName) : "") + '"></div>' +
