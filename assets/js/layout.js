@@ -182,6 +182,32 @@
       });
     }
 
+    // Memória de rolagem do menu lateral: como o sistema é multi-página
+    // (cada clique no menu recarrega a página inteira), a barra lateral é
+    // reconstruída do zero a cada navegação e, sem isso, sempre "subia"
+    // de volta para o topo mesmo que o usuário tivesse rolado para baixo
+    // para ver itens como Estoque/Configurações antes de clicar. Guarda a
+    // posição de rolagem em sessionStorage (dura a aba/sessão, não precisa
+    // sobreviver ao navegador fechar) e restaura assim que o menu é
+    // desenhado, para o clique manter o usuário exatamente onde estava.
+    var SIDEBAR_SCROLL_KEY = "salao_erp_sidebar_scroll";
+    var sidebarEl = document.getElementById("app-sidebar");
+    if (sidebarEl) {
+      try {
+        var savedScroll = sessionStorage.getItem(SIDEBAR_SCROLL_KEY);
+        if (savedScroll) sidebarEl.scrollTop = parseInt(savedScroll, 10) || 0;
+      } catch (e) {}
+      var scrollSaveQueued = false;
+      sidebarEl.addEventListener("scroll", function () {
+        if (scrollSaveQueued) return;
+        scrollSaveQueued = true;
+        requestAnimationFrame(function () {
+          scrollSaveQueued = false;
+          try { sessionStorage.setItem(SIDEBAR_SCROLL_KEY, String(sidebarEl.scrollTop)); } catch (e) {}
+        });
+      }, { passive: true });
+    }
+
     var toggle = document.getElementById("mobile-nav-toggle");
     if (toggle) {
       var mq = window.matchMedia("(max-width: 900px)");
