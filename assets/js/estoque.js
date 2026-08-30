@@ -5,6 +5,8 @@
   var mf = { product: "", type: "", start: "", end: "" };
   var cf = { employee: "", start: "", end: "" };
   var movesPage = 1, MOVES_PAGE_SIZE = 20;
+  var productsPage = 1, PRODUCTS_PAGE_SIZE = 30;
+  var consumoPage = 1, CONSUMO_PAGE_SIZE = 30;
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -18,9 +20,9 @@
       });
     });
 
-    Utils.qs("#p-type").addEventListener("change", function (e) { pf.type = e.target.value; renderProducts(); });
-    Utils.qs("#p-status").addEventListener("change", function (e) { pf.status = e.target.value; renderProducts(); });
-    Utils.qs("#p-search").addEventListener("input", Utils.debounce(function (e) { pf.search = e.target.value.toLowerCase(); renderProducts(); }, 200));
+    Utils.qs("#p-type").addEventListener("change", function (e) { pf.type = e.target.value; productsPage = 1; renderProducts(); });
+    Utils.qs("#p-status").addEventListener("change", function (e) { pf.status = e.target.value; productsPage = 1; renderProducts(); });
+    Utils.qs("#p-search").addEventListener("input", Utils.debounce(function (e) { pf.search = e.target.value.toLowerCase(); productsPage = 1; renderProducts(); }, 200));
     Utils.qs("#btn-new-product").addEventListener("click", function () { openProductModal(null); });
     Utils.qs("#btn-export-stock").addEventListener("click", exportCSV);
 
@@ -37,9 +39,9 @@
     DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (e) {
       var o = document.createElement("option"); o.value = e.id; o.textContent = e.name; empSel.appendChild(o);
     });
-    empSel.addEventListener("change", function (e) { cf.employee = e.target.value; renderConsumo(); });
-    Utils.qs("#cs-start").addEventListener("change", function (e) { cf.start = e.target.value; renderConsumo(); });
-    Utils.qs("#cs-end").addEventListener("change", function (e) { cf.end = e.target.value; renderConsumo(); });
+    empSel.addEventListener("change", function (e) { cf.employee = e.target.value; consumoPage = 1; renderConsumo(); });
+    Utils.qs("#cs-start").addEventListener("change", function (e) { cf.start = e.target.value; consumoPage = 1; renderConsumo(); });
+    Utils.qs("#cs-end").addEventListener("change", function (e) { cf.end = e.target.value; consumoPage = 1; renderConsumo(); });
     Utils.qs("#btn-new-consumo").addEventListener("click", function () { openConsumoModal(); });
 
     renderProducts();
@@ -78,12 +80,19 @@
     ].join("");
 
     var tbl = document.getElementById("tbl-products");
+    var pag = document.getElementById("products-pagination");
     if (!products.length) {
       Utils.emptyTable(tbl, "fa-box-open", "Nenhum produto encontrado");
+      if (pag) pag.innerHTML = "";
       return;
     }
+
+    var totalPages = Math.max(1, Math.ceil(products.length / PRODUCTS_PAGE_SIZE));
+    productsPage = Math.min(productsPage, totalPages);
+    var pageItems = products.slice((productsPage - 1) * PRODUCTS_PAGE_SIZE, productsPage * PRODUCTS_PAGE_SIZE);
+
     tbl.innerHTML = '<thead><tr><th>Produto</th><th>SKU</th><th>Tipo</th><th class="text-right">Estoque</th><th class="text-right">Mínimo</th><th class="text-right">Custo</th><th class="text-right">Venda</th><th>Fornecedor</th><th>Situação</th><th></th></tr></thead><tbody>' +
-      products.map(function (p) {
+      pageItems.map(function (p) {
         var low = p.currentStock <= p.minStock;
         return '<tr>' +
           '<td class="font-bold">' + Utils.escapeHtml(p.name) + '</td>' +
@@ -102,6 +111,16 @@
           '</div></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+
+    if (pag) {
+      pag.innerHTML = '<div>Mostrando ' + pageItems.length + ' de ' + products.length + '</div>' +
+        '<div class="pg-btns"><button class="btn btn-sm btn-secondary" id="pr-prev" ' + (productsPage <= 1 ? "disabled" : "") + '>Anterior</button>' +
+        '<span style="padding:6px 10px;">Página ' + productsPage + ' de ' + totalPages + '</span>' +
+        '<button class="btn btn-sm btn-secondary" id="pr-next" ' + (productsPage >= totalPages ? "disabled" : "") + '>Próxima</button></div>';
+      var prPrev = document.getElementById("pr-prev"), prNext = document.getElementById("pr-next");
+      if (prPrev) prPrev.addEventListener("click", function () { productsPage--; renderProducts(); });
+      if (prNext) prNext.addEventListener("click", function () { productsPage++; renderProducts(); });
+    }
 
     Utils.qsa("[data-move]", tbl).forEach(function (b) { b.addEventListener("click", function () { openMoveModal(b.getAttribute("data-move")); }); });
     Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openProductModal(b.getAttribute("data-edit")); }); });
@@ -185,13 +204,20 @@
     var products = DB.all("products");
     var items = getConsumos();
     var tbl = document.getElementById("tbl-consumo");
+    var pag = document.getElementById("consumo-pagination");
     if (!items.length) {
       Utils.emptyTable(tbl, "fa-flask", "Nenhum lançamento de consumo encontrado");
+      if (pag) pag.innerHTML = "";
       return;
     }
+
+    var totalPages = Math.max(1, Math.ceil(items.length / CONSUMO_PAGE_SIZE));
+    consumoPage = Math.min(consumoPage, totalPages);
+    var pageItems = items.slice((consumoPage - 1) * CONSUMO_PAGE_SIZE, consumoPage * CONSUMO_PAGE_SIZE);
+
     var isAdmin = !window.Approvals || Approvals.isAdmin();
     tbl.innerHTML = '<thead><tr><th>Data</th><th>Profissional</th><th>Produto</th><th class="text-right">Qtd.</th><th class="text-right">Custo Total</th><th class="text-right">Metade Profissional</th><th class="text-right">Metade Salão</th><th>Observações</th><th></th></tr></thead><tbody>' +
-      items.map(function (c) {
+      pageItems.map(function (c) {
         var p = products.find(function (x) { return x.id === c.productId; });
         return '<tr>' +
           '<td class="text-num">' + Utils.fmtDate(c.date) + '</td>' +
@@ -209,6 +235,16 @@
           '</div></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+
+    if (pag) {
+      pag.innerHTML = '<div>Mostrando ' + pageItems.length + ' de ' + items.length + '</div>' +
+        '<div class="pg-btns"><button class="btn btn-sm btn-secondary" id="cs-prev" ' + (consumoPage <= 1 ? "disabled" : "") + '>Anterior</button>' +
+        '<span style="padding:6px 10px;">Página ' + consumoPage + ' de ' + totalPages + '</span>' +
+        '<button class="btn btn-sm btn-secondary" id="cs-next" ' + (consumoPage >= totalPages ? "disabled" : "") + '>Próxima</button></div>';
+      var csPrev = document.getElementById("cs-prev"), csNext = document.getElementById("cs-next");
+      if (csPrev) csPrev.addEventListener("click", function () { consumoPage--; renderConsumo(); });
+      if (csNext) csNext.addEventListener("click", function () { consumoPage++; renderConsumo(); });
+    }
 
     Utils.qsa("[data-details-consumo]", tbl).forEach(function (b) {
       b.addEventListener("click", function () { openConsumoDetailsModal(b.getAttribute("data-details-consumo")); });

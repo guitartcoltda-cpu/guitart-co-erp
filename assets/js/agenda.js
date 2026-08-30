@@ -6,6 +6,12 @@
   var viewMode = "dia"; // "dia" | "geral" — geral shows every appointment across all dates, not scoped to a single day
   var periodStart = Utils.todayISO();
   var periodEnd = "";
+  // Paginação da Visão Geral (item 5 do plano de otimização) — sem isso,
+  // um histórico de meses/anos de agendamentos seria renderizado inteiro
+  // de uma vez. Mesmo padrão (PAGE_SIZE + página atual) já usado em
+  // financeiro.js/clientes.js.
+  var GENERAL_PAGE_SIZE = 30;
+  var generalPage = 1;
   var DOW_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   var PAYMENT_OPTIONS = ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"];
   var OCC_TYPES = ["Ausência Médica", "Falta Justificada", "Compromisso Pessoal", "Bloqueio / Manutenção", "Outro"];
@@ -22,13 +28,13 @@
     DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (e) {
       var o = document.createElement("option"); o.value = e.id; o.textContent = e.name; empSel.appendChild(o);
     });
-    empSel.addEventListener("change", function (e) { filt.employee = e.target.value; render(); });
+    empSel.addEventListener("change", function (e) { filt.employee = e.target.value; generalPage = 1; render(); });
     var srvSel = Utils.qs("#ag-service");
     DB.all("services").sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (s) {
       var o = document.createElement("option"); o.value = s.id; o.textContent = s.name; srvSel.appendChild(o);
     });
-    srvSel.addEventListener("change", function (e) { filt.service = e.target.value; render(); });
-    Utils.qs("#ag-status").addEventListener("change", function (e) { filt.status = e.target.value; render(); });
+    srvSel.addEventListener("change", function (e) { filt.service = e.target.value; generalPage = 1; render(); });
+    Utils.qs("#ag-status").addEventListener("change", function (e) { filt.status = e.target.value; generalPage = 1; render(); });
     var clearBtn = Utils.qs("#btn-ag-clear-filters");
     if (clearBtn) clearBtn.addEventListener("click", clearFilters);
 
@@ -41,6 +47,7 @@
         Utils.qsa(".tab-btn", Utils.qs("#ag-view-tabs")).forEach(function (b) { b.classList.remove("active"); });
         btn.classList.add("active");
         viewMode = btn.getAttribute("data-view");
+        generalPage = 1;
         Utils.qs("#ag-day-nav").style.display = viewMode === "dia" ? "" : "none";
         Utils.qs("#ag-day-nav-main").style.display = viewMode === "dia" ? "" : "none";
         Utils.qs("#ag-period-filters").style.display = viewMode === "geral" ? "" : "none";
@@ -50,8 +57,8 @@
     var periodStartInput = Utils.qs("#ag-period-start");
     var periodEndInput = Utils.qs("#ag-period-end");
     periodStartInput.value = periodStart;
-    periodStartInput.addEventListener("change", function (e) { periodStart = e.target.value; render(); });
-    periodEndInput.addEventListener("change", function (e) { periodEnd = e.target.value; render(); });
+    periodStartInput.addEventListener("change", function (e) { periodStart = e.target.value; generalPage = 1; render(); });
+    periodEndInput.addEventListener("change", function (e) { periodEnd = e.target.value; generalPage = 1; render(); });
     Utils.qs("#btn-today").addEventListener("click", function () {
       selectedDate = Utils.todayISO();
       if (viewMode !== "dia") {
@@ -158,6 +165,7 @@
 
   function clearFilters() {
     filt = { employee: "", service: "", status: "" };
+    generalPage = 1;
     var empSel = document.getElementById("ag-employee");
     var srvSel = document.getElementById("ag-service");
     var statusSel = document.getElementById("ag-status");
@@ -266,9 +274,17 @@
       return;
     }
 
+    // Pagina ANTES de agrupar por data — sem isso, a Visão Geral renderiza
+    // de uma vez todos os agendamentos que passam pelo filtro, o que cresce
+    // sem limite conforme o histórico aumenta (mesmo padrão de paginação já
+    // usado em financeiro.js/clientes.js).
+    var totalPages = Math.max(1, Math.ceil(list.length / GENERAL_PAGE_SIZE));
+    generalPage = Math.min(generalPage, totalPages);
+    var pageList = list.slice((generalPage - 1) * GENERAL_PAGE_SIZE, generalPage * GENERAL_PAGE_SIZE);
+
     var groups = [];
     var groupByDate = {};
-    list.forEach(function (a) {
+    pageList.forEach(function (a) {
       if (!groupByDate[a.date]) { groupByDate[a.date] = []; groups.push(a.date); }
       groupByDate[a.date].push(a);
     });
@@ -285,8 +301,19 @@
         '</div>';
     }).join("");
 
+    html += '<div class="flex justify-between items-center mt-16" id="ag-general-pagination">' +
+      '<div class="small text-muted">Mostrando ' + pageList.length + ' de ' + list.length + '</div>' +
+      '<div class="pg-btns">' +
+        '<button class="btn btn-sm btn-secondary" id="ag-gen-prev" ' + (generalPage <= 1 ? "disabled" : "") + '>Anterior</button>' +
+        '<span style="padding:6px 10px;">Página ' + generalPage + ' de ' + totalPages + '</span>' +
+        '<button class="btn btn-sm btn-secondary" id="ag-gen-next" ' + (generalPage >= totalPages ? "disabled" : "") + '>Próxima</button>' +
+      '</div></div>';
+
     listEl.innerHTML = html;
     wireDayListActions(listEl);
+    var prevBtn = document.getElementById("ag-gen-prev"), nextBtn = document.getElementById("ag-gen-next");
+    if (prevBtn) prevBtn.addEventListener("click", function () { generalPage--; renderGeneralList(); });
+    if (nextBtn) nextBtn.addEventListener("click", function () { generalPage++; renderGeneralList(); });
   }
 
   function statusBadgeHtml(status) {

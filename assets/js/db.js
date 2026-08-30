@@ -167,10 +167,23 @@
   // precisar tirar nada dela. Se o IndexedDB não estiver disponível por
   // algum motivo, cai de volta para o localStorage enxuto (sem fotos/
   // anexos) como reserva de segurança.
+  //
+  // Formato: uma chave por TABELA (em vez de um único blob "db_mirror"
+  // com as 22 tabelas juntas, como era antes). Assim, uma escrita comum
+  // (ex.: marcar uma conta como paga) só precisa serializar e regravar a
+  // tabela que de fato mudou (ex.: só "transactions"), em vez do banco
+  // inteiro — antes, cada escrita reserializava as 22 tabelas completas
+  // (incluindo fotos/anexos em base64), o que ia ficando cada vez mais
+  // lento conforme os dados cresciam, mesmo a alteração sendo pequena.
   // ---------------------------------------------------------------
   var IDB_NAME = "salaoErpIDB_v1";
   var IDB_STORE = "kv";
-  var IDB_KEY = "db_mirror";
+  // Chave do formato antigo (um único blob com todas as tabelas) — mantida
+  // só para migração: navegadores que já tinham essa cópia salva antes
+  // desta atualização continuam abrindo com os dados certos (ver
+  // idbGetMirror abaixo), até a próxima sincronização completa com o
+  // Supabase regravar tudo no formato novo, por tabela.
+  var IDB_LEGACY_KEY = "db_mirror";
 
   function idbOpen() {
     return new Promise(function (resolve, reject) {
@@ -184,25 +197,62 @@
     });
   }
 
+  // Lê todas as tabelas (uma chave por tabela) numa única transação e monta
+  // de volta o objeto { employees: [...], clients: [...], ... }. Também lê
+  // a chave antiga (IDB_LEGACY_KEY) e usa ela só para PREENCHER tabelas que
+  // ainda não têm uma chave própria — cobre o período de transição logo
+  // após esta atualização, antes da primeira sincronização completa com o
+  // Supabase regravar tudo no formato novo (ver comentário acima).
   function idbGetMirror() {
     return idbOpen().then(function (db) {
       return new Promise(function (resolve) {
         try {
           var tx = db.transaction(IDB_STORE, "readonly");
-          var req = tx.objectStore(IDB_STORE).get(IDB_KEY);
-          req.onsuccess = function () { resolve(req.result || null); };
-          req.onerror = function () { resolve(null); };
+          var store = tx.objectStore(IDB_STORE);
+          var result = {};
+          var anyFound = false;
+          var pending = TABLES.length + 1; // +1 para a chave legada
+
+          function done() {
+            pending--;
+            if (pending === 0) resolve(anyFound ? result : null);
+          }
+
+          TABLES.forEach(function (t) {
+            var req = store.get(t);
+            req.onsuccess = function () {
+              if (req.result !== undefined) { result[t] = req.result; anyFound = true; }
+              done();
+            };
+            req.onerror = function () { done(); };
+          });
+
+          var legacyReq = store.get(IDB_LEGACY_KEY);
+          legacyReq.onsuccess = function () {
+            if (legacyReq.result) {
+              Object.keys(legacyReq.result).forEach(function (t) {
+                if (!(t in result)) { result[t] = legacyReq.result[t]; anyFound = true; }
+              });
+            }
+            done();
+          };
+          legacyReq.onerror = function () { done(); };
         } catch (e) { resolve(null); }
       });
     }).catch(function () { return null; });
   }
 
-  function idbSetMirror(value) {
+  // Grava uma ou mais tabelas (map: { nomeTabela: valor }) numa única
+  // transação — usado tanto para uma escrita normal (uma tabela só) quanto
+  // para a sincronização completa após o boot (todas as tabelas de uma vez,
+  // ainda assim em UMA transação em vez de 22 separadas).
+  function idbSetTables(map) {
     return idbOpen().then(function (db) {
       return new Promise(function (resolve, reject) {
         try {
           var tx = db.transaction(IDB_STORE, "readwrite");
-          tx.objectStore(IDB_STORE).put(value, IDB_KEY);
+          var store = tx.objectStore(IDB_STORE);
+          Object.keys(map).forEach(function (t) { store.put(map[t], t); });
           tx.oncomplete = function () { resolve(true); };
           tx.onerror = function () { reject(tx.error); };
         } catch (e) { reject(e); }
@@ -210,11 +260,30 @@
     });
   }
 
-  // Guarda o `_cache` completo (com fotos/anexos) no IndexedDB — é "fire
-  // and forget": a tela já foi atualizada pelo cache em memória, isso
-  // aqui é só a reserva para o caso de a internet cair no meio do uso.
-  function persistLocalMirror() {
-    idbSetMirror(_cache).catch(function (e) {
+  // Remove a chave do formato antigo depois que a primeira sincronização
+  // completa no formato novo já aconteceu — não é essencial (a chave antiga
+  // não atrapalha nada ficando parada ali), só evita guardar os dados
+  // duplicados indefinidamente. "Fire and forget", sem tratamento de erro:
+  // se falhar, não é grave, só significa que a chave antiga fica um pouco
+  // mais até a próxima tentativa.
+  function idbDeleteLegacy() {
+    idbOpen().then(function (db) {
+      try {
+        var tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).delete(IDB_LEGACY_KEY);
+      } catch (e) {}
+    }).catch(function () {});
+  }
+
+  // Guarda no IndexedDB só a(s) tabela(s) que mudaram (fire and forget: a
+  // tela já foi atualizada pelo cache em memória, isso aqui é só a reserva
+  // para o caso de a internet cair no meio do uso). "tables" pode ser o
+  // nome de uma tabela ou uma lista de nomes.
+  function persistLocalMirror(tables) {
+    var list = Array.isArray(tables) ? tables : [tables];
+    var map = {};
+    list.forEach(function (t) { map[t] = _cache[t]; });
+    idbSetTables(map).catch(function (e) {
       console.error("Erro ao salvar cópia local (IndexedDB) dos dados — tentando reserva enxuta no localStorage", e);
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stripLargeFieldsForMirror(_cache)));
@@ -229,10 +298,20 @@
   }
 
   var _batchDepth = 0;
+  var _batchDirty = null; // durante um DB.batch(), acumula quais tabelas mudaram (mapa nome->true)
 
-  function persist() {
-    if (_batchDepth > 0) return; // deferred until the outer DB.batch() call finishes
-    persistLocalMirror();
+  // "tables": nome de uma tabela ou lista de nomes que mudaram nesta
+  // escrita. Fora de um DB.batch(), grava na hora só essas tabelas no
+  // IndexedDB. Dentro de um DB.batch(), só acumula os nomes — a gravação de
+  // verdade (uma só, com todas as tabelas tocadas no batch) acontece quando
+  // o batch mais externo termina (ver DB.batch abaixo).
+  function persist(tables) {
+    if (!tables) return;
+    if (_batchDepth > 0) {
+      (Array.isArray(tables) ? tables : [tables]).forEach(function (t) { _batchDirty[t] = true; });
+      return;
+    }
+    persistLocalMirror(tables);
   }
 
   function fillMissingTables(db) {
@@ -323,7 +402,8 @@
         // rede de segurança: nunca ficar sem usuário nenhum cadastrado
         if (!fresh.users || !fresh.users.length) fresh.users = emptyDB().users;
         _cache = fresh;
-        persistLocalMirror();
+        persistLocalMirror(TABLES);
+        idbDeleteLegacy();
         markBootCacheFresh();
         _readyResolve();
       }).catch(function (err) {
@@ -473,7 +553,7 @@
       record.createdAt = record.createdAt || nowISO();
       record.updatedAt = nowISO();
       db[table].push(record);
-      persist();
+      persist(table);
       remoteUpsert(table, record);
       return record;
     },
@@ -486,7 +566,7 @@
         r.updatedAt = nowISO();
       });
       db[table] = db[table].concat(records);
-      persist();
+      persist(table);
       records.forEach(function (r) { remoteUpsert(table, r); });
       return records;
     },
@@ -496,7 +576,7 @@
       var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
       if (idx === -1) return null;
       db[table][idx] = Object.assign({}, db[table][idx], patch, { updatedAt: nowISO() });
-      persist();
+      persist(table);
       remoteUpsert(table, db[table][idx]);
       return db[table][idx];
     },
@@ -505,7 +585,7 @@
       var db = load();
       var before = db[table].length;
       db[table] = db[table].filter(function (r) { return r.id !== id; });
-      persist();
+      persist(table);
       var removed = db[table].length < before;
       if (removed) remoteDelete(table, id);
       return removed;
@@ -515,7 +595,7 @@
       var db = load();
       var toRemove = db[table].filter(predicate);
       db[table] = db[table].filter(function (r) { return !predicate(r); });
-      persist();
+      persist(table);
       toRemove.forEach(function (r) { remoteDelete(table, r.id); });
     },
 
@@ -531,7 +611,7 @@
         });
       }
       db[table] = records;
-      persist();
+      persist(table);
       if (table === "settings") remoteReplaceSettings(records);
       else remoteReplaceAll(table, records);
     },
@@ -540,7 +620,7 @@
     updateSettings: function (patch) {
       var db = load();
       db.settings = Object.assign({}, db.settings, patch);
-      persist();
+      persist("settings");
       remoteReplaceSettings(db.settings);
       return db.settings;
     },
@@ -556,7 +636,7 @@
       if (!current.length) {
         current = DEFAULT_ROLES.slice();
         db.settings = Object.assign({}, db.settings, { roles: current });
-        persist();
+        persist("settings");
         remoteReplaceSettings(db.settings);
       }
       return current;
@@ -564,7 +644,7 @@
     saveRoles: function (list) {
       var db = load();
       db.settings = Object.assign({}, db.settings, { roles: list });
-      persist();
+      persist("settings");
       remoteReplaceSettings(db.settings);
       return db.settings.roles;
     },
@@ -612,7 +692,7 @@
     importJSON: function (jsonStr) {
       var parsed = JSON.parse(jsonStr);
       _cache = fillMissingTables(parsed);
-      persist();
+      persist(TABLES);
       TABLES.forEach(function (t) {
         if (t === "settings") remoteReplaceSettings(_cache.settings);
         else remoteReplaceAll(t, _cache[t]);
@@ -626,12 +706,18 @@
     // com tabelas de alguns milhares de linhas. As chamadas ao Supabase de
     // cada operação continuam acontecendo normalmente, uma a uma.
     batch: function (fn) {
+      var isOutermost = _batchDepth === 0;
+      if (isOutermost) _batchDirty = {};
       _batchDepth++;
       try {
         fn();
       } finally {
         _batchDepth--;
-        if (_batchDepth === 0) persist();
+        if (_batchDepth === 0) {
+          var dirty = Object.keys(_batchDirty);
+          _batchDirty = null;
+          if (dirty.length) persistLocalMirror(dirty);
+        }
       }
     },
 
@@ -656,7 +742,7 @@
         db.activityLog = db.activityLog.slice(overflow);
         removed.forEach(function (r) { remoteDelete("activityLog", r.id); });
       }
-      persist();
+      persist("activityLog");
       remoteUpsert("activityLog", entry);
       return entry;
     },

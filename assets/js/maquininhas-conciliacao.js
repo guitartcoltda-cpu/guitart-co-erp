@@ -167,11 +167,43 @@
   }
 
   // ---------------- Matching ----------------
-  function findSuggestion(line, candidates) {
-    var matches = candidates.filter(function (c) { return Math.abs(c.amount - line.amount) < 0.01; });
-    if (!matches.length) return null;
-    matches.sort(function (a, b) { return Math.abs(Utils.daysBetween(a.date, line.date)) - Math.abs(Utils.daysBetween(b.date, line.date)); });
-    var best = matches[0];
+  // Mesma técnica de indexação por centavos usada em conciliacao.js (ver
+  // comentário lá, com o mesmo cuidado de checar também os baldes vizinhos
+  // de ±1 centavo por causa do arredondamento de ponto flutuante que o
+  // "< 0.01" original já apresentava): transforma a busca de candidatos de
+  // O(m) por linha em O(bucket pequeno), preservando a mesma ordem de
+  // desempate do Array.sort estável anterior.
+  function moneyKey(n) { return Math.round(n * 100); }
+
+  function buildLineAmountIndex(lines) {
+    var idx = {};
+    lines.forEach(function (l, i) {
+      var key = moneyKey(l.amount);
+      (idx[key] || (idx[key] = [])).push({ l: l, i: i });
+    });
+    return idx;
+  }
+
+  function findSuggestion(line, candidateIndex, usedIds) {
+    var baseKey = moneyKey(line.amount);
+    var candidates = [];
+    for (var dk = -1; dk <= 1; dk++) {
+      var bucket = candidateIndex[baseKey + dk];
+      if (!bucket) continue;
+      for (var j = 0; j < bucket.length; j++) {
+        var entry = bucket[j], c = entry.l;
+        if (usedIds && usedIds[c.id]) continue;
+        if (Math.abs(c.amount - line.amount) >= 0.01) continue;
+        candidates.push(entry);
+      }
+    }
+    if (!candidates.length) return null;
+    candidates.sort(function (a, b) {
+      var da = Math.abs(Utils.daysBetween(a.l.date, line.date));
+      var db = Math.abs(Utils.daysBetween(b.l.date, line.date));
+      return da !== db ? da - db : a.i - b.i;
+    });
+    var best = candidates[0].l;
     if (Math.abs(Utils.daysBetween(best.date, line.date)) <= 6) return best;
     return null;
   }
@@ -227,11 +259,11 @@
   function autoMatchAll() {
     var slipLines = allLines("slip").filter(function (l) { return !l.matched; });
     var bankLines = allLines("bank").filter(function (l) { return !l.matched; });
+    var bankIndex = buildLineAmountIndex(bankLines);
     var usedBank = {};
     var suggestions = [];
     slipLines.forEach(function (s) {
-      var candidates = bankLines.filter(function (b) { return !usedBank[b.id]; });
-      var m = findSuggestion(s, candidates);
+      var m = findSuggestion(s, bankIndex, usedBank);
       if (m) { usedBank[m.id] = true; suggestions.push({ slip: s, bank: m }); }
     });
     if (!suggestions.length) { Toast.show("Nenhuma correspondência automática encontrada", "info"); return; }
@@ -353,8 +385,9 @@
     if (!unmatchedSlip.length) {
       slipEl.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-circle-check"></i></div><h4>Nada pendente no slip</h4><p>Importe o slip diário da maquininha para continuar conciliando.</p></div>';
     } else {
+      var bankIndexForRender = buildLineAmountIndex(unmatchedBank);
       slipEl.innerHTML = slipToRender.map(function (s) {
-        var suggestion = findSuggestion(s, unmatchedBank);
+        var suggestion = findSuggestion(s, bankIndexForRender);
         var machine = s.machineId ? DB.get("cardMachines", s.machineId) : null;
         return '<div class="recon-item' + (s.id === selectedSlipId ? " selected" : "") + '" data-slip="' + s.id + '">' +
           '<div>' +

@@ -162,14 +162,55 @@
   }
 
   // ---------------- Matching ----------------
-  function findSuggestion(bankLine, txns) {
-    var candidates = txns.filter(function (t) {
+  // moneyKey(): valor em centavos (inteiro), usado só para AGRUPAR candidatos
+  // por faixa de valor e assim evitar varrer a lista inteira a cada linha do
+  // extrato (era o gargalo O(n×m) deste módulo). A comparação de valor em si
+  // continua sendo a MESMA de antes — "Math.abs(expected - bankLine.amount) <
+  // 0.01" — aplicada apenas dentro do balde (e dos baldes vizinhos, ±1
+  // centavo: por causa de arredondamento de ponto flutuante, dois valores que
+  // diferem em exatamente 1 centavo às vezes também passam nesse teste de
+  // tolerância hoje, então preservamos esse comportamento exatamente igual em
+  // vez de "corrigi-lo" por conta própria).
+  function moneyKey(n) { return Math.round(n * 100); }
+
+  // Indexa as transações por valor esperado (sinal já ajustado por
+  // receita/despesa), guardando também o índice original em "txns" para poder
+  // reproduzir o mesmo desempate por ordem que o Array.sort estável de antes
+  // fazia quando duas datas empatam em distância.
+  function buildTxnAmountIndex(txns) {
+    var idx = {};
+    txns.forEach(function (t, i) {
       var expected = t.type === "receita" ? t.amount : -t.amount;
-      return Math.abs(expected - bankLine.amount) < 0.01;
+      var key = moneyKey(expected);
+      (idx[key] || (idx[key] = [])).push({ t: t, i: i });
     });
+    return idx;
+  }
+
+  // txnIndex: resultado de buildTxnAmountIndex(). usedTxn (opcional): mapa
+  // id->true de transações já usadas em outra sugestão da mesma rodada
+  // (usado pelo autoMatchAll, que vai "consumindo" candidatos).
+  function findSuggestion(bankLine, txnIndex, usedTxn) {
+    var baseKey = moneyKey(bankLine.amount);
+    var candidates = [];
+    for (var dk = -1; dk <= 1; dk++) {
+      var bucket = txnIndex[baseKey + dk];
+      if (!bucket) continue;
+      for (var j = 0; j < bucket.length; j++) {
+        var entry = bucket[j], t = entry.t;
+        if (usedTxn && usedTxn[t.id]) continue;
+        var expected = t.type === "receita" ? t.amount : -t.amount;
+        if (Math.abs(expected - bankLine.amount) >= 0.01) continue;
+        candidates.push(entry);
+      }
+    }
     if (!candidates.length) return null;
-    candidates.sort(function (a, b) { return Math.abs(Utils.daysBetween(a.date, bankLine.date)) - Math.abs(Utils.daysBetween(b.date, bankLine.date)); });
-    var best = candidates[0];
+    candidates.sort(function (a, b) {
+      var da = Math.abs(Utils.daysBetween(a.t.date, bankLine.date));
+      var db = Math.abs(Utils.daysBetween(b.t.date, bankLine.date));
+      return da !== db ? da - db : a.i - b.i;
+    });
+    var best = candidates[0].t;
     if (Math.abs(Utils.daysBetween(best.date, bankLine.date)) <= 6) return best;
     return null;
   }
@@ -256,11 +297,11 @@
   function autoMatchAll() {
     var bankLines = DB.all("bankLines").filter(function (b) { return !b.matched; });
     var txns = DB.all("transactions").filter(function (t) { return t.status === "pago" && !t.reconciled; });
+    var txnIndex = buildTxnAmountIndex(txns);
     var usedTxn = {};
     var suggestions = [];
     bankLines.forEach(function (b) {
-      var candidates = txns.filter(function (t) { return !usedTxn[t.id]; });
-      var s = findSuggestion(b, candidates);
+      var s = findSuggestion(b, txnIndex, usedTxn);
       if (s) { usedTxn[s.id] = true; suggestions.push({ bank: b, txn: s }); }
     });
     if (!suggestions.length) { Toast.show("Nenhuma correspondência automática encontrada", "info"); return; }
@@ -361,8 +402,9 @@
     if (!unmatchedBank.length) {
       bankEl.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-circle-check"></i></div><h4>Nada pendente no extrato</h4><p>Importe um novo extrato para continuar conciliando.</p></div>';
     } else {
+      var txnIndexForRender = buildTxnAmountIndex(unmatchedTxn);
       bankEl.innerHTML = bankToRender.map(function (b) {
-        var suggestion = findSuggestion(b, unmatchedTxn);
+        var suggestion = findSuggestion(b, txnIndexForRender);
         return '<div class="recon-item' + (b.id === selectedBankId ? " selected" : "") + '" data-bank="' + b.id + '">' +
           '<div>' +
             '<div class="ri-desc">' + Utils.escapeHtml(b.description) + '</div>' +
