@@ -644,7 +644,13 @@
   function openSrvModal(id) {
     var s = id ? DB.get("services", id) : null;
     var categories = DB.all("categories").filter(function (c) { return c.type === "receita"; });
-    var groups = ["Cabelo", "Unhas", "Estética", "Maquiagem"];
+    // Lista de grupos de serviço do salão (alinhada com o catálogo real
+    // importado em 30/08/2026 — antes eram só 4 grupos placeholder). Se um
+    // serviço já cadastrado tiver um grupo fora dessa lista (ex.: um nome
+    // digitado manualmente antes), ele é incluído também, para não sumir
+    // do dropdown ao editar esse serviço.
+    var groups = ["Cabelo", "Cílios", "Depilação", "Mãos e Pés", "Maquiagem", "Rosto", "Sobrancelha"];
+    if (s && s.group && groups.indexOf(s.group) === -1) groups.push(s.group);
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Nome do Serviço</label><input type="text" id="srv-name" value="' + (s ? Utils.escapeHtml(s.name) : "") + '"></div>' +
       '<div class="form-field"><label>Grupo</label><select id="srv-group">' + groups.map(function (g) { return '<option value="' + g + '"' + (s && s.group === g ? " selected" : "") + '>' + g + '</option>'; }).join("") + '</select></div>' +
