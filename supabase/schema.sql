@@ -116,3 +116,36 @@ select 'settings', jsonb_build_object(
   'createdAt', now()
 )
 where not exists (select 1 from public.settings where id = 'settings');
+
+-- ------------------------------------------------------------
+-- Views "_boot" — mesmo formato de transactions/occurrences/
+-- commissionPayouts, mas SEM o campo data.attachment.dataUrl (o
+-- comprovante/anexo em base64). Criadas em 30/08 direto no banco de
+-- produção (via SQL Editor) para resolver lentidão ao trocar de tela:
+-- essas 3 tabelas são as únicas que guardam anexo embutido no jsonb, e
+-- o boot de assets/js/db.js (bootstrapOnline(), array BOOT_VIEW) usa
+-- estas views em vez das tabelas para não carregar o anexo pesado de
+-- todo mundo na memória da aba a cada navegação. Este bloco só
+-- documenta o que já existe ao vivo (nenhuma mudança de comportamento);
+-- ele estava fora deste arquivo até agora, o que é um risco real de
+-- reprodutibilidade (recriar o banco do zero a partir deste script não
+-- recriava as views, e o app quebraria até alguém lembrar de recriá-las
+-- manualmente).
+do $$
+declare
+  vt text;
+  boot_tables text[] := array['transactions', 'occurrences', 'commissionPayouts'];
+begin
+  foreach vt in array boot_tables loop
+    execute format('
+      create or replace view public.%I as
+      select id, (data #- ''{attachment,dataUrl}''::text[]) as data
+      from public.%I;', vt || '_boot', vt);
+
+    -- Mesmo acesso de leitura que a tabela de origem já tem via
+    -- anon_full_access (ver comentário mais acima) — sem isso, a view
+    -- existiria mas o app (que só usa a chave anon) não conseguiria
+    -- consultá-la.
+    execute format('grant select on public.%I to anon, authenticated;', vt || '_boot');
+  end loop;
+end $$;
