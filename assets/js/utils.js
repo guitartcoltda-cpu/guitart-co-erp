@@ -251,6 +251,82 @@
       });
     },
 
+    // Máscara de valor em reais (campos "... (R$)" do sistema): o campo
+    // vira um <input type="text">, e cada dígito digitado entra pela
+    // direita como centavo — igual ao padrão usado em apps de banco/
+    // pagamento no Brasil (ex.: digitar "180000" forma "1.800,00" aos
+    // poucos, dígito a dígito). Evita qualquer ambiguidade de onde fica a
+    // vírgula/ponto: como só dígitos digitados pelo usuário contam (a
+    // pontuação inserida pela própria máscara é sempre descartada e
+    // reconstruída do zero a cada tecla), não há como o valor sair errado
+    // por causa da posição do cursor.
+    // `initialValue` (opcional): número já salvo (ex.: 1800) para deixar o
+    // campo pré-preenchido e formatado ao abrir um cadastro existente.
+    wireMoneyMask: function (input, initialValue) {
+      if (!input) return;
+      Utils.wireMoneyMaskListener(input);
+      Utils.setMoneyMaskValue(input, initialValue);
+    },
+
+    // Só anexa o comportamento de digitação (attrs + listener), sem mexer
+    // no value atual do campo — usar quando o HTML já foi montado com o
+    // value já formatado (ex.: linha de item dinâmica recriada a partir de
+    // um array em memória cujos valores já estão no formato "1.800,00").
+    wireMoneyMaskListener: function (input) {
+      if (!input) return;
+      function centsFromDigits(raw) {
+        var d = String(raw || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+        return d ? parseInt(d, 10) : 0;
+      }
+      function fmt(cents) {
+        return (cents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+      input.setAttribute("type", "text");
+      input.setAttribute("inputmode", "numeric");
+      input.setAttribute("autocomplete", "off");
+      input.setAttribute("placeholder", "0,00");
+      input.addEventListener("input", function () {
+        var cents = centsFromDigits(input.value);
+        input.value = cents ? fmt(cents) : "";
+      });
+    },
+
+    // Retorna a string formatada (ex.: "1.800,00", sem "R$") equivalente ao
+    // que wireMoneyMask deixaria no campo — usar ao montar HTML de
+    // formulário (value="...") para uma lista de linhas dinâmica, já que
+    // nesses casos ainda não existe um <input> no DOM para chamar
+    // setMoneyMaskValue.
+    moneyMaskValueStr: function (value) {
+      var n = Number(value);
+      return n ? (Math.round(n * 100) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "";
+    },
+
+    // Formata e escreve um número (em reais) num campo já convertido por
+    // wireMoneyMask, sem reanexar o listener — usar para atualizar o campo
+    // programaticamente (ex.: valor calculado automaticamente a partir de
+    // outro campo).
+    setMoneyMaskValue: function (input, value) {
+      if (!input) return;
+      input.value = Utils.moneyMaskValueStr(value);
+    },
+
+    // Converte a string formatada por wireMoneyMask (ex.: "1.800,00") de
+    // volta para número — usar quando o valor já foi lido do DOM antes (ex.:
+    // guardado num array de itens em memória), e não há mais o <input> à
+    // mão para chamar moneyMaskToFloat.
+    parseMoneyMaskStr: function (str) {
+      var d = String(str || "").replace(/\D/g, "");
+      return d ? parseInt(d, 10) / 100 : 0;
+    },
+
+    // Lê de volta o número (em reais, com decimais) de um campo com
+    // wireMoneyMask aplicado — usar isso ao salvar, no lugar de
+    // parseFloat(input.value).
+    moneyMaskToFloat: function (input) {
+      if (!input) return 0;
+      return Utils.parseMoneyMaskStr(input.value);
+    },
+
     // Formata um telefone já validado (10 ou 11 dígitos) como
     // "(11) 98765-4321" / "(11) 3456-7890", para exibição.
     fmtPhoneBR: function (phone) {

@@ -638,7 +638,7 @@
     var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
 
     var body = '<div class="form-grid">' +
-      '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="number" step="0.01" id="cc-amount" value="' + appt.price + '"></div>' +
+      '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + PAYMENT_OPTIONS.map(function (p) { return "<option>" + p + "</option>"; }).join("") + '</select></div>' +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
@@ -650,6 +650,7 @@
       '<div class="small text-muted">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(DB.get("employees", appt.employeeId) ? DB.get("employees", appt.employeeId).name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal.</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cc-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Atendimento", wide: true, bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#cc-amount"), appt.price);
 
     var rowsEl = box.querySelector("#cc-insumo-rows");
     box.querySelector("#cc-add-insumo").addEventListener("click", function () {
@@ -658,7 +659,7 @@
     });
 
     box.querySelector("#cc-save").addEventListener("click", function () {
-      var amount = parseFloat(box.querySelector("#cc-amount").value) || appt.price;
+      var amount = Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || appt.price;
       var rows = Utils.qsa(".insumo-item-row", rowsEl);
       var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
       var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
@@ -772,7 +773,7 @@
       '</div>' +
       '<div class="form-field full"><label>Serviço</label><select id="am-service">' + services.map(function (s) { return '<option value="' + s.id + '" data-price="' + s.price + '" data-group="' + s.group + '"' + (a && a.serviceId === s.id ? " selected" : "") + '>' + s.name + " (" + s.group + ")" + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Profissional</label><select id="am-employee"></select></div>' +
-      '<div class="form-field"><label>Valor (R$)</label><input type="number" step="0.01" id="am-price" value="' + (a ? a.price : "") + '"></div>' +
+      '<div class="form-field"><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="am-date"' + (a ? "" : ' min="' + Utils.todayISO() + '"') + ' value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
       '<div class="form-field"><label>Status</label><select id="am-status">' +
@@ -802,6 +803,7 @@
     var delBtn = a ? '<button class="btn btn-ghost" id="am-delete" type="button" style="color:var(--color-danger);">Excluir</button>' : "";
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
     var box = Modal.open({ title: a ? "Editar Agendamento" : "Novo Agendamento", wide: true, bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#am-price"), a ? a.price : 0);
 
     // Preenche o campo de comissão do profissional automaticamente com a
     // taxa padrão cadastrada no funcionário (Funcionários → Comissão), sem
@@ -837,7 +839,7 @@
     fillEmployeesFor();
     // Sem nenhum serviço cadastrado (Configurações → Serviços) o <select> de
     // Serviço fica vazio e não há opção selecionada — nada para preencher.
-    if (!a && initialOpt) box.querySelector("#am-price").value = initialOpt.getAttribute("data-price");
+    if (!a && initialOpt) Utils.setMoneyMaskValue(box.querySelector("#am-price"), initialOpt.getAttribute("data-price"));
     if (!a && !services.length) {
       Toast.show("Nenhum serviço cadastrado ainda. Cadastre serviços em Configurações antes de criar agendamentos.", "danger");
     }
@@ -845,7 +847,7 @@
     serviceSel.addEventListener("change", function () {
       var opt = serviceSel.options[serviceSel.selectedIndex];
       if (!opt) return;
-      box.querySelector("#am-price").value = opt.getAttribute("data-price");
+      Utils.setMoneyMaskValue(box.querySelector("#am-price"), opt.getAttribute("data-price"));
     });
 
     box.querySelector("#am-employee").addEventListener("change", updateDefaultCommission);
@@ -994,7 +996,7 @@
       var assistantPct = hasAsst ? (parseFloat(box.querySelector("#am-assistant-pct").value) || 0) : null;
       var patch = {
         clientId: box.querySelector("#am-client").value, serviceId: box.querySelector("#am-service").value,
-        employeeId: box.querySelector("#am-employee").value, price: round2(parseFloat(box.querySelector("#am-price").value) || 0),
+        employeeId: box.querySelector("#am-employee").value, price: round2(Utils.moneyMaskToFloat(box.querySelector("#am-price"))),
         date: box.querySelector("#am-date").value, time: box.querySelector("#am-time").value,
         status: box.querySelector("#am-status").value,
         commissionPercent: commPct,

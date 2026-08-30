@@ -299,12 +299,13 @@
     var p = DB.get("products", c.productId);
     var isAdmin = !window.Approvals || Approvals.isAdmin();
     var body = '<p class="small text-muted mb-16">Custo total atual: <strong>' + Utils.fmtMoney(c.totalCost) + '</strong> (' + Utils.escapeHtml(p ? p.name : "produto") + ')</p>' +
-      '<div class="form-field"><label>Valor do desconto (R$)</label><input type="number" step="0.01" min="0" max="' + c.totalCost + '" id="disc-value" placeholder="0,00"></div>' +
+      '<div class="form-field"><label>Valor do desconto (R$)</label><input type="text" id="disc-value" placeholder="0,00"></div>' +
       (isAdmin ? "" : '<div class="form-field"><label>Motivo (opcional)</label><input type="text" id="disc-reason" placeholder="Ex: produto vencendo, cortesia..."></div>');
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="disc-save">' + (isAdmin ? "Aplicar desconto" : "Solicitar desconto") + '</button>';
     var box = Modal.open({ title: isAdmin ? "Dar desconto no consumo" : "Solicitar desconto no consumo", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#disc-value"), 0);
     box.querySelector("#disc-save").addEventListener("click", function () {
-      var value = parseFloat(box.querySelector("#disc-value").value);
+      var value = Utils.moneyMaskToFloat(box.querySelector("#disc-value"));
       if (isNaN(value) || value <= 0) { Toast.show("Informe um valor de desconto válido", "danger"); return; }
       if (value > c.totalCost) { Toast.show("O desconto não pode ser maior que o custo total do lançamento", "danger"); return; }
       if (isAdmin) {
@@ -338,7 +339,7 @@
           '<input type="number" class="cs-qtd" step="0.1" min="0" placeholder="Qtd.">' +
           '<span class="small text-muted cs-unit" style="min-width:24px;"></span>' +
         '</div></div>' +
-        '<div class="form-field"><label>Valor do item (R$)</label><input type="number" step="0.01" min="0" class="cs-valor"' + (canDiscount ? "" : " disabled") + '></div>' +
+        '<div class="form-field"><label>Valor do item (R$)</label><input type="text" class="cs-valor"' + (canDiscount ? "" : " disabled") + '></div>' +
       '</div>' +
       (canDiscount ? '<div class="small text-muted mt-8">Preenchido automaticamente com o preço de venda normal do produto — edite para dar desconto.</div>' :
         '<div class="small text-muted mt-8">Valor calculado pelo preço de venda normal do produto. Para dar desconto, solicite depois de lançar (a lista de Consumo de Insumos abaixo tem essa opção) — só um Administrador pode aprovar.</div>') +
@@ -358,8 +359,9 @@
       var p = DB.get("products", prodSel.value);
       unitEl.textContent = p ? Consumo.unitLabelOf(p) : "";
       var qty = parseFloat(qtdEl.value) || 0;
-      valorEl.value = p ? (Math.round(refPrice(p) * qty * 100) / 100 || "") : "";
+      Utils.setMoneyMaskValue(valorEl, p ? refPrice(p) * qty : 0);
     }
+    Utils.wireMoneyMask(valorEl, 0);
     prodSel.addEventListener("change", updateAll);
     qtdEl.addEventListener("input", updateAll);
     row.querySelector(".cs-remove").addEventListener("click", function () { row.remove(); });
@@ -416,7 +418,7 @@
         valid.forEach(function (row) {
           var productId = row.querySelector(".cs-produto").value;
           var qty = parseFloat(row.querySelector(".cs-qtd").value) || 0;
-          var itemValor = parseFloat(row.querySelector(".cs-valor").value) || 0;
+          var itemValor = Utils.moneyMaskToFloat(row.querySelector(".cs-valor"));
           var unitPriceOverride = qty > 0 ? (itemValor / qty) : 0;
           try {
             Consumo.register({ productId: productId, employeeId: employeeId, quantity: qty, date: date, notes: notes, unitPriceOverride: unitPriceOverride });
@@ -452,8 +454,8 @@
       '<div class="form-field"><label>Fornecedor</label><input type="text" id="pm-supplier" value="' + (p ? Utils.escapeHtml(p.supplier) : "") + '"></div>' +
       '<div class="form-field"><label>Estoque Atual</label><input type="number" step="0.01" id="pm-stock" value="' + (p ? p.currentStock : 0) + '"></div>' +
       '<div class="form-field"><label>Estoque Mínimo</label><input type="number" step="0.01" id="pm-min" value="' + (p ? p.minStock : 5) + '"></div>' +
-      '<div class="form-field"><label>Preço de Custo (R$)</label><input type="number" step="0.01" id="pm-cost" value="' + (p ? p.costPrice : "") + '"></div>' +
-      '<div class="form-field"><label>Preço de Venda (R$)</label><input type="number" step="0.01" id="pm-sale" value="' + (p && p.salePrice ? p.salePrice : "") + '"><div class="hint">Deixe em branco se for de uso interno</div></div>' +
+      '<div class="form-field"><label>Preço de Custo (R$)</label><input type="text" id="pm-cost"></div>' +
+      '<div class="form-field"><label>Preço de Venda (R$)</label><input type="text" id="pm-sale"><div class="hint">Deixe em branco se for de uso interno</div></div>' +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div id="pm-package-wrap">' +
@@ -470,6 +472,8 @@
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="pm-save">Salvar Produto</button>';
     var box = Modal.open({ title: p ? "Editar Produto" : "Novo Produto", wide: true, bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#pm-cost"), p ? p.costPrice : 0);
+    Utils.wireMoneyMask(box.querySelector("#pm-sale"), p && p.salePrice ? p.salePrice : 0);
 
     box.querySelector("#pm-package-unit").addEventListener("change", function (e) {
       box.querySelector("#pm-package-size-wrap").style.display = e.target.value ? "block" : "none";
@@ -485,8 +489,8 @@
         name: name, sku: box.querySelector("#pm-sku").value.trim(), type: box.querySelector("#pm-type").value,
         unit: box.querySelector("#pm-unit").value.trim() || "un", supplier: box.querySelector("#pm-supplier").value.trim(),
         currentStock: parseFloat(box.querySelector("#pm-stock").value) || 0, minStock: parseFloat(box.querySelector("#pm-min").value) || 0,
-        costPrice: parseFloat(box.querySelector("#pm-cost").value) || 0,
-        salePrice: box.querySelector("#pm-sale").value ? parseFloat(box.querySelector("#pm-sale").value) : null,
+        costPrice: Utils.moneyMaskToFloat(box.querySelector("#pm-cost")),
+        salePrice: box.querySelector("#pm-sale").value ? Utils.moneyMaskToFloat(box.querySelector("#pm-sale")) : null,
         packageUnit: packageUnitVal || null, packageSize: packageUnitVal ? packageSizeVal : null
       };
       if (p) { DB.update("products", p.id, patch); DB.log("Estoque", "Atualizou o produto " + name); Toast.show("Produto atualizado", "success"); }

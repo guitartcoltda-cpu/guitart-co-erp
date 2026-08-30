@@ -233,7 +233,7 @@
     if (!t) return;
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Descrição</label><input type="text" value="' + Utils.escapeHtml(t.description) + '" disabled></div>' +
-      '<div class="form-field"><label>Valor (R$)</label><input type="number" step="0.01" id="cp-pay-amount" value="' + t.amount + '"></div>' +
+      '<div class="form-field"><label>Valor (R$)</label><input type="text" id="cp-pay-amount"></div>' +
       '<div class="form-field"><label>Data do Pagamento</label><input type="date" id="cp-pay-date" value="' + Utils.todayISO() + '"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="cp-pay-method">' +
         ["Pix", "Transferência", "Boleto", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"].map(function (p) { return "<option>" + p + "</option>"; }).join("") +
@@ -241,8 +241,9 @@
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cp-pay-save">Confirmar Pagamento</button>';
     var box = Modal.open({ title: "Marcar Conta como Paga", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#cp-pay-amount"), t.amount);
     box.querySelector("#cp-pay-save").addEventListener("click", function () {
-      var amount = parseFloat(box.querySelector("#cp-pay-amount").value);
+      var amount = Utils.moneyMaskToFloat(box.querySelector("#cp-pay-amount"));
       var date = box.querySelector("#cp-pay-date").value;
       if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
       if (!date) { Toast.show("Informe a data do pagamento", "danger"); return; }

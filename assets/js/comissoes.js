@@ -523,15 +523,18 @@
           '<option value="desconto">Desconto / dedução de despesa</option>' +
           '</select></div>' +
         '<div class="form-field full"><label>Descrição</label><input type="text" id="bm-desc" placeholder="Ex: Bônus por meta batida em agosto, desconto por material quebrado..."></div>' +
-        '<div class="form-field" id="bm-fixed-wrap"><label>Valor (R$)</label><input type="number" step="0.01" min="0" id="bm-amount-fixed"></div>' +
-        '<div class="form-field" id="bm-pct-value-wrap" style="display:none;"><label>Valor da Venda/Produto (R$)</label><input type="number" step="0.01" min="0" id="bm-pct-value"></div>' +
+        '<div class="form-field" id="bm-fixed-wrap"><label>Valor (R$)</label><input type="text" id="bm-amount-fixed"></div>' +
+        '<div class="form-field" id="bm-pct-value-wrap" style="display:none;"><label>Valor da Venda/Produto (R$)</label><input type="text" id="bm-pct-value"></div>' +
         '<div class="form-field" id="bm-pct-percent-wrap" style="display:none;"><label>Percentual Extra (%)</label><input type="number" step="0.1" min="0" id="bm-pct-percent"></div>' +
-        '<div class="form-field" id="bm-desconto-wrap" style="display:none;"><label>Valor a Descontar (R$)</label><input type="number" step="0.01" min="0" id="bm-amount-desconto"></div>' +
+        '<div class="form-field" id="bm-desconto-wrap" style="display:none;"><label>Valor a Descontar (R$)</label><input type="text" id="bm-amount-desconto"></div>' +
       '</div>' +
       '<div class="sale-total-bar" style="margin-top:12px;"><span id="bm-preview-label">Valor que será somado ao Devido</span><span id="bm-preview">R$ 0,00</span></div>';
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="bm-save">Salvar Lançamento</button>';
     var box = Modal.open({ title: "Novo Comissionamento Esporádico", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#bm-amount-fixed"), 0);
+    Utils.wireMoneyMask(box.querySelector("#bm-pct-value"), 0);
+    Utils.wireMoneyMask(box.querySelector("#bm-amount-desconto"), 0);
 
     var kindSel = box.querySelector("#bm-kind");
     var fixedWrap = box.querySelector("#bm-fixed-wrap");
@@ -544,13 +547,13 @@
     function updatePreview() {
       var amount = 0;
       if (kindSel.value === "fixo") {
-        amount = parseFloat(box.querySelector("#bm-amount-fixed").value) || 0;
+        amount = Utils.moneyMaskToFloat(box.querySelector("#bm-amount-fixed"));
       } else if (kindSel.value === "percentual") {
-        var val = parseFloat(box.querySelector("#bm-pct-value").value) || 0;
+        var val = Utils.moneyMaskToFloat(box.querySelector("#bm-pct-value"));
         var pct = parseFloat(box.querySelector("#bm-pct-percent").value) || 0;
         amount = round2(val * (pct / 100));
       } else {
-        amount = -(parseFloat(box.querySelector("#bm-amount-desconto").value) || 0);
+        amount = -Utils.moneyMaskToFloat(box.querySelector("#bm-amount-desconto"));
       }
       previewLabel.textContent = amount < 0 ? "Valor que será descontado do Devido" : "Valor que será somado ao Devido";
       preview.textContent = amount < 0 ? "- " + Utils.fmtMoney(Math.abs(round2(amount))) : Utils.fmtMoney(round2(amount));
@@ -579,19 +582,19 @@
 
       var record = { employeeId: employeeId, month: month, kind: kind, description: desc };
       if (kind === "fixo") {
-        var amount = parseFloat(box.querySelector("#bm-amount-fixed").value);
+        var amount = Utils.moneyMaskToFloat(box.querySelector("#bm-amount-fixed"));
         if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
         record.amount = round2(amount);
         record.refValue = null; record.refPercent = null;
       } else if (kind === "percentual") {
-        var val = parseFloat(box.querySelector("#bm-pct-value").value);
+        var val = Utils.moneyMaskToFloat(box.querySelector("#bm-pct-value"));
         var pct = parseFloat(box.querySelector("#bm-pct-percent").value);
         if (!val || val <= 0) { Toast.show("Informe o valor da venda/produto", "danger"); return; }
         if (!pct || pct <= 0) { Toast.show("Informe o percentual extra", "danger"); return; }
         record.amount = round2(val * (pct / 100));
         record.refValue = round2(val); record.refPercent = pct;
       } else {
-        var descAmount = parseFloat(box.querySelector("#bm-amount-desconto").value);
+        var descAmount = Utils.moneyMaskToFloat(box.querySelector("#bm-amount-desconto"));
         if (!descAmount || descAmount <= 0) { Toast.show("Informe o valor a descontar", "danger"); return; }
         record.amount = -round2(descAmount);
         record.refValue = null; record.refPercent = null;
@@ -614,16 +617,17 @@
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Profissional</label><input type="text" value="' + Utils.escapeHtml(row.employee.name) + '" disabled></div>' +
       '<div class="form-field"><label>Mês de Referência</label><input type="text" value="' + Utils.monthLabel(selectedMonth + "-01") + '" disabled></div>' +
-      '<div class="form-field"><label>Valor a Pagar (R$)</label><input type="number" step="0.01" id="pay-amount" value="' + row.saldo + '"></div>' +
+      '<div class="form-field"><label>Valor a Pagar (R$)</label><input type="text" id="pay-amount"></div>' +
       '<div class="form-field"><label>Data do Pagamento</label><input type="date" id="pay-date" value="' + Utils.todayISO() + '"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="pay-method"><option>Transferência</option><option>Pix</option><option>Dinheiro</option></select></div>' +
       '</div>' +
       Utils.attachmentFieldHtml("pay", "Comprovante de Pagamento (opcional)");
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="pay-save">Confirmar Pagamento</button>';
     var box = Modal.open({ title: "Registrar Pagamento de Comissão", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#pay-amount"), row.saldo);
     var payAttachment = Utils.wireAttachmentField(box, "pay");
     box.querySelector("#pay-save").addEventListener("click", function () {
-      var amount = parseFloat(box.querySelector("#pay-amount").value);
+      var amount = Utils.moneyMaskToFloat(box.querySelector("#pay-amount"));
       if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
       DB.insert("transactions", {
         type: "despesa", description: "Comissão - " + row.employee.name + " (ref. " + Utils.monthLabel(selectedMonth + "-01") + ")",

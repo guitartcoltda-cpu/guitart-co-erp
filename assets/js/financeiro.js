@@ -252,7 +252,7 @@
       '<div class="form-grid">' +
         '<div class="form-field full"><label>Descrição</label><input type="text" id="m-desc" value="' + Utils.escapeHtml(record.description) + '" placeholder="Ex: Corte + Escova - Cliente"></div>' +
         '<div class="form-field"><label>Data</label><input type="date" id="m-date" value="' + record.date + '"></div>' +
-        '<div class="form-field"><label>Valor (R$)</label><input type="number" step="0.01" min="0" id="m-amount" value="' + record.amount + '"></div>' +
+        '<div class="form-field"><label>Valor (R$)</label><input type="text" id="m-amount"></div>' +
         '<div class="form-field"><label>Categoria</label><select id="m-cat"></select></div>' +
         '<div class="form-field"><label>Centro de Custo</label><select id="m-cc"></select></div>' +
         '<div class="form-field"><label>Forma de Pagamento</label><select id="m-pay">' +
@@ -275,6 +275,7 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="m-save">Salvar Lançamento</button>';
 
     var box = Modal.open({ title: "Editar Lançamento", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#m-amount"), record.amount);
     var mAttachment = Utils.wireAttachmentField(box, "m", record.attachment || null);
 
     function populateCatCC(curType) {
@@ -313,7 +314,7 @@
 
     box.querySelector("#m-save").addEventListener("click", function () {
       var desc = box.querySelector("#m-desc").value.trim();
-      var amount = parseFloat(box.querySelector("#m-amount").value);
+      var amount = Utils.moneyMaskToFloat(box.querySelector("#m-amount"));
       var date = box.querySelector("#m-date").value;
       if (!desc) { Toast.show("Informe uma descrição", "danger"); return; }
       if (!date) { Toast.show("Informe a data", "danger"); return; }
@@ -404,7 +405,7 @@
             costCenters.map(function (c) { return '<option value="' + c.id + '"' + (item.costCenterId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
           '<div class="form-field"><label>Profissional (opcional)</label><select class="si-emp"><option value="">-</option>' +
             employees.map(function (e) { return '<option value="' + e.id + '"' + (item.employeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") + '</select></div>' +
-          '<div class="form-field"><label>Valor (R$)</label><input type="number" step="0.01" min="0" class="si-amount" value="' + item.amount + '"></div>' +
+          '<div class="form-field"><label>Valor (R$)</label><input type="text" inputmode="numeric" autocomplete="off" placeholder="0,00" class="si-amount" value="' + Utils.escapeHtml(item.amount) + '"></div>' +
         '</div>' +
         '</div>';
     }
@@ -423,7 +424,7 @@
 
     function updateTotal() {
       syncItemsFromDom();
-      var total = items.reduce(function (s, it) { return s + (parseFloat(it.amount) || 0); }, 0);
+      var total = items.reduce(function (s, it) { return s + Utils.parseMoneyMaskStr(it.amount); }, 0);
       box.querySelector("#tm-total").textContent = Utils.fmtMoney(round2(total));
     }
 
@@ -441,7 +442,7 @@
           updateTotal();
         });
       });
-      Utils.qsa(".si-amount", itemsEl).forEach(function (inp) { inp.addEventListener("input", updateTotal); });
+      Utils.qsa(".si-amount", itemsEl).forEach(function (inp) { Utils.wireMoneyMaskListener(inp); inp.addEventListener("input", updateTotal); });
       Utils.qsa(".si-desc, .si-cc, .si-emp", itemsEl).forEach(function (inp) { inp.addEventListener("input", updateTotal); inp.addEventListener("change", updateTotal); });
       Utils.qsa("[data-remove-item]", itemsEl).forEach(function (b) {
         b.addEventListener("click", function () {
@@ -506,7 +507,7 @@
       var validItems = [];
       for (var i = 0; i < items.length; i++) {
         var it = items[i];
-        var amount = parseFloat(it.amount);
+        var amount = Utils.parseMoneyMaskStr(it.amount);
         if (!it.desc.trim() && !amount) continue; // skip fully-empty rows silently
         if (!it.desc.trim()) { Toast.show("Informe a descrição do item " + (i + 1), "danger"); return; }
         if (!amount || amount <= 0) { Toast.show("Informe um valor válido para o item \"" + it.desc + "\"", "danger"); return; }
@@ -521,7 +522,7 @@
       var installments = (pay === "Cartão de Crédito") ? (parseInt(instSelect.value, 10) || 1) : 1;
 
       function buildRecord(it, idx) {
-        var amount = round2(parseFloat(it.amount));
+        var amount = round2(Utils.parseMoneyMaskStr(it.amount));
         total += amount;
         var rec = {
           type: type, description: it.desc.trim(), amount: amount, date: date,

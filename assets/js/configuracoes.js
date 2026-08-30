@@ -640,17 +640,18 @@
       '<div class="form-field full"><label>Nome do Serviço</label><input type="text" id="srv-name" value="' + (s ? Utils.escapeHtml(s.name) : "") + '"></div>' +
       '<div class="form-field"><label>Grupo</label><select id="srv-group">' + groups.map(function (g) { return '<option value="' + g + '"' + (s && s.group === g ? " selected" : "") + '>' + g + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Categoria de Receita</label><select id="srv-cat">' + categories.map(function (c) { return '<option value="' + c.id + '"' + (s && s.categoryId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
-      '<div class="form-field"><label>Preço (R$)</label><input type="number" step="0.01" id="srv-price" value="' + (s ? s.price : "") + '"></div>' +
+      '<div class="form-field"><label>Preço (R$)</label><input type="text" id="srv-price"></div>' +
       '<div class="form-field"><label>Duração (min)</label><input type="number" id="srv-duration" value="' + (s ? s.durationMin : 30) + '"></div>' +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="srv-save">Salvar</button>';
     var box = Modal.open({ title: s ? "Editar Serviço" : "Novo Serviço", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#srv-price"), s ? s.price : 0);
     box.querySelector("#srv-save").addEventListener("click", function () {
       var name = box.querySelector("#srv-name").value.trim();
       if (!name) { Toast.show("Informe o nome do serviço", "danger"); return; }
       var patch = {
         name: name, group: box.querySelector("#srv-group").value, categoryId: box.querySelector("#srv-cat").value,
-        price: parseFloat(box.querySelector("#srv-price").value) || 0, durationMin: parseInt(box.querySelector("#srv-duration").value, 10) || 30
+        price: Utils.moneyMaskToFloat(box.querySelector("#srv-price")), durationMin: parseInt(box.querySelector("#srv-duration").value, 10) || 30
       };
       if (s) DB.update("services", s.id, patch); else DB.insert("services", patch);
       DB.log("Configurações", (s ? "Atualizou" : "Criou") + " o serviço " + name);

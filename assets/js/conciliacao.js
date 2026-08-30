@@ -460,13 +460,14 @@
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Descrição</label><input type="text" id="cf-desc" value="' + Utils.escapeHtml(b.description) + '"></div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="cf-date" value="' + b.date + '"></div>' +
-      '<div class="form-field"><label>Valor (R$)</label><input type="number" step="0.01" id="cf-amount" value="' + Math.abs(b.amount) + '"></div>' +
+      '<div class="form-field"><label>Valor (R$)</label><input type="text" id="cf-amount"></div>' +
       '<div class="form-field"><label>Tipo</label><input type="text" value="' + (isReceita ? "Receita" : "Despesa") + '" disabled></div>' +
       '<div class="form-field"><label>Categoria</label><select id="cf-cat">' + categories.map(function (c) { return '<option value="' + c.id + '">' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Centro de Custo</label><select id="cf-cc">' + costCenters.map(function (c) { return '<option value="' + c.id + '">' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cf-save">Criar e Conciliar</button>';
     var box = Modal.open({ title: "Criar Lançamento a partir do Extrato", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#cf-amount"), Math.abs(b.amount));
     box.querySelector("#cf-cat").addEventListener("change", function () {
       var c = categories.find(function (x) { return x.id === this.value; }.bind(this));
     });
@@ -475,7 +476,7 @@
       var txn = DB.insert("transactions", {
         type: isReceita ? "receita" : "despesa",
         description: box.querySelector("#cf-desc").value.trim() || b.description,
-        amount: Math.abs(parseFloat(box.querySelector("#cf-amount").value) || 0),
+        amount: Math.abs(Utils.moneyMaskToFloat(box.querySelector("#cf-amount"))),
         date: box.querySelector("#cf-date").value,
         categoryId: box.querySelector("#cf-cat").value,
         costCenterId: box.querySelector("#cf-cc").value,

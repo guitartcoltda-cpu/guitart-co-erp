@@ -184,7 +184,7 @@
       '<div class="form-field"><label>CPF</label><input type="text" id="em-cpf" placeholder="000.000.000-00" value="' + (e && e.cpf ? Utils.fmtCPF(e.cpf) : "") + '"></div>' +
       '<div class="form-field"><label>Data de Admissão</label><input type="date" id="em-hire" value="' + (e ? e.hireDate : Utils.todayISO()) + '"></div>' +
       '<div class="form-field"><label>Aniversário</label><input type="date" id="em-birthday" value="' + (e && e.birthday ? e.birthday : "") + '"></div>' +
-      '<div class="form-field"><label>Salário Base (R$)</label><input type="number" step="0.01" id="em-salary" value="' + (e ? e.baseSalary : 0) + '"></div>' +
+      '<div class="form-field"><label>Salário Base (R$)</label><input type="text" id="em-salary"></div>' +
       '<div class="form-field"><label>Comissão (%)</label><input type="number" step="0.1" id="em-comm" value="' + (e ? e.commissionRate : 0) + '"></div>' +
       '</div>' +
       '<div class="small text-muted mt-8">O CPF é usado, entre outras coisas, para restringir automaticamente o Extrato do Profissional — a pessoa que fizer login com esse CPF só enxerga a própria comissão lá.</div>' +
@@ -205,6 +205,7 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="em-save">Salvar Funcionário</button>';
     var box = Modal.open({ title: e ? "Editar Funcionário" : "Novo Funcionário", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wirePhoneMask(box.querySelector("#em-phone"));
+    Utils.wireMoneyMask(box.querySelector("#em-salary"), e ? e.baseSalary : 0);
     box.querySelector("#em-acc-pass").addEventListener("input", function (ev) {
       ev.target.value = Utils.onlyDigits(ev.target.value).slice(0, 20);
     });
@@ -284,7 +285,7 @@
         phone: empPhone, email: box.querySelector("#em-email").value.trim(),
         cpf: cpfDigits || null,
         hireDate: box.querySelector("#em-hire").value, birthday: box.querySelector("#em-birthday").value || null,
-        baseSalary: parseFloat(box.querySelector("#em-salary").value) || 0,
+        baseSalary: Utils.moneyMaskToFloat(box.querySelector("#em-salary")),
         commissionRate: parseFloat(box.querySelector("#em-comm").value) || 0,
         performsServices: box.querySelector("#em-performs").value === "1",
         requiresTimeClock: box.querySelector("#em-timeclock").value === "1",
