@@ -531,9 +531,13 @@
       var removeBtn = box.querySelector("#om-attach-remove");
       if (!attachment) { el.innerHTML = ""; removeBtn.style.display = "none"; return; }
       var isImg = (attachment.type || "").indexOf("image/") === 0;
+      // <a href> usa blob: URL, não a data: URL direto — o Chrome bloqueia
+      // navegação de aba para data: URL (ver Utils.dataUrlToBlobUrl em
+      // utils.js). O <img src> pode continuar com a data: URL normalmente.
+      var openUrl = Utils.dataUrlToBlobUrl(attachment.dataUrl) || attachment.dataUrl || "#";
       el.innerHTML = isImg
-        ? '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><img src="' + attachment.dataUrl + '" alt="Anexo" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);"></a>'
-        : '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> ' + Utils.escapeHtml(attachment.name) + '</a>';
+        ? '<a href="' + openUrl + '" target="_blank" rel="noopener"><img src="' + attachment.dataUrl + '" alt="Anexo" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);"></a>'
+        : '<a href="' + openUrl + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> ' + Utils.escapeHtml(attachment.name) + '</a>';
       removeBtn.style.display = "";
     }
     renderAttachPreview();

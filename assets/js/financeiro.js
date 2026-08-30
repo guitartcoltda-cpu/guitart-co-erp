@@ -138,8 +138,13 @@
           // anexo completo chegar do servidor.
           var win = window.open("", "_blank");
           DB.getAttachmentFull("transactions", id).then(function (full) {
-            if (full && full.dataUrl) {
-              if (win) win.location.href = full.dataUrl;
+            // Usa blob: URL, não a data: URL direto — desde o Chrome 88 o
+            // navegador bloqueia a navegação de uma aba inteira para uma
+            // data: URL (fica presa em "about:blank#blocked"). Ver
+            // Utils.dataUrlToBlobUrl em utils.js para mais detalhes.
+            var openUrl = full && full.dataUrl ? Utils.dataUrlToBlobUrl(full.dataUrl) : null;
+            if (openUrl) {
+              if (win) win.location.href = openUrl;
             } else {
               if (win) win.close();
               Toast.show("Não foi possível carregar o comprovante", "danger");

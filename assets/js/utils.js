@@ -424,6 +424,35 @@
       reader.readAsDataURL(file);
     },
 
+    // Converte uma data: URL (ex.: "data:application/pdf;base64,JVBERi0...")
+    // em uma blob: URL (ex.: "blob:https://.../abc-123"). Necessário porque,
+    // desde o Chrome 88, o navegador BLOQUEIA a navegação de uma aba/janela
+    // inteira para uma data: URL (seja via clique num <a href="data:...">
+    // seja via script setando window.location.href) — a aba fica presa em
+    // "about:blank#blocked" e o comprovante nunca abre. blob: URLs não têm
+    // essa restrição, então usamos esta função em todo lugar que abre o
+    // anexo em uma nova aba/janela (o <img src="dataUrl"> de preview inline
+    // continua usando a data: URL direto, pois isso é só carregar um
+    // recurso, não navegar — não é afetado pelo bloqueio).
+    // Retorna null se a conversão falhar (dataUrl inválida/vazia).
+    dataUrlToBlobUrl: function (dataUrl) {
+      if (!dataUrl || dataUrl.indexOf("data:") !== 0) return null;
+      try {
+        var comma = dataUrl.indexOf(",");
+        var meta = dataUrl.slice(5, comma); // ex.: "application/pdf;base64"
+        var isBase64 = meta.indexOf("base64") > -1;
+        var mime = (meta.split(";")[0]) || "application/octet-stream";
+        var body = dataUrl.slice(comma + 1);
+        var raw = isBase64 ? atob(body) : decodeURIComponent(body);
+        var bytes = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        return URL.createObjectURL(new Blob([bytes], { type: mime }));
+      } catch (e) {
+        console.error("Falha ao converter anexo (data URL) em blob URL", e);
+        return null;
+      }
+    },
+
     // Reads ANY file (PDF, foto de atestado, comprovante etc.) as base64 e
     // devolve um objeto { name, type, size, dataUrl } via callback(obj|null).
     // Usado para anexos que não são a foto de perfil de alguém (ver
@@ -471,9 +500,14 @@
       function renderPreview() {
         if (!attachment) { previewEl.innerHTML = ""; removeBtn.style.display = "none"; return; }
         var isImg = (attachment.type || "").indexOf("image/") === 0;
+        // O <a href> usa uma blob: URL (não a data: URL direto) porque o
+        // Chrome bloqueia navegação de aba para data: URL — ver comentário
+        // em Utils.dataUrlToBlobUrl. O <img src> pode usar a data: URL
+        // normalmente, pois carregar um recurso não é o mesmo que navegar.
+        var openUrl = global.Utils.dataUrlToBlobUrl(attachment.dataUrl) || attachment.dataUrl || "#";
         previewEl.innerHTML = isImg
-          ? '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><img src="' + attachment.dataUrl + '" alt="Anexo" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);"></a>'
-          : '<a href="' + attachment.dataUrl + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> ' + global.Utils.escapeHtml(attachment.name) + '</a>';
+          ? '<a href="' + openUrl + '" target="_blank" rel="noopener"><img src="' + attachment.dataUrl + '" alt="Anexo" style="max-width:160px;max-height:120px;border-radius:8px;border:1px solid var(--border-color);"></a>'
+          : '<a href="' + openUrl + '" target="_blank" rel="noopener"><i class="fa-solid fa-file-pdf"></i> ' + global.Utils.escapeHtml(attachment.name) + '</a>';
         removeBtn.style.display = "";
       }
       renderPreview();
