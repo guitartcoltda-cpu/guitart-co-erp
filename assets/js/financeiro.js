@@ -57,6 +57,16 @@
 
   function getFiltered() {
     var txns = DB.all("transactions");
+    // Antes: DB.all("clients")/DB.all("employees") eram chamados (cada um
+    // recopiando a tabela inteira) DENTRO do filter — ou seja, uma vez POR
+    // TRANSAÇÃO sempre que havia termo de busca — e depois cada um fazia
+    // .find() varrendo a lista de novo. Agora os índices id→registro são
+    // montados uma única vez por chamada, só quando há busca ativa.
+    var clientsById = null, employeesById = null;
+    if (state.search) {
+      clientsById = {}; DB.all("clients").forEach(function (c) { clientsById[c.id] = c; });
+      employeesById = {}; DB.all("employees").forEach(function (e) { employeesById[e.id] = e; });
+    }
     return txns.filter(function (t) {
       if (state.type && t.type !== state.type) return false;
       if (state.start && t.date < state.start) return false;
@@ -65,9 +75,8 @@
       if (state.cat && t.categoryId !== state.cat) return false;
       if (state.status && t.status !== state.status) return false;
       if (state.search) {
-        var clients = DB.all("clients"), employees = DB.all("employees");
-        var cli = clients.find(function (c) { return c.id === t.clientId; });
-        var emp = employees.find(function (e) { return e.id === t.employeeId; });
+        var cli = clientsById[t.clientId];
+        var emp = employeesById[t.employeeId];
         var hay = (t.description + " " + (cli ? cli.name : "") + " " + (emp ? emp.name : "")).toLowerCase();
         if (hay.indexOf(state.search) === -1) return false;
       }

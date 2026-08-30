@@ -161,19 +161,37 @@
   function computeRows() {
     var appointments = DB.all("appointments").filter(function (a) { return a.status === "concluido" && Utils.monthKey(a.date) === selectedMonth; });
     var employeesAll = DB.all("employees");
-    var assistantIds = {};
-    appointments.forEach(function (a) { if (a.assistantId) assistantIds[a.assistantId] = true; });
+    // Índices montados uma única vez por chamada (em vez de um .find()/
+    // .filter() varrendo o array inteiro para cada funcionário/agendamento
+    // dentro dos loops abaixo) — mesmo resultado, custo O(n) em vez de
+    // O(n²) para o mês selecionado.
+    var employeesById = {};
+    employeesAll.forEach(function (e) { employeesById[e.id] = e; });
+    var apptsByMainId = {}, apptsByAssistantId = {};
+    appointments.forEach(function (a) {
+      if (a.employeeId) (apptsByMainId[a.employeeId] || (apptsByMainId[a.employeeId] = [])).push(a);
+      if (a.assistantId) (apptsByAssistantId[a.assistantId] || (apptsByAssistantId[a.assistantId] = [])).push(a);
+    });
+    var allTransactions = DB.all("transactions");
+    var catId = commissionCatId();
+    var txnsByEmployeeId = {};
+    allTransactions.forEach(function (t) {
+      if (t.type === "despesa" && t.categoryId === catId && t.relatedMonth === selectedMonth && t.employeeId) {
+        (txnsByEmployeeId[t.employeeId] || (txnsByEmployeeId[t.employeeId] = [])).push(t);
+      }
+    });
+    var assistantIds = apptsByAssistantId;
     var employees = employeesAll.filter(function (e) { return e.commissionRate > 0 || assistantIds[e.id]; });
 
     return employees.map(function (e) {
-      var asMain = appointments.filter(function (a) { return a.employeeId === e.id; });
-      var asAssistant = appointments.filter(function (a) { return a.assistantId === e.id; });
+      var asMain = apptsByMainId[e.id] || [];
+      var asAssistant = apptsByAssistantId[e.id] || [];
       var serviceRevenue = round2(sumBy(asMain, "price"));
       var mainCommissionTotal = 0;
       asMain.forEach(function (a) { mainCommissionTotal += Utils.apptCommissionSplit(a, e).mainCommission; });
       var assistantCommissionTotal = 0;
       asAssistant.forEach(function (a) {
-        var mainEmp = employeesAll.find(function (x) { return x.id === a.employeeId; });
+        var mainEmp = employeesById[a.employeeId];
         assistantCommissionTotal += Utils.apptCommissionSplit(a, mainEmp).assistantCommission;
       });
       mainCommissionTotal = round2(mainCommissionTotal);
@@ -183,9 +201,7 @@
       var bonusTotal = round2(sumBy(bonuses, "amount"));
       var consumo = (window.Consumo ? Consumo.deductionFor(e.id, selectedMonth) : { total: 0, items: [] });
       var devido = round2(baseComissao + bonusTotal - consumo.total);
-      var pagoTxns = DB.all("transactions").filter(function (t) {
-        return t.type === "despesa" && t.employeeId === e.id && t.categoryId === commissionCatId() && t.relatedMonth === selectedMonth;
-      });
+      var pagoTxns = txnsByEmployeeId[e.id] || [];
       var pago = sumBy(pagoTxns, "amount");
       return {
         employee: e, serviceRevenue: serviceRevenue, atendimentos: asMain.length,
@@ -204,8 +220,13 @@
     return _commCatId;
   }
 
-  function render() {
-    var rows = computeRows();
+  // `precomputedRows` (opcional): evita chamar computeRows() de novo quando
+  // quem chamou render() já tinha acabado de calcular as linhas por outro
+  // motivo (ver refreshGrandTotal abaixo) — computeRows() é O(funcionários ×
+  // agendamentos/lançamentos do mês), então recalcular duas vezes na mesma
+  // interação do usuário é desperdício sem necessidade.
+  function render(precomputedRows) {
+    var rows = precomputedRows || computeRows();
     var totalDevido = rows.reduce(function (s, r) { return s + r.devido; }, 0);
     var totalPago = rows.reduce(function (s, r) { return s + r.pago; }, 0);
     var totalAberto = rows.reduce(function (s, r) { return s + Math.max(0, r.saldo); }, 0);
@@ -361,13 +382,16 @@
     if (!row) return;
     var e = row.employee;
     var services = DB.all("services"), clients = DB.all("clients"), employeesAll = DB.all("employees");
+    var servicesById = {}; services.forEach(function (s) { servicesById[s.id] = s; });
+    var clientsById = {}; clients.forEach(function (c) { clientsById[c.id] = c; });
+    var employeesById = {}; employeesAll.forEach(function (x) { employeesById[x.id] = x; });
     var apptsAll = DB.all("appointments").filter(function (a) { return a.status === "concluido" && Utils.monthKey(a.date) === selectedMonth; });
     var apptsMain = apptsAll.filter(function (a) { return a.employeeId === employeeId; }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
     var apptsAsst = apptsAll.filter(function (a) { return a.assistantId === employeeId; }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
 
     function lineHtml(a, commissionValue, roleLabel) {
-      var s = services.find(function (x) { return x.id === a.serviceId; });
-      var c = clients.find(function (x) { return x.id === a.clientId; });
+      var s = servicesById[a.serviceId];
+      var c = clientsById[a.clientId];
       return '<tr>' +
         '<td>' + Utils.fmtDate(a.date) + ' · ' + a.time + '</td>' +
         '<td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
@@ -386,7 +410,7 @@
     var asstSectionHtml = "";
     if (apptsAsst.length) {
       var asstLinesHtml = apptsAsst.map(function (a) {
-        var mainEmp = employeesAll.find(function (x) { return x.id === a.employeeId; });
+        var mainEmp = employeesById[a.employeeId];
         var split = Utils.apptCommissionSplit(a, mainEmp);
         return lineHtml(a, split.assistantCommission, mainEmp ? "assistindo " + mainEmp.name : "assistente");
       }).join("");
@@ -464,10 +488,11 @@
     }
 
     function refreshGrandTotal() {
-      var newRow = computeRows().find(function (r) { return r.employee.id === employeeId; });
+      var rows = computeRows(); // uma única chamada — reaproveitada abaixo
+      var newRow = rows.find(function (r) { return r.employee.id === employeeId; });
       if (newRow) box.querySelector("#dm-grand-total").textContent = Utils.fmtMoney(newRow.devido);
       renderBonusSection();
-      render(); // keep the page-level table/summary in sync while the modal is open
+      render(rows); // keep the page-level table/summary in sync while the modal is open
     }
 
     renderBonusSection();

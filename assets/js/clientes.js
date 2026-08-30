@@ -44,7 +44,24 @@
     var today = Utils.todayISO();
     var mk = Utils.monthKey(today);
     var novosNoMes = all.filter(function (c) { return Utils.monthKey(c.firstVisit) === mk; }).length;
-    var totalSpendAll = all.reduce(function (s, c) { return s + clientSpend(c.id); }, 0);
+
+    // Índices por cliente montados uma única vez por render() — antes,
+    // clientSpend(c.id)/lastVisit(c.id) varriam TODAS as transações/TODOS
+    // os agendamentos para CADA cliente (tanto para o KPI "Gasto Médio",
+    // que soma TODOS os clientes, quanto para cada linha da página atual).
+    // Mesmo resultado, custo O(clientes + transações + agendamentos) em vez
+    // de O(clientes × (transações + agendamentos)) — render() roda a cada
+    // busca/filtro/troca de página, então é um ponto de alto efeito.
+    var spendByClient = {};
+    DB.all("transactions").forEach(function (t) {
+      if (t.type === "receita" && t.clientId) spendByClient[t.clientId] = (spendByClient[t.clientId] || 0) + t.amount;
+    });
+    var lastVisitByClient = {};
+    DB.all("appointments").forEach(function (a) {
+      if (a.status === "concluido" && a.clientId && (!lastVisitByClient[a.clientId] || a.date > lastVisitByClient[a.clientId])) lastVisitByClient[a.clientId] = a.date;
+    });
+
+    var totalSpendAll = all.reduce(function (s, c) { return s + (spendByClient[c.id] || 0); }, 0);
     var ticketMedio = all.length ? totalSpendAll / all.length : 0;
     var curMonthNum = Utils.parseDate(today).getMonth() + 1;
     var aniversariantes = all.filter(function (c) { return c.birthday && parseInt(c.birthday.split("-")[1], 10) === curMonthNum; }).length;
@@ -72,13 +89,13 @@
     } else {
       tbl.innerHTML = '<thead><tr><th>Cliente</th><th>Contato</th><th>Primeira Visita</th><th>Última Visita</th><th class="text-right">Total Gasto</th><th>Tags</th><th></th></tr></thead><tbody>' +
         pageItems.map(function (c) {
-          var lv = lastVisit(c.id);
+          var lv = lastVisitByClient[c.id] || null;
           return '<tr>' +
             '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(c.name) + '</div><span class="font-bold pointer" data-view="' + c.id + '">' + Utils.escapeHtml(c.name) + '</span></div></td>' +
             '<td class="small">' + Utils.escapeHtml(c.phone) + '<br><span class="text-muted">' + Utils.escapeHtml(c.email) + '</span></td>' +
             '<td class="text-num">' + Utils.fmtDate(c.firstVisit) + '</td>' +
             '<td class="text-num">' + (lv ? Utils.fmtDate(lv) : '<span class="text-muted">-</span>') + '</td>' +
-            '<td class="text-right text-num font-bold">' + Utils.fmtMoney(clientSpend(c.id)) + '</td>' +
+            '<td class="text-right text-num font-bold">' + Utils.fmtMoney(spendByClient[c.id] || 0) + '</td>' +
             '<td><div class="chip-list">' + (c.tags || []).map(function (t) { return '<span class="chip">' + Utils.escapeHtml(t) + '</span>'; }).join("") + '</div></td>' +
             '<td><div class="flex gap-6">' +
               '<button class="btn btn-icon btn-ghost" data-view="' + c.id + '" title="Histórico"><i class="fa-solid fa-clock-rotate-left"></i></button>' +

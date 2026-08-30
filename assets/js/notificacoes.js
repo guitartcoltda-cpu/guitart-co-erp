@@ -184,18 +184,35 @@
       });
     }
 
+    // Agrupa os agendamentos por cliente uma única vez (em vez de um
+    // .filter()/.some() varrendo TODOS os agendamentos para CADA cliente,
+    // dentro do forEach abaixo) — essa função roda em toda tela do sistema
+    // (via layout.js), então é o ponto de maior efeito multiplicador de
+    // qualquer ineficiência. Mesmo resultado, custo O(clientes +
+    // agendamentos) em vez de O(clientes × agendamentos).
+    var doneByClient = {}, hasFutureByClient = {};
+    appointments.forEach(function (a) {
+      if (a.status === "concluido") (doneByClient[a.clientId] || (doneByClient[a.clientId] = [])).push(a);
+      else if (a.status === "agendado" && a.date >= today) hasFutureByClient[a.clientId] = true;
+    });
+    // Índice de notificações "inatividade" já existentes, por refId — evita
+    // repetir DB.findOne (que varre todas as notificações) para cada
+    // cliente pendente encontrado abaixo.
+    var existingInativRefIds = {};
+    DB.all("notifications").forEach(function (n) { if (n.type === "inatividade") existingInativRefIds[n.refId] = true; });
+    var servicesById = {};
+    DB.all("services").forEach(function (s) { servicesById[s.id] = s; });
+
     DB.all("clients").forEach(function (c) {
-      var done = appointments.filter(function (a) { return a.clientId === c.id && a.status === "concluido"; })
-        .sort(function (x, y) { return y.date.localeCompare(x.date); });
+      var done = (doneByClient[c.id] || []).slice().sort(function (x, y) { return y.date.localeCompare(x.date); });
       if (!done.length) return;
-      var hasFuture = appointments.some(function (a) { return a.clientId === c.id && a.status === "agendado" && a.date >= today; });
-      if (hasFuture) return;
+      if (hasFutureByClient[c.id]) return;
 
       var due = dueByClient[c.id];
       if (due) {
-        var service = DB.get("services", due.serviceId);
+        var service = servicesById[due.serviceId];
         var refId = c.id + "_" + due.serviceId + "_" + due.lastDate;
-        if (hasNotification("inatividade", refId)) return;
+        if (existingInativRefIds[refId]) return;
         DB.insert("notifications", {
           type: "inatividade", refId: refId, clientId: c.id, appointmentId: null,
           status: "pendente", createdDate: today,
@@ -210,7 +227,7 @@
       var daysSince = Utils.daysBetween(lastDate, today);
       if (daysSince < INACTIVE_THRESHOLD_DAYS) return;
       var refId2 = c.id + "_" + lastDate;
-      if (hasNotification("inatividade", refId2)) return;
+      if (existingInativRefIds[refId2]) return;
       DB.insert("notifications", {
         type: "inatividade", refId: refId2, clientId: c.id, appointmentId: null,
         status: "pendente", createdDate: today, meta: { daysSince: daysSince, lastDate: lastDate, rule: "fixo" }

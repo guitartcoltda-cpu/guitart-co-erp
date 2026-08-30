@@ -5,29 +5,53 @@
 (function (global) {
   "use strict";
 
+  // Instâncias de Intl.* reaproveitadas entre chamadas (item 1 do plano de
+  // otimização). new Intl.NumberFormat/DateTimeFormat(...) — que é o que
+  // toLocaleString(...)/toLocaleDateString(...) fazem por baixo dos panos a
+  // CADA chamada — tem um custo de criação não-trivial (parseia as opções,
+  // resolve o locale). Essas funções são chamadas centenas de vezes por
+  // render de tabela (uma vez por linha, por coluna de dinheiro/data), então
+  // cachear as instâncias e só chamar .format() nelas evita recriar o
+  // formatter do zero em cada célula. Comportamento de saída idêntico ao
+  // toLocaleString equivalente — só a forma de obter o resultado muda.
+  var _fmtMoneyBRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+  var _fmtNumberCache = {}; // uma instância por quantidade de casas decimais usada
+  var _fmtDateBR = new Intl.DateTimeFormat("pt-BR");
+  var _fmtTimeBR = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+
+  function numberFormatterFor(decimals) {
+    var key = decimals || 0;
+    var f = _fmtNumberCache[key];
+    if (!f) {
+      f = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: key, maximumFractionDigits: key });
+      _fmtNumberCache[key] = f;
+    }
+    return f;
+  }
+
   var Utils = {
     fmtMoney: function (value) {
       var n = Number(value) || 0;
-      return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+      return _fmtMoneyBRL.format(n);
     },
 
     fmtNumber: function (value, decimals) {
       var n = Number(value) || 0;
-      return n.toLocaleString("pt-BR", { minimumFractionDigits: decimals || 0, maximumFractionDigits: decimals || 0 });
+      return numberFormatterFor(decimals).format(n);
     },
 
     fmtDate: function (isoDate) {
       if (!isoDate) return "-";
       var d = this.parseDate(isoDate);
       if (!d) return "-";
-      return d.toLocaleDateString("pt-BR");
+      return _fmtDateBR.format(d);
     },
 
     fmtDateTime: function (isoDate) {
       if (!isoDate) return "-";
       var d = new Date(isoDate);
       if (isNaN(d)) return "-";
-      return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      return _fmtDateBR.format(d) + " " + _fmtTimeBR.format(d);
     },
 
     // parses "YYYY-MM-DD" as local date to avoid TZ shifting issues

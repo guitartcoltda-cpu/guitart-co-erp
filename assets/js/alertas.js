@@ -105,16 +105,25 @@
 
   // ================= 2) Clientes inativos =================
   function computeInactive(data) {
+    // Uma única varredura de appointments/transactions monta os índices por
+    // cliente (em vez de um .forEach()/.some() sobre TODOS os agendamentos e
+    // TODAS as transações, repetido para CADA cliente) — mesmo resultado,
+    // custo O(clientes + agendamentos + transações) em vez de O(clientes ×
+    // (agendamentos + transações)).
+    var lastApptByClient = {}, hasFutureByClient = {};
+    data.appointments.forEach(function (a) {
+      if (a.status === "concluido" && (!lastApptByClient[a.clientId] || a.date > lastApptByClient[a.clientId])) lastApptByClient[a.clientId] = a.date;
+      else if (a.status === "agendado" && a.date >= data.today) hasFutureByClient[a.clientId] = true;
+    });
+    var lastTxnByClient = {};
+    data.transactions.forEach(function (t) {
+      if (t.type === "receita" && (!lastTxnByClient[t.clientId] || t.date > lastTxnByClient[t.clientId])) lastTxnByClient[t.clientId] = t.date;
+    });
+
     var rows = [];
     data.clients.forEach(function (c) {
-      var lastApptDate = null;
-      data.appointments.forEach(function (a) {
-        if (a.clientId === c.id && a.status === "concluido" && (!lastApptDate || a.date > lastApptDate)) lastApptDate = a.date;
-      });
-      var lastTxnDate = null;
-      data.transactions.forEach(function (t) {
-        if (t.clientId === c.id && t.type === "receita" && (!lastTxnDate || t.date > lastTxnDate)) lastTxnDate = t.date;
-      });
+      var lastApptDate = lastApptByClient[c.id] || null;
+      var lastTxnDate = lastTxnByClient[c.id] || null;
       var lastActivity = null;
       if (lastApptDate && lastTxnDate) lastActivity = lastApptDate > lastTxnDate ? lastApptDate : lastTxnDate;
       else lastActivity = lastApptDate || lastTxnDate;
@@ -123,8 +132,7 @@
       var daysSince = Utils.daysBetween(lastActivity, data.today);
       if (daysSince < INACTIVE_DAYS_THRESHOLD) return;
 
-      var hasFuture = data.appointments.some(function (a) { return a.clientId === c.id && a.status === "agendado" && a.date >= data.today; });
-      if (hasFuture) return;
+      if (hasFutureByClient[c.id]) return;
 
       rows.push({ client: c, lastActivity: lastActivity, daysSince: daysSince });
     });
@@ -156,15 +164,24 @@
     var monthStart = data.today.slice(0, 8) + "01";
     var providers = data.employees.filter(function (e) { return e.status === "ativo" && Number(e.commissionRate) > 0; });
 
+    // Agrupa transações/agendamentos do mês por funcionário uma única vez
+    // (em vez de varrer as duas listas inteiras para CADA profissional) —
+    // mesmo resultado, custo O(profissionais + transações + agendamentos)
+    // em vez de O(profissionais × (transações + agendamentos)).
+    var revenueByEmployee = {}, countByEmployee = {};
+    data.transactions.forEach(function (t) {
+      if (t.type === "receita" && t.date >= monthStart && t.date <= data.today && t.employeeId) {
+        revenueByEmployee[t.employeeId] = (revenueByEmployee[t.employeeId] || 0) + t.amount;
+      }
+    });
+    data.appointments.forEach(function (a) {
+      if (a.status === "concluido" && a.date >= monthStart && a.date <= data.today && a.employeeId) {
+        countByEmployee[a.employeeId] = (countByEmployee[a.employeeId] || 0) + 1;
+      }
+    });
+
     var stats = providers.map(function (e) {
-      var revenue = 0, count = 0;
-      data.transactions.forEach(function (t) {
-        if (t.employeeId === e.id && t.type === "receita" && t.date >= monthStart && t.date <= data.today) revenue += t.amount;
-      });
-      data.appointments.forEach(function (a) {
-        if (a.employeeId === e.id && a.status === "concluido" && a.date >= monthStart && a.date <= data.today) count++;
-      });
-      return { employee: e, revenue: revenue, count: count };
+      return { employee: e, revenue: revenueByEmployee[e.id] || 0, count: countByEmployee[e.id] || 0 };
     });
 
     var totalRevenue = stats.reduce(function (s, x) { return s + x.revenue; }, 0);

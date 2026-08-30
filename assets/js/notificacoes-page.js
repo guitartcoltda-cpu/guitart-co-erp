@@ -161,7 +161,7 @@
       });
     });
 
-    renderBulkBar();
+    renderBulkBar(items);
   }
 
   // Abre um modal com a mensagem completa (a prévia na lista corta com
@@ -206,10 +206,14 @@
     });
   }
 
-  function renderBulkBar() {
+  // `items` (opcional): lista já calculada por render() — evita chamar
+  // getItems() de novo (mesmo filtro/ordenação) quando quem chamou já tinha
+  // acabado de calculá-la; se não vier (ex.: clique num checkbox), calcula
+  // aqui mesmo.
+  function renderBulkBar(items) {
     var bar = document.getElementById("nt-bulkbar");
     var count = Object.keys(selected).length;
-    var pendingCount = getItems().filter(function (n) { return n.status === "pendente"; }).length;
+    var pendingCount = (items || getItems()).filter(function (n) { return n.status === "pendente"; }).length;
     bar.style.display = pendingCount ? "flex" : "none";
     document.getElementById("nt-select-count").textContent = count + " selecionado(s)";
     var openBtn = document.getElementById("nt-bulk-open");

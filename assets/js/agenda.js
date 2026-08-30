@@ -242,6 +242,13 @@
   // de um profissional de uma vez, sem clicar dia a dia.
   function renderGeneralList() {
     var services = DB.all("services"), employees = DB.all("employees"), clients = DB.all("clients");
+    // Índices id→registro montados uma vez (em vez de um .find() por
+    // agendamento dentro de apptItemHtml, repetido para cada linha da
+    // lista) — mesmo resultado, custo O(agendamentos) em vez de
+    // O(agendamentos × catálogo).
+    var servicesById = {}; services.forEach(function (s) { servicesById[s.id] = s; });
+    var employeesById = {}; employees.forEach(function (e) { employeesById[e.id] = e; });
+    var clientsById = {}; clients.forEach(function (c) { clientsById[c.id] = c; });
     var list = DB.all("appointments").filter(function (a) {
       if (periodStart && a.date < periodStart) return false;
       if (periodEnd && a.date > periodEnd) return false;
@@ -274,7 +281,7 @@
       var dLabel = Utils.parseDate(date).toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
       return '<div class="ag-general-group">' +
         '<div class="ag-general-date">' + dLabel + '</div>' +
-        dayAppts.map(function (a) { return apptItemHtml(a, services, employees, clients); }).join("") +
+        dayAppts.map(function (a) { return apptItemHtml(a, servicesById, employeesById, clientsById); }).join("") +
         '</div>';
     }).join("");
 
@@ -289,11 +296,13 @@
     return '<span class="badge badge-info">Agendado</span>';
   }
 
-  function apptItemHtml(a, services, employees, clients) {
-    var s = services.find(function (x) { return x.id === a.serviceId; });
-    var e = employees.find(function (x) { return x.id === a.employeeId; });
-    var c = clients.find(function (x) { return x.id === a.clientId; });
-    var asst = a.assistantId ? employees.find(function (x) { return x.id === a.assistantId; }) : null;
+  // `servicesById`/`employeesById`/`clientsById`: Maps/objetos id→registro
+  // (ver renderGeneralList, único chamador desta função).
+  function apptItemHtml(a, servicesById, employeesById, clientsById) {
+    var s = servicesById[a.serviceId];
+    var e = employeesById[a.employeeId];
+    var c = clientsById[a.clientId];
+    var asst = a.assistantId ? employeesById[a.assistantId] : null;
     var actions = "";
     if (a.status === "agendado") {
       actions = '<button class="btn btn-sm btn-outline" data-conclude="' + a.id + '">Concluir</button>' +
