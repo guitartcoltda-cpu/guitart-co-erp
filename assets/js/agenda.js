@@ -514,6 +514,18 @@
     var box = Modal.open({ title: o ? "Editar Ocorrência" : "Registrar Ocorrência", bodyHtml: body, footHtml: foot });
 
     var attachment = o && o.attachment ? o.attachment : null;
+    var initialAttachmentRef = attachment;
+    // O anexo do cache é "leve" (sem o dataUrl — ver BOOT_VIEW em db.js);
+    // busca a versão completa em segundo plano só para corrigir o preview
+    // (a gravação em si já está protegida mesmo que o usuário salve antes
+    // disso terminar — ver remoteUpsert em db.js). Só substitui se o
+    // usuário não mexeu no anexo enquanto a busca corria (removeu, ou
+    // trocou por outro arquivo) — senão estaríamos desfazendo a ação dele.
+    if (o && o.attachment) {
+      DB.getAttachmentFull("occurrences", o.id).then(function (full) {
+        if (full && attachment === initialAttachmentRef) { attachment = full; renderAttachPreview(); }
+      });
+    }
     function renderAttachPreview() {
       var el = box.querySelector("#om-attach-preview");
       var removeBtn = box.querySelector("#om-attach-remove");

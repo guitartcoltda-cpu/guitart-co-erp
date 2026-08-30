@@ -27,9 +27,18 @@
     });
 
     Utils.qs("#btn-export-json").addEventListener("click", function () {
-      Utils.downloadFile("backup_salao_" + Utils.todayISO() + ".json", DB.exportJSON(), "application/json");
-      DB.log("Backup", "Exportou um backup completo dos dados (JSON)");
-      Toast.show("Backup exportado", "success");
+      var btn = Utils.qs("#btn-export-json");
+      btn.disabled = true;
+      Toast.show("Gerando backup...", "info");
+      DB.exportJSON().then(function (json) {
+        Utils.downloadFile("backup_salao_" + Utils.todayISO() + ".json", json, "application/json");
+        DB.log("Backup", "Exportou um backup completo dos dados (JSON)");
+        Toast.show("Backup exportado", "success");
+      }).catch(function () {
+        Toast.show("Falha ao gerar o backup — verifique sua internet e tente de novo", "danger");
+      }).finally(function () {
+        btn.disabled = false;
+      });
     });
     Utils.qs("#btn-import-json").addEventListener("click", function () { Utils.qs("#file-import-json").click(); });
     Utils.qs("#file-import-json").addEventListener("change", function (e) {

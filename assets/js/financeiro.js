@@ -109,7 +109,7 @@
             '<td class="text-num">' + Utils.fmtDate(t.date) + '</td>' +
             '<td>' + Utils.escapeHtml(t.description) +
               (t.saleId ? ' <span class="chip chip-sale" data-view-sale="' + t.saleId + '" style="cursor:pointer;" title="Ver todos os itens desta venda"><i class="fa-solid fa-receipt"></i> Venda</span>' : "") +
-              (t.attachment ? ' <a href="' + t.attachment.dataUrl + '" target="_blank" rel="noopener" title="Ver comprovante anexado"><i class="fa-solid fa-paperclip"></i></a>' : "") +
+              (t.attachment ? ' <a href="#" data-view-attachment="' + t.id + '" title="Ver comprovante anexado"><i class="fa-solid fa-paperclip"></i></a>' : "") +
               '</td>' +
             '<td>' + (cat ? '<span class="chip">' + Utils.escapeHtml(cat.name) + '</span>' : "-") + '</td>' +
             '<td>' + Utils.escapeHtml(cc ? cc.name : "-") + '</td>' +
@@ -128,6 +128,24 @@
       wireBulkCheckboxes(tbl);
       Utils.qsa("[data-view-sale]", tbl).forEach(function (b) {
         b.addEventListener("click", function (e) { e.stopPropagation(); viewSaleModal(b.getAttribute("data-view-sale")); });
+      });
+      Utils.qsa("[data-view-attachment]", tbl).forEach(function (a) {
+        a.addEventListener("click", function (e) {
+          e.preventDefault(); e.stopPropagation();
+          var id = a.getAttribute("data-view-attachment");
+          // Abre a aba em branco já no clique (síncrono) para o navegador
+          // não bloquear como pop-up — só preenche o destino quando o
+          // anexo completo chegar do servidor.
+          var win = window.open("", "_blank");
+          DB.getAttachmentFull("transactions", id).then(function (full) {
+            if (full && full.dataUrl) {
+              if (win) win.location.href = full.dataUrl;
+            } else {
+              if (win) win.close();
+              Toast.show("Não foi possível carregar o comprovante", "danger");
+            }
+          });
+        });
       });
       Utils.qsa("[data-del]", tbl).forEach(function (b) {
         b.addEventListener("click", function () {
@@ -277,6 +295,18 @@
     var box = Modal.open({ title: "Editar Lançamento", bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#m-amount"), record.amount);
     var mAttachment = Utils.wireAttachmentField(box, "m", record.attachment || null);
+    // O anexo do cache é "leve" (sem o dataUrl — ver BOOT_VIEW em db.js);
+    // busca a versão completa em segundo plano só para corrigir o preview
+    // (a gravação em si já está protegida mesmo que o usuário salve antes
+    // disso terminar — ver remoteUpsert em db.js).
+    if (record.attachment) {
+      DB.getAttachmentFull("transactions", id).then(function (full) {
+        // Só substitui se o usuário não mexeu no anexo enquanto a busca
+        // corria (removeu, ou trocou por outro arquivo) — senão estaríamos
+        // desfazendo a ação dele.
+        if (full && mAttachment.get() === record.attachment) mAttachment.set(full);
+      });
+    }
 
     function populateCatCC(curType) {
       var catSel = box.querySelector("#m-cat");

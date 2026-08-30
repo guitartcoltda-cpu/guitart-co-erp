@@ -242,7 +242,33 @@
 
   // ---------------------------------------------------------------
   // Busca tudo do Supabase e popula o cache em memória.
-  // ---------------------------------------------------------------
+  //
+  // Três tabelas guardam anexos (comprovante de pagamento, atestado etc.)
+  // como um data URL em base64 dentro do próprio registro
+  // (`attachment.dataUrl`) — um anexo de poucos MB já é suficiente para
+  // inflar essas tabelas a vários MB de JSON. Como o boot busca as 21
+  // tabelas inteiras a cada troca de tela (fora da janela de 20s do cache
+  // — ver BOOT_CACHE_TTL_MS acima), isso sozinho já foi medido deixando
+  // essa busca vários segundos mais lenta assim que a primeira leva de
+  // comprovantes reais foi anexada. Por isso, para essas 3 tabelas, o boot
+  // busca de uma VIEW no Supabase (ex.: "transactions_boot") que devolve
+  // o mesmo registro só que sem o campo `attachment.dataUrl` — o resto do
+  // registro (inclusive nome/tipo/tamanho do anexo) continua igual, só o
+  // conteúdo binário pesado fica de fora. Quando alguém realmente precisa
+  // ver o anexo (abrir o comprovante), busca-se ele à parte, na hora, com
+  // getAttachmentFull() (mais abaixo) — direto da tabela real.
+  // IMPORTANTE: como consequência, o `_cache` em memória nunca tem o
+  // dataUrl completo dessas tabelas — ver o comentário em remoteUpsert()
+  // sobre como isso é levado em conta para nunca sobrescrever/apagar um
+  // anexo já salvo no servidor numa gravação comum (ex.: marcar uma conta
+  // como paga), e o comentário em exportJSON() sobre como o backup
+  // continua saindo completo.
+  var BOOT_VIEW = {
+    transactions: "transactions_boot",
+    occurrences: "occurrences_boot",
+    commissionPayouts: "commissionPayouts_boot"
+  };
+
   var _readyResolve;
   var readyPromise = new Promise(function (resolve) { _readyResolve = resolve; });
 
@@ -283,7 +309,8 @@
       }
 
       var fetches = TABLES.map(function (t) {
-        return supa.from(t).select("data").then(function (res) {
+        var src = BOOT_VIEW[t] || t;
+        return supa.from(src).select("data").then(function (res) {
           if (res.error) throw res.error;
           return { table: t, rows: res.data || [] };
         });
@@ -331,11 +358,55 @@
     }
   }
 
+  // Um registro "leve" é o que veio de uma tabela em BOOT_VIEW (ver
+  // bootstrapOnline acima): tem attachment.name/type/size, mas nunca
+  // attachment.dataUrl (a chave nem existe no objeto — diferente de um
+  // anexo removido de propósito, que vira attachment: null). Detectar
+  // esse formato aqui, e não confiar em cada tela lembrar de tratar isso,
+  // é o que garante que NENHUMA gravação comum (ex.: marcar uma conta como
+  // paga, editar o valor, uma conciliação) apague sem querer um anexo já
+  // salvo no servidor só porque o cache em memória não tinha o dataUrl
+  // carregado.
+  function isLightAttachment(att) {
+    return !!(att && typeof att === "object" && !("dataUrl" in att));
+  }
+
   function remoteUpsert(table, record) {
     if (!supa) return;
+    if (isLightAttachment(record.attachment)) {
+      // Busca o anexo de verdade (com dataUrl) que já está salvo nesse
+      // registro no Supabase antes de gravar o resto — assim o registro
+      // "leve" que está na memória (sem o dataUrl) nunca sobrescreve/apaga
+      // o anexo real. Só acontece para registros que de fato têm anexo
+      // (a maioria não tem, e nem entra nesse caminho).
+      supa.from(table).select("data").eq("id", record.id).then(function (res) {
+        var current = (res.data && res.data[0] && res.data[0].data) || null;
+        var merged = Object.assign({}, record, { attachment: (current && current.attachment) || null });
+        return supa.from(table).upsert({ id: merged.id, data: merged });
+      }).then(function (res) {
+        if (res && res.error) remoteFail(table, "salvar", res.error);
+      }).catch(function (err) { remoteFail(table, "salvar", err); });
+      return;
+    }
     supa.from(table).upsert({ id: record.id, data: record }).then(function (res) {
       if (res.error) remoteFail(table, "salvar", res.error);
     }).catch(function (err) { remoteFail(table, "salvar", err); });
+  }
+
+  // Busca o anexo completo (com dataUrl) de um único registro direto da
+  // tabela real (não da view leve do boot) — usar só quando o usuário
+  // realmente precisa ver/baixar o anexo (abrir o comprovante, pré-carregar
+  // o preview ao editar), nunca em massa.
+  function fetchAttachmentFull(table, id) {
+    if (!supa) return Promise.resolve(null);
+    return supa.from(table).select("data").eq("id", id).then(function (res) {
+      if (res.error) throw res.error;
+      var rec = res.data && res.data[0] && res.data[0].data;
+      return (rec && rec.attachment) || null;
+    }).catch(function (err) {
+      console.error("Erro ao buscar anexo completo (tabela " + table + ", id " + id + ")", err);
+      return null;
+    });
   }
 
   function remoteDelete(table, id) {
@@ -498,8 +569,44 @@
       return db.settings.roles;
     },
 
+    // Async (devolve uma Promise<string>) — diferente das outras funções
+    // do DB, que são todas síncronas (lêem do cache em memória). Precisa
+    // ser assim porque o cache em memória guarda, de propósito, uma versão
+    // sem o dataUrl dos anexos das tabelas em BOOT_VIEW (ver o comentário
+    // lá em cima) — um backup com anexo "quebrado" (sem o arquivo de
+    // verdade) não serviria pra nada, então essa função busca essas
+    // tabelas de novo, completas, direto do Supabase, só na hora de gerar
+    // o arquivo de backup (uma ação rara e explícita do usuário — não faz
+    // parte da navegação normal entre telas).
     exportJSON: function () {
-      return JSON.stringify(load(), null, 2);
+      var snapshot = load();
+      var lightTables = Object.keys(BOOT_VIEW);
+      if (!supa) return Promise.resolve(JSON.stringify(snapshot, null, 2));
+      var fetches = lightTables.map(function (t) {
+        return supa.from(t).select("data").then(function (res) {
+          if (res.error) throw res.error;
+          return { table: t, rows: res.data || [] };
+        }).catch(function (err) {
+          console.error("Erro ao buscar dados completos de \"" + t + "\" para o backup — o backup vai sair sem os anexos dessa tabela.", err);
+          return { table: t, rows: null };
+        });
+      });
+      return Promise.all(fetches).then(function (results) {
+        var full = Object.assign({}, snapshot);
+        results.forEach(function (r) {
+          if (r.rows) full[r.table] = rowsToTableData(r.table, r.rows);
+        });
+        return JSON.stringify(full, null, 2);
+      });
+    },
+
+    // Busca o anexo completo (com dataUrl) de um único registro — usar
+    // quando o usuário pede pra ver/baixar um comprovante/anexo específico,
+    // ou para pré-carregar o preview correto ao abrir um cadastro para
+    // editar. Devolve uma Promise (null se não houver anexo ou a busca
+    // falhar).
+    getAttachmentFull: function (table, id) {
+      return fetchAttachmentFull(table, id);
     },
 
     importJSON: function (jsonStr) {
