@@ -89,6 +89,22 @@
   .ag-main-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .ag-main-nav .ag-nav-controls { display: flex; align-items: center; gap: 6px; }
   .ag-main-nav #week-label { font-size: 14px; font-weight: 700; min-width: 190px; text-align: center; }
+  /* Faixa de profissionais da Visão do Dia — a grade abre mostrando só a
+     coluna do profissional logado (ver currentEmployeeId em agenda.js);
+     esta faixa é o jeito de trocar pra outro profissional sem precisar do
+     seletor "Profissional" do filtro lateral. Os demais ficam esmaecidos
+     (meio "ocultos") até serem clicados, só o selecionado aparece em
+     destaque — isso evita o problema de rolagem horizontal de mostrar
+     todo mundo em colunas ao mesmo tempo. */
+  .ag-prof-strip { display: flex; align-items: center; gap: 10px; overflow-x: auto; padding: 2px 2px 14px; margin-bottom: 4px; border-bottom: 1px solid var(--border-color); }
+  .ag-prof-chip { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: var(--radius-md); flex-shrink: 0; opacity: .5; filter: grayscale(65%); transition: opacity .15s, filter .15s, background .15s; }
+  .ag-prof-chip:hover { opacity: .85; filter: grayscale(20%); background: var(--gray-50); }
+  .ag-prof-chip.active { opacity: 1; filter: none; background: var(--gray-50); }
+  .ag-prof-chip.active .avatar { box-shadow: 0 0 0 2px var(--color-primary); }
+  .ag-prof-chip .apc-name { font-size: 10.5px; font-weight: 600; color: var(--gray-600); max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ag-prof-chip.active .apc-name { color: var(--color-primary-dark); }
+  .ag-prof-chip.is-self:not(.active) { opacity: .75; filter: grayscale(35%); }
+  .ag-prof-chip .apc-all-icon { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--gray-200); color: var(--gray-600); }
   @media (max-width: 1100px) {
     .ag-layout { grid-template-columns: 1fr; }
     .ag-rail { position: static; order: 2; }
