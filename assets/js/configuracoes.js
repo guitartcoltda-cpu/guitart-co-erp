@@ -27,7 +27,6 @@
     Utils.qs("#btn-new-srv").addEventListener("click", function () { openSrvModal(null); });
     Utils.qs("#btn-new-role").addEventListener("click", function () { openRoleModal(null); });
     Utils.qs("#btn-new-group").addEventListener("click", function () { openGroupModal(null); });
-    Utils.qs("#btn-bulk-user-access").addEventListener("click", openBulkAccessModal);
 
     Utils.qs("#cfg-company").value = (DB.getSettings() || {}).companyName || "";
     Utils.qs("#btn-save-company").addEventListener("click", function () {
@@ -244,6 +243,8 @@
       '<div class="form-field full"><label>Funcionário vinculado (opcional)</label><select id="usr-employee"><option value="">Nenhum</option>' +
         linkOptions.map(function (e) { return '<option value="' + e.id + '"' + (u && u.employeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") +
       '</select><div class="hint">Vincular preenche automaticamente CPF/nome/telefone (só nos campos que ainda estiverem vazios) e passa a mostrar esta pessoa como "vinculada" na lista de Acessos.</div></div>' +
+      '<div class="form-field full" id="usr-create-emp-wrap"><label class="flex items-center gap-8"><input type="checkbox" id="usr-create-emp"' + (emp ? " checked disabled" : "") + '> Criar acesso de Funcionário automaticamente</label>' +
+        '<div class="hint" id="usr-create-emp-hint">' + (emp ? "Este acesso já está vinculado ao funcionário " + Utils.escapeHtml(emp.name) + " — nada a fazer aqui." : "Se marcado, ao salvar será cadastrado automaticamente um novo Funcionário (na tela Funcionários) já vinculado a este acesso, usando nome/telefone/CPF preenchidos acima.") + '</div></div>' +
       '<div class="form-field"><label>CPF</label><input type="text" id="usr-cpf" maxlength="14" placeholder="000.000.000-00" value="' + (u ? Utils.fmtCPF(u.cpf) : "") + '"></div>' +
       '<div class="form-field"><label>Perfil</label><select id="usr-role">' + ROLE_OPTIONS.map(function (r) { return '<option value="' + r + '"' + (u && u.role === r ? " selected" : "") + '>' + r + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Nome</label><input type="text" id="usr-first" value="' + (u ? Utils.escapeHtml(u.firstName) : "") + '"></div>' +
@@ -263,8 +264,23 @@
     box.querySelector("#usr-pass").addEventListener("input", function (e) {
       e.target.value = Utils.onlyDigits(e.target.value).slice(0, 20);
     });
+    var createEmpCb = box.querySelector("#usr-create-emp");
+    var createEmpHint = box.querySelector("#usr-create-emp-hint");
     box.querySelector("#usr-employee").addEventListener("change", function (ev) {
       var linkedEmp = ev.target.value ? DB.get("employees", ev.target.value) : null;
+      // Escolheu um Funcionário já existente na lista -> já fica vinculado
+      // ao salvar, então o "criar automaticamente" não se aplica mais aqui;
+      // mostra travado e marcado, só pra deixar claro que já tem funcionário.
+      // Voltou pra "Nenhum" -> libera o checkbox de novo pra decidir.
+      if (linkedEmp) {
+        createEmpCb.checked = true;
+        createEmpCb.disabled = true;
+        createEmpHint.textContent = "Este acesso já está vinculado ao funcionário " + linkedEmp.name + " — nada a fazer aqui.";
+      } else {
+        createEmpCb.checked = false;
+        createEmpCb.disabled = false;
+        createEmpHint.textContent = "Se marcado, ao salvar será cadastrado automaticamente um novo Funcionário (na tela Funcionários) já vinculado a este acesso, usando nome/telefone/CPF preenchidos acima.";
+      }
       if (!linkedEmp) return;
       var cpfField = box.querySelector("#usr-cpf");
       if (!Utils.onlyDigits(cpfField.value) && linkedEmp.cpf) cpfField.value = Utils.fmtCPF(linkedEmp.cpf);
@@ -286,126 +302,60 @@
       var active = box.querySelector("#usr-active").value === "1";
       var phone = box.querySelector("#usr-phone").value.trim();
       var employeeId = box.querySelector("#usr-employee").value || null;
+      // Só entra em jogo quando não há Funcionário já escolhido no dropdown
+      // acima (nesse caso o checkbox fica travado/marcado só como indicação
+      // visual de "já vinculado", sem precisar criar nada de novo).
+      var autoCreateEmployee = !!(createEmpCb && !createEmpCb.disabled && createEmpCb.checked && !employeeId);
       if (phone && !Utils.isValidPhoneBR(phone)) { Toast.show("Telefone inválido — informe com DDD (ex.: (11) 98765-4321)", "danger"); return; }
 
       if (!Utils.isValidCPF(cpf)) { Toast.show("Informe um CPF válido", "danger"); return; }
       if (!first) { Toast.show("Informe o nome", "danger"); return; }
       if (!last) { Toast.show("Informe o sobrenome", "danger"); return; }
+      if (autoCreateEmployee && !phone) { Toast.show("Para criar o funcionário automaticamente, informe o telefone (com DDD)", "danger"); return; }
       var dupCpf = DB.findOne("users", function (x) { return x.cpf === cpf && (!u || x.id !== u.id); });
       if (dupCpf) { Toast.show("Já existe um acesso cadastrado com este CPF", "danger"); return; }
       if (!u && !pass) { Toast.show("Informe a senha", "danger"); return; }
       if (pass && !Utils.isValidPassword(pass)) { Toast.show("A senha deve ter no mínimo 6 dígitos, apenas números", "danger"); return; }
+
+      // Cria o Funcionário antes de gravar o Acesso, para já poder salvar o
+      // employeeId vinculado num único passo (mesmo padrão de cargo/serviço
+      // usado em funcionarios.js -> openEmpModal).
+      if (autoCreateEmployee) {
+        var roles = DB.getRoles();
+        var defaultRoleName = roles.length ? roles[0].name : "Cabeleireiro(a)";
+        var newEmp = DB.insert("employees", {
+          name: (first + " " + last).trim(),
+          role: defaultRoleName,
+          status: active ? "ativo" : "inativo",
+          phone: phone,
+          email: "",
+          cpf: cpf,
+          hireDate: Utils.todayISO(),
+          birthday: null,
+          baseSalary: 0,
+          commissionRate: 0,
+          performsServices: role === "Profissional",
+          requiresTimeClock: false,
+          photoDataUrl: null
+        });
+        employeeId = newEmp.id;
+      }
 
       var patch = { cpf: cpf, firstName: first, lastName: last, role: role, active: active, phone: phone, employeeId: employeeId };
       if (pass) patch.password = pass;
 
       if (u) {
         DB.update("users", u.id, patch);
-        DB.log("Acesso", "Atualizou o acesso de " + first + " " + last);
-        Toast.show("Acesso atualizado", "success");
+        DB.log("Acesso", "Atualizou o acesso de " + first + " " + last + (autoCreateEmployee ? " e criou o funcionário vinculado automaticamente" : ""));
+        Toast.show(autoCreateEmployee ? "Acesso atualizado e funcionário criado" : "Acesso atualizado", "success");
       } else {
         patch.password = pass;
         DB.insert("users", patch);
-        DB.log("Acesso", "Criou o acesso de " + first + " " + last + " (" + role + ")");
-        Toast.show("Acesso criado", "success");
+        DB.log("Acesso", "Criou o acesso de " + first + " " + last + " (" + role + ")" + (autoCreateEmployee ? " e o funcionário vinculado automaticamente" : ""));
+        Toast.show(autoCreateEmployee ? "Acesso e funcionário criados" : "Acesso criado", "success");
       }
       Modal.close();
       renderUsers(); renderLog(); renderPerms();
-    });
-  }
-
-  // ---------------- Criar acessos para todos os funcionários (em massa) ----
-  // Para cada funcionário sem um acesso ativo vinculado: se já existir um
-  // acesso "órfão" com o mesmo CPF (criado antes de existir vínculo formal),
-  // só vincula esse acesso ao funcionário (sem mexer em senha/permissões);
-  // senão, cria um acesso novo com senha inicial = 4 últimos dígitos do CPF,
-  // perfil "Profissional" e SEM nenhuma tela liberada — o administrador
-  // vincula cada um ao grupo de acesso correto depois, na aba Permissões
-  // (decisão explícita do usuário: nada de acesso automático "por padrão").
-  function openBulkAccessModal() {
-    var employees = DB.all("employees");
-    var users = DB.all("users");
-    var usersByEmployeeId = {};
-    users.forEach(function (u) { if (u.employeeId) usersByEmployeeId[u.employeeId] = u; });
-
-    var actions = [];
-    var skipped = [];
-    employees.forEach(function (emp) {
-      var linked = usersByEmployeeId[emp.id];
-      if (linked && linked.active) return; // já tem acesso ativo, nada a fazer
-
-      var cpf = emp.cpf ? Utils.onlyDigits(emp.cpf) : "";
-      if (!cpf || !Utils.isValidCPF(cpf)) {
-        skipped.push({ emp: emp, reason: "Sem CPF válido cadastrado" });
-        return;
-      }
-      var byCpf = DB.findOne("users", function (x) { return x.cpf === cpf; });
-      if (byCpf) {
-        if (byCpf.employeeId && byCpf.employeeId !== emp.id) {
-          var otherEmp = DB.get("employees", byCpf.employeeId);
-          skipped.push({ emp: emp, reason: "CPF já usado no acesso vinculado a outro funcionário (" + (otherEmp ? otherEmp.name : "?") + ")" });
-        } else {
-          actions.push({ kind: "link", emp: emp, user: byCpf });
-        }
-        return;
-      }
-      actions.push({ kind: "create", emp: emp, cpf: cpf, pass: cpf.slice(-4) });
-    });
-
-    if (!actions.length) {
-      Toast.show(skipped.length ? "Nenhum acesso pôde ser criado — todos os funcionários pendentes ficaram de fora (veja detalhes abaixo)." : "Todos os funcionários já têm acesso ativo ao sistema.", "info");
-      if (!skipped.length) return;
-    }
-
-    var rowsHtml = actions.map(function (a, idx) {
-      if (a.kind === "create") {
-        return '<tr><td><label class="checkbox-wrap"><input type="checkbox" class="bulk-check" data-idx="' + idx + '" checked></label></td>' +
-          '<td>' + Utils.escapeHtml(a.emp.name) + '</td>' +
-          '<td><span class="badge badge-success">Criar acesso novo</span></td>' +
-          '<td class="text-num">' + Utils.fmtCPF(a.cpf) + '</td>' +
-          '<td class="small text-muted">Senha inicial: <strong>' + a.pass + '</strong> (4 últimos dígitos do CPF) — perfil Profissional, sem telas liberadas ainda</td></tr>';
-      }
-      return '<tr><td><label class="checkbox-wrap"><input type="checkbox" class="bulk-check" data-idx="' + idx + '" checked></label></td>' +
-        '<td>' + Utils.escapeHtml(a.emp.name) + '</td>' +
-        '<td><span class="badge badge-info">Vincular acesso existente</span></td>' +
-        '<td class="text-num">' + Utils.fmtCPF(a.user.cpf) + '</td>' +
-        '<td class="small text-muted">Já existe um acesso com este CPF (' + Utils.escapeHtml(a.user.firstName + " " + a.user.lastName) + ')' + (a.user.active ? "" : ", hoje desativado — será reativado") + ' — só será vinculado a este funcionário, sem alterar senha ou permissões</td></tr>';
-    }).join("");
-
-    var skipHtml = skipped.length ? ('<p class="small text-muted mt-16 mb-8">' + skipped.length + ' funcionário(s) ficaram de fora e precisam ser resolvidos manualmente:</p><ul class="small text-muted" style="padding-left:20px;">' +
-      skipped.map(function (s) { return '<li>' + Utils.escapeHtml(s.emp.name) + ' — ' + Utils.escapeHtml(s.reason) + '</li>'; }).join("") + '</ul>') : "";
-
-    var body = (actions.length ? '<p class="small text-muted mb-16">Revise a lista abaixo antes de confirmar — desmarque quem não deve entrar nesta rodada.</p>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr><th></th><th>Funcionário</th><th>Ação</th><th>CPF</th><th>Detalhe</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' : "") + skipHtml;
-    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button>' + (actions.length ? '<button class="btn btn-primary" id="bulk-confirm">Confirmar</button>' : '');
-    var box = Modal.open({ title: "Criar acessos para todos os funcionários", wide: true, bodyHtml: body, footHtml: foot });
-    if (!actions.length) return;
-
-    box.querySelector("#bulk-confirm").addEventListener("click", function () {
-      var checked = Utils.qsa(".bulk-check", box).filter(function (c) { return c.checked; }).map(function (c) { return actions[parseInt(c.getAttribute("data-idx"), 10)]; });
-      if (!checked.length) { Toast.show("Nenhuma ação selecionada", "info"); return; }
-      var createdCount = 0, linkedCount = 0;
-      DB.batch(function () {
-        checked.forEach(function (a) {
-          if (a.kind === "create") {
-            var np = splitName(a.emp.name);
-            DB.insert("users", {
-              cpf: a.cpf, firstName: np.first, lastName: np.last, role: "Profissional",
-              active: true, phone: a.emp.phone || "", allowedPages: [], canApprove: false,
-              employeeId: a.emp.id, groupId: null, password: a.pass
-            });
-            DB.log("Acesso", "Criou o acesso de " + a.emp.name + " (criação em massa, senha inicial = 4 últimos dígitos do CPF)");
-            createdCount++;
-          } else {
-            DB.update("users", a.user.id, { employeeId: a.emp.id, active: true });
-            DB.log("Acesso", "Vinculou o acesso existente de " + (a.user.firstName + " " + a.user.lastName) + " ao funcionário " + a.emp.name + " (criação em massa)");
-            linkedCount++;
-          }
-        });
-      });
-      Modal.close();
-      Toast.show(createdCount + " acesso(s) criado(s), " + linkedCount + " vinculado(s) a acessos já existentes.", "success");
-      renderUsers(); renderLog(); renderPerms(); renderGroups();
     });
   }
 

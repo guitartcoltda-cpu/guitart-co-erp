@@ -23,11 +23,33 @@
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
+  // Funcionário vinculado ao acesso logado (via users.employeeId — ver
+  // Configurações → Acessos → "Criar acesso de Funcionário automaticamente").
+  // Usado para a Visão do Dia abrir de cara só na coluna desse profissional,
+  // em vez de todas as colunas lado a lado (que é o que causava a rolagem
+  // horizontal quando tinha muita gente cadastrada).
+  function currentEmployeeId() {
+    var session = CurrentUser.get();
+    if (!session) return null;
+    var u = DB.get("users", session.id);
+    return (u && u.employeeId) ? u.employeeId : null;
+  }
+
   function init() {
     var empSel = Utils.qs("#ag-employee");
     DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (e) {
       var o = document.createElement("option"); o.value = e.id; o.textContent = e.name; empSel.appendChild(o);
     });
+    // Abre a Visão do Dia já filtrada no profissional logado, quando o
+    // acesso está vinculado a um Funcionário ativo que atende clientes —
+    // continua opcional (o strip de fotos e o próprio seletor "Profissional"
+    // deixam ver os demais a qualquer momento).
+    var myEmpId = currentEmployeeId();
+    var myEmp = myEmpId ? DB.get("employees", myEmpId) : null;
+    if (myEmp && myEmp.status === "ativo" && employeePerformsServices(myEmp)) {
+      filt.employee = myEmpId;
+      empSel.value = myEmpId;
+    }
     empSel.addEventListener("change", function (e) { filt.employee = e.target.value; generalPage = 1; render(); });
     var srvSel = Utils.qs("#ag-service");
     DB.all("services").sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (s) {
@@ -438,6 +460,7 @@
     }).join("");
 
     listEl.innerHTML =
+      renderProfStripHtml(activeEmployees) +
       '<div class="cal-scroll"><div class="cal-grid-inner" style="grid-template-columns:56px repeat(' + cols.length + ', minmax(128px,1fr));">' +
         headerHtml +
         '<div class="cal-time-axis" style="height:' + totalHeight + 'px;">' + hourLabels + '</div>' +
@@ -445,6 +468,30 @@
       '</div></div>';
 
     wireCalendarActions(listEl);
+  }
+
+  // Faixa de fotos acima da grade (ver comentário da .ag-prof-strip em
+  // agenda.html): com 0 ou 1 profissional ativo não faz sentido mostrar —
+  // não tem entre quem trocar. O profissional já selecionado aparece em
+  // destaque; os demais ficam esmaecidos ("de uma certa forma, oculta")
+  // até serem clicados. Quando algum filtro de Profissional está ativo,
+  // aparece também um chip "Todos" para voltar a ver todo mundo em colunas.
+  function renderProfStripHtml(activeEmployees) {
+    if (!activeEmployees || activeEmployees.length <= 1) return "";
+    var myId = currentEmployeeId();
+    var chips = activeEmployees.map(function (e) {
+      var isActive = filt.employee === e.id;
+      var isSelf = !!(myId && e.id === myId);
+      return '<button type="button" class="ag-prof-chip' + (isActive ? " active" : "") + (isSelf ? " is-self" : "") + '" data-employee="' + e.id + '" title="' + Utils.escapeHtml(e.name) + (isSelf ? " (você)" : "") + '">' +
+        Utils.avatarHtml(e.name, e.photoDataUrl) +
+        '<span class="apc-name">' + Utils.escapeHtml((e.name || "").split(" ")[0]) + '</span>' +
+      '</button>';
+    }).join("");
+    var allChip = filt.employee ?
+      '<button type="button" class="ag-prof-chip" data-employee="" title="Ver todos os profissionais">' +
+        '<span class="apc-all-icon"><i class="fa-solid fa-users"></i></span><span class="apc-name">Todos</span>' +
+      '</button>' : "";
+    return '<div class="ag-prof-strip">' + chips + allChip + '</div>';
   }
 
   function apptBlockHtml(a, services, clients, employees) {
@@ -475,6 +522,16 @@
   }
 
   function wireCalendarActions(listEl) {
+    Utils.qsa(".ag-prof-chip", listEl).forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var empId = chip.getAttribute("data-employee") || "";
+        filt.employee = empId;
+        var empSel = document.getElementById("ag-employee");
+        if (empSel) empSel.value = empId;
+        generalPage = 1;
+        render();
+      });
+    });
     Utils.qsa(".cal-block", listEl).forEach(function (b) {
       b.addEventListener("click", function (e) { e.stopPropagation(); openApptModal(b.getAttribute("data-appt-id")); });
     });
