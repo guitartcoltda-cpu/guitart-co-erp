@@ -79,6 +79,23 @@
 
     Utils.qs("#btn-new-user").addEventListener("click", function () { openUserModal(null); });
 
+    (function () {
+      var cfg = (DB.getSettings() || {}).emailConfig || {};
+      Utils.qs("#cfg-emailjs-service").value = cfg.serviceId || "";
+      Utils.qs("#cfg-emailjs-template").value = cfg.templateId || "";
+      Utils.qs("#cfg-emailjs-publickey").value = cfg.publicKey || "";
+      renderEmailConfigStatus();
+    })();
+    Utils.qs("#btn-save-emailjs").addEventListener("click", function () {
+      var serviceId = Utils.qs("#cfg-emailjs-service").value.trim();
+      var templateId = Utils.qs("#cfg-emailjs-template").value.trim();
+      var publicKey = Utils.qs("#cfg-emailjs-publickey").value.trim();
+      DB.updateSettings({ emailConfig: { serviceId: serviceId, templateId: templateId, publicKey: publicKey } });
+      DB.log("Configurações", "Atualizou a configuração de envio de e-mail (EmailJS)");
+      Toast.show("Configuração de e-mail salva", "success");
+      renderEmailConfigStatus();
+    });
+
     Utils.qs("#log-search").addEventListener("input", Utils.debounce(function () { renderLog(); }, 250));
     Utils.qs("#log-start").addEventListener("change", function () { renderLog(); });
     Utils.qs("#log-end").addEventListener("change", function () { renderLog(); });
@@ -98,6 +115,17 @@
     if (/tab=aprovacoes/.test(location.search)) {
       var approvalsTabBtn = Utils.qs('[data-panel="p-approvals"]');
       if (approvalsTabBtn) approvalsTabBtn.click();
+    }
+  }
+
+  // ---------------- Integrações (envio de e-mail) ----------------
+  function renderEmailConfigStatus() {
+    var el = Utils.qs("#cfg-emailjs-status");
+    if (!el) return;
+    if (ResetSenha.isEmailConfigured()) {
+      el.innerHTML = '<span style="color: var(--color-success, #16a34a);">✓ Configurado — o envio de código por e-mail está ativo.</span>';
+    } else {
+      el.innerHTML = '<span class="text-muted">Envio de e-mail ainda não configurado — "Esqueci minha senha" e o botão de redefinir senha em Acessos não vão funcionar até isso ser preenchido.</span>';
     }
   }
 
@@ -124,6 +152,7 @@
           '<td><div class="flex gap-6">' +
             '<button class="btn btn-icon btn-ghost" data-edit-user="' + u.id + '" title="Editar"><i class="fa-solid fa-pen"></i></button>' +
             '<button class="btn btn-icon btn-ghost" data-perm-user="' + u.id + '" title="Gerenciar permissões de telas"><i class="fa-solid fa-shield-halved"></i></button>' +
+            '<button class="btn btn-icon btn-ghost" data-reset-user="' + u.id + '" title="Redefinir senha (envia código por e-mail)"><i class="fa-solid fa-key"></i></button>' +
             '<button class="btn btn-icon btn-ghost" data-toggle-user="' + u.id + '" title="' + (u.active ? "Desativar" : "Ativar") + '"><i class="fa-solid ' + (u.active ? "fa-user-slash" : "fa-user-check") + '"></i></button>' +
             '<button class="btn btn-icon btn-ghost" data-del-user="' + u.id + '" title="Excluir"><i class="fa-solid fa-trash"></i></button>' +
           '</div></td>' +
@@ -131,6 +160,31 @@
       }).join("") + '</tbody>';
 
     Utils.qsa("[data-edit-user]", tbl).forEach(function (b) { b.addEventListener("click", function () { openUserModal(b.getAttribute("data-edit-user")); }); });
+    Utils.qsa("[data-reset-user]", tbl).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var id = b.getAttribute("data-reset-user");
+        var u = DB.get("users", id);
+        if (!u) return;
+        var email = ResetSenha.emailForUser(u);
+        if (!email) {
+          Toast.show("Este acesso não tem e-mail cadastrado. Vincule-o a um funcionário com e-mail em Funcionários, ou cadastre o e-mail do funcionário já vinculado.", "danger", 5000);
+          return;
+        }
+        Modal.confirm({
+          title: "Redefinir senha",
+          message: 'Vamos enviar um código de 4 dígitos para ' + ResetSenha.maskEmail(email) + '. ' + u.firstName + ' deve usar "Esqueci minha senha" na tela de login para concluir a redefinição com esse código. Deseja continuar?',
+          confirmLabel: "Enviar código",
+          onConfirm: function () {
+            ResetSenha.sendCodeToUser(u, email).then(function () {
+              DB.log("Acesso", "Enviou um código de redefinição de senha para " + u.firstName + " " + u.lastName);
+              Toast.show("Código enviado para " + ResetSenha.maskEmail(email), "success");
+            }).catch(function (err) {
+              Toast.show((err && err.message) || "Não foi possível enviar o e-mail.", "danger", 5000);
+            });
+          }
+        });
+      });
+    });
     Utils.qsa("[data-perm-user]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-perm-user");
