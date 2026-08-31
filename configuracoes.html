@@ -56,6 +56,7 @@
           <button class="tab-btn" data-panel="p-approvals" id="tab-btn-approvals">Aprovações</button>
           <button class="tab-btn" data-panel="p-perms">Permissões</button>
           <button class="tab-btn" data-panel="p-log">Log de Atividade</button>
+          <button class="tab-btn" data-panel="p-integracoes">Integrações</button>
           <button class="tab-btn" data-panel="p-data">Backup e Dados</button>
         </div>
 
@@ -138,6 +139,25 @@
           </div>
         </div>
 
+        <div class="tab-panel" id="p-integracoes">
+          <div class="toolbar"><div class="small text-muted">Configuração usada para enviar o código de redefinição de senha (tela de Login → "Esqueci minha senha" e o botão "Redefinir senha" em Acessos).</div></div>
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header"><h3>Envio de E-mail (EmailJS)</h3></div>
+              <div class="card-body">
+                <p class="small text-muted mb-16">
+                  O envio é feito pelo <a href="https://www.emailjs.com" target="_blank" rel="noopener">EmailJS</a> — gratuito, direto pelo navegador, sem precisar de um servidor novo. Passo a passo: crie uma conta grátis no site, em "Email Services" conecte o e-mail do salão (Gmail/Outlook) e copie o <strong>Service ID</strong>; em "Email Templates" crie um modelo usando as variáveis <code>{{to_email}}</code>, <code>{{to_name}}</code>, <code>{{code}}</code> e <code>{{company_name}}</code>, e copie o <strong>Template ID</strong>; em "Account → General" copie a <strong>Public Key</strong>. Cole os três valores abaixo.
+                </p>
+                <div class="form-field full mb-16"><label>Service ID</label><input type="text" id="cfg-emailjs-service" placeholder="service_xxxxxxx"></div>
+                <div class="form-field full mb-16"><label>Template ID</label><input type="text" id="cfg-emailjs-template" placeholder="template_xxxxxxx"></div>
+                <div class="form-field full mb-16"><label>Public Key</label><input type="text" id="cfg-emailjs-publickey" placeholder="xxxxxxxxxxxxxxxxxxxxx"></div>
+                <button class="btn btn-primary" id="btn-save-emailjs">Salvar configuração de e-mail</button>
+                <div class="small mt-8" id="cfg-emailjs-status"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="tab-panel" id="p-data">
           <div class="grid-2">
             <div class="card">
@@ -168,6 +188,7 @@
 
   <script src="assets/js/env-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="assets/js/db.js"></script>
   <script src="assets/js/auth.js"></script>
   <script src="assets/js/utils.js"></script>
@@ -175,6 +196,7 @@
   <script src="assets/js/recorrencia.js"></script>
   <script src="assets/js/notificacoes.js"></script>
   <script src="assets/js/consumo.js"></script>
+  <script src="assets/js/reset-senha.js"></script>
   <script src="assets/js/layout.js"></script>
   <script src="assets/js/configuracoes.js"></script>
 </body>
