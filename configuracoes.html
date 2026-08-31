@@ -52,6 +52,7 @@
           <button class="tab-btn" data-panel="p-srv">Serviços</button>
           <button class="tab-btn" data-panel="p-roles">Cargos</button>
           <button class="tab-btn" data-panel="p-acessos">Acessos</button>
+          <button class="tab-btn" data-panel="p-groups">Grupos de Acesso</button>
           <button class="tab-btn" data-panel="p-approvals" id="tab-btn-approvals">Aprovações</button>
           <button class="tab-btn" data-panel="p-perms">Permissões</button>
           <button class="tab-btn" data-panel="p-log">Log de Atividade</button>
@@ -79,8 +80,13 @@
         </div>
 
         <div class="tab-panel" id="p-acessos">
-          <div class="toolbar"><div class="small text-muted">Cadastro de usuários com acesso ao sistema. Necessário CPF, nome completo e senha (mínimo 6 dígitos, apenas números).</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-user"><i class="fa-solid fa-user-plus"></i> Novo Acesso</button></div></div>
+          <div class="toolbar"><div class="small text-muted">Cadastro de usuários com acesso ao sistema. Necessário CPF, nome completo e senha (mínimo 6 dígitos, apenas números).</div><div class="toolbar-actions"><button class="btn btn-secondary btn-sm" id="btn-bulk-user-access"><i class="fa-solid fa-users-gear"></i> Criar acessos para todos os funcionários</button><button class="btn btn-primary btn-sm" id="btn-new-user"><i class="fa-solid fa-user-plus"></i> Novo Acesso</button></div></div>
           <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-users"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-groups">
+          <div class="toolbar"><div class="small text-muted">Um grupo de acesso é um modelo de permissões (quais telas + pode aprovar solicitações) aplicado a vários acessos de uma vez. Editar um grupo atualiza automaticamente todo mundo vinculado a ele — quem precisar de algo diferente pode ser ajustado manualmente na aba Permissões, o que desvincula essa pessoa do grupo.</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-group"><i class="fa-solid fa-people-group"></i> Novo Grupo</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-groups"></table></div></div>
         </div>
 
         <div class="tab-panel" id="p-approvals">
@@ -102,6 +108,9 @@
             <div class="card" id="perm-card" style="display:none;">
               <div class="card-header"><h3 id="perm-user-name"></h3></div>
               <div class="card-body">
+                <div class="form-field mb-16"><label>Grupo de acesso</label><select id="perm-group-select"></select>
+                  <div class="hint" id="perm-group-hint"></div>
+                </div>
                 <label class="flex items-center gap-8 mb-16">
                   <input type="checkbox" id="perm-full-access">
                   <span><strong>Acesso total</strong> — pode abrir todas as telas do sistema, inclusive as que forem criadas mais adiante (sem precisar marcar uma por uma quando isso acontecer)</span>
