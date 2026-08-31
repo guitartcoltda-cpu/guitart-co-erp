@@ -239,6 +239,43 @@
       return /^[0-9]{6,}$/.test(String(pwd || ""));
     },
 
+    // ---- Hash de senha (users.password) ----
+    // Histórico: até 31/08/2026 toda senha de Acesso era gravada em texto
+    // puro na tabela "users". A partir de agora, toda vez que uma senha é
+    // DEFINIDA (login bem-sucedido de uma conta antiga, alteração pessoal,
+    // reset por e-mail, cadastro/edição de Acesso pelo admin) ela passa a
+    // ser gravada com hash SHA-256 (Web Crypto API, nativa do navegador —
+    // sem precisar de biblioteca externa nem de backend). Formato salvo:
+    // "sha256:" + 64 caracteres hex. Contas que ainda não passaram por
+    // nenhuma dessas ações continuam com a senha em texto puro até lá —
+    // verifyPassword() aceita comparar com as duas formas, então login
+    // continua funcionando normalmente enquanto a migração acontece sozinha,
+    // aos poucos, sem precisar de uma migração em massa nem travar ninguém.
+    isHashedPassword: function (stored) {
+      return typeof stored === "string" && stored.indexOf("sha256:") === 0;
+    },
+    hashPassword: function (plain) {
+      var data = new TextEncoder().encode(String(plain == null ? "" : plain));
+      return crypto.subtle.digest("SHA-256", data).then(function (buf) {
+        var bytes = new Uint8Array(buf);
+        var hex = "";
+        for (var i = 0; i < bytes.length; i++) {
+          var h = bytes[i].toString(16);
+          hex += h.length === 1 ? "0" + h : h;
+        }
+        return "sha256:" + hex;
+      });
+    },
+    // Resolve com true/false. Sempre assíncrono (mesmo para senha antiga em
+    // texto puro) para que quem chama não precise ramificar entre os dois
+    // formatos — só usar .then() de qualquer jeito.
+    verifyPassword: function (plain, stored) {
+      if (this.isHashedPassword(stored)) {
+        return this.hashPassword(plain).then(function (h) { return h === stored; });
+      }
+      return Promise.resolve(String(plain == null ? "" : plain) === String(stored || ""));
+    },
+
     // Regra do sistema: todo telefone cadastrado precisa incluir o DDD.
     // Um celular brasileiro com DDD tem 11 dígitos (DDD + 9 + 8 dígitos);
     // ainda aceitamos 10 (DDD + fixo/celular antigo de 8 dígitos) para não

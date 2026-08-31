@@ -101,9 +101,15 @@
         '</div>' +
         '<div class="topbar-right">' +
           '<div id="approvals-badge-slot"></div>' +
-          '<div class="topbar-user">' +
-            '<div class="avatar">' + initials + '</div>' +
-            '<div><div class="u-name">' + (global.Utils ? Utils.escapeHtml(displayName) : displayName) + '</div><div class="u-role">' + (global.Utils ? Utils.escapeHtml(displayRole) : displayRole) + '</div></div>' +
+          '<div class="topbar-user-wrap">' +
+            '<button type="button" class="topbar-user" id="topbar-user-btn" aria-haspopup="true" aria-expanded="false">' +
+              '<div class="avatar">' + initials + '</div>' +
+              '<div><div class="u-name">' + (global.Utils ? Utils.escapeHtml(displayName) : displayName) + '</div><div class="u-role">' + (global.Utils ? Utils.escapeHtml(displayRole) : displayRole) + '</div></div>' +
+              '<i class="fa-solid fa-chevron-down topbar-user-caret"></i>' +
+            '</button>' +
+            '<div class="topbar-user-menu" id="topbar-user-menu" hidden>' +
+              '<button type="button" class="topbar-user-menu-item" id="btn-change-password"><i class="fa-solid fa-key"></i> Alterar senha</button>' +
+            '</div>' +
           '</div>' +
           '<button class="btn btn-icon btn-ghost" id="btn-logout" title="Sair"><i class="fa-solid fa-right-from-bracket"></i></button>' +
         '</div>' +
@@ -139,6 +145,40 @@
         if (global.CurrentUser) global.CurrentUser.logout();
         location.href = "login.html";
       });
+    }
+
+    // Menu "minha conta" (avatar/nome na topbar): independente de
+    // permissões/cargo, todo usuário logado tem acesso a "Alterar senha"
+    // por aqui — não faz parte das configurações administrativas do
+    // sistema (ver configuracoes.js), é um dado pessoal da própria conta.
+    var userMenuBtn = document.getElementById("topbar-user-btn");
+    var userMenu = document.getElementById("topbar-user-menu");
+    if (userMenuBtn && userMenu) {
+      function closeUserMenu() {
+        userMenu.hidden = true;
+        userMenuBtn.setAttribute("aria-expanded", "false");
+      }
+      function openUserMenu() {
+        userMenu.hidden = false;
+        userMenuBtn.setAttribute("aria-expanded", "true");
+      }
+      userMenuBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (userMenu.hidden) openUserMenu(); else closeUserMenu();
+      });
+      document.addEventListener("click", function (e) {
+        if (!userMenu.hidden && !userMenu.contains(e.target) && e.target !== userMenuBtn) closeUserMenu();
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeUserMenu();
+      });
+      var changePassBtn = document.getElementById("btn-change-password");
+      if (changePassBtn) {
+        changePassBtn.addEventListener("click", function () {
+          closeUserMenu();
+          openChangePasswordModal();
+        });
+      }
     }
 
     // Backdrop escurecido atrás do menu lateral quando aberto em telas
@@ -219,6 +259,95 @@
         if (sb && sb.classList.contains("open")) closeSidebar(); else openSidebar();
       });
     }
+  }
+
+  // ------------------------------------------------------------------
+  // "Alterar senha" — conta do próprio usuário logado, independente do
+  // cargo/permissão. Fica fora das Configurações administrativas de
+  // propósito (ver pedido do cliente): é dado pessoal da conta, não
+  // gerenciamento do sistema. Só altera a senha do próprio usuário —
+  // nunca aceita/recebe um id de outra pessoa.
+  // ------------------------------------------------------------------
+  function openChangePasswordModal() {
+    var cu = global.CurrentUser ? global.CurrentUser.get() : null;
+    if (!cu) return;
+
+    var body =
+      '<div class="form-field full mb-16"><label>Senha atual</label>' +
+        '<input type="password" id="cp-current" inputmode="numeric" autocomplete="current-password" placeholder="Digite sua senha atual"></div>' +
+      '<div class="form-field full mb-16"><label>Nova senha</label>' +
+        '<input type="password" id="cp-new" inputmode="numeric" autocomplete="new-password" placeholder="mín. 6 dígitos, só números"></div>' +
+      '<div class="form-field full"><label>Confirmar nova senha</label>' +
+        '<input type="password" id="cp-confirm" inputmode="numeric" autocomplete="new-password"></div>';
+    var foot =
+      '<button class="btn btn-secondary" data-close-modal>Cancelar</button>' +
+      '<button class="btn btn-primary" id="cp-save-btn">Salvar nova senha</button>';
+    var box = Modal.open({ title: "Alterar senha", bodyHtml: body, footHtml: foot });
+
+    var curInput = box.querySelector("#cp-current");
+    var newInput = box.querySelector("#cp-new");
+    var confirmInput = box.querySelector("#cp-confirm");
+    var saveBtn = box.querySelector("#cp-save-btn");
+
+    [curInput, newInput, confirmInput].forEach(function (inp) {
+      inp.addEventListener("input", function (e) {
+        e.target.value = Utils.onlyDigits(e.target.value).slice(0, 20);
+      });
+    });
+
+    // Segue o mesmo padrão usado em todos os outros modais do sistema
+    // (ver configuracoes.js/funcionarios.js): mensagens de validação via
+    // Toast, não uma caixa de erro inline própria da tela de login.
+    function showErr(msg) {
+      Toast.show(msg, "danger");
+    }
+
+    if (curInput.focus) setTimeout(function () { curInput.focus(); }, 0);
+
+    saveBtn.addEventListener("click", function () {
+      var current = curInput.value;
+      var novaSenha = newInput.value;
+      var confirm = confirmInput.value;
+
+      if (!current) { showErr("Informe sua senha atual."); return; }
+      if (!novaSenha) { showErr("Informe a nova senha."); return; }
+      if (!confirm) { showErr("Confirme a nova senha."); return; }
+      if (novaSenha !== confirm) { showErr("A nova senha e a confirmação não coincidem."); return; }
+      if (!Utils.isValidPassword(novaSenha)) { showErr("A nova senha deve ter no mínimo 6 dígitos, apenas números."); return; }
+      if (novaSenha === current) { showErr("A nova senha não pode ser igual à senha atual."); return; }
+
+      // Sempre relê o registro mais recente do PRÓPRIO usuário logado (nunca
+      // um id vindo de fora) — garante que a troca só afeta a conta de quem
+      // está autenticado nesta sessão, mesmo que os dados tenham mudado
+      // desde que a página carregou.
+      var freshUser = global.DB ? DB.get("users", cu.id) : null;
+      if (!freshUser || !freshUser.active) {
+        showErr("Não foi possível confirmar sua conta. Faça login novamente.");
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Salvando...";
+
+      Utils.verifyPassword(current, freshUser.password).then(function (ok) {
+        if (!ok) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Salvar nova senha";
+          showErr("Senha atual incorreta.");
+          return;
+        }
+        return Utils.hashPassword(novaSenha).then(function (hashed) {
+          DB.update("users", freshUser.id, { password: hashed });
+          if (global.DB && DB.log) DB.log("Acesso", freshUser.firstName + " " + freshUser.lastName + " alterou a própria senha");
+          Modal.close();
+          Toast.show("Senha alterada com sucesso.", "success");
+        });
+      }).catch(function () {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Salvar nova senha";
+        showErr("Não foi possível alterar a senha agora. Tente novamente.");
+      });
+    });
   }
 
   // Esconde a tela de carregamento (ver o overlay/CSS/rede-de-segurança

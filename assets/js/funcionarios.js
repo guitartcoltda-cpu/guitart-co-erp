@@ -363,32 +363,36 @@
       // se já existir, ou só desativa (nunca apaga) se foi desligado aqui —
       // assim o histórico/log desse acesso não se perde.
       var nameParts = splitName(name);
-      if (hasAccessVal) {
-        var accessPatch = {
-          cpf: cpfDigits, firstName: nameParts.first, lastName: nameParts.last, role: accRole,
-          active: true, phone: empPhone, allowedPages: accAllowedPages, canApprove: accCanApprove,
-          employeeId: savedEmp.id, groupId: accSelectedGroupId
-        };
-        if (accPass) accessPatch.password = accPass;
-        if (linkedUser) {
-          DB.update("users", linkedUser.id, accessPatch);
-          DB.log("Acesso", "Atualizou o acesso de " + name + (accSelectedGroup ? (" (vinculado ao grupo " + accSelectedGroup.name + ")") : "") + " (pelo cadastro de Funcionário)");
-        } else {
-          accessPatch.password = accPass;
-          DB.insert("users", accessPatch);
-          DB.log("Acesso", "Criou o acesso de " + name + " (" + accRole + ", pelo cadastro de Funcionário)");
+      (accPass ? Utils.hashPassword(accPass) : Promise.resolve(null)).then(function (hashedAccPass) {
+        if (hasAccessVal) {
+          var accessPatch = {
+            cpf: cpfDigits, firstName: nameParts.first, lastName: nameParts.last, role: accRole,
+            active: true, phone: empPhone, allowedPages: accAllowedPages, canApprove: accCanApprove,
+            employeeId: savedEmp.id, groupId: accSelectedGroupId
+          };
+          if (hashedAccPass) accessPatch.password = hashedAccPass;
+          if (linkedUser) {
+            DB.update("users", linkedUser.id, accessPatch);
+            DB.log("Acesso", "Atualizou o acesso de " + name + (accSelectedGroup ? (" (vinculado ao grupo " + accSelectedGroup.name + ")") : "") + " (pelo cadastro de Funcionário)");
+          } else {
+            accessPatch.password = hashedAccPass;
+            DB.insert("users", accessPatch);
+            DB.log("Acesso", "Criou o acesso de " + name + " (" + accRole + ", pelo cadastro de Funcionário)");
+          }
+          var currentUsr = window.CurrentUser ? window.CurrentUser.get() : null;
+          if (linkedUser && currentUsr && currentUsr.id === linkedUser.id && accAllowedPages && accAllowedPages.indexOf("configuracoes.html") === -1) {
+            Toast.show("Você removeu seu próprio acesso a esta tela — passará a valer na próxima vez que você abrir o sistema.", "info", 5000);
+          }
+        } else if (linkedUser && linkedUser.active) {
+          DB.update("users", linkedUser.id, { active: false });
+          DB.log("Acesso", "Desativou o acesso de " + name + " (pelo cadastro de Funcionário)");
         }
-        var currentUsr = window.CurrentUser ? window.CurrentUser.get() : null;
-        if (linkedUser && currentUsr && currentUsr.id === linkedUser.id && accAllowedPages && accAllowedPages.indexOf("configuracoes.html") === -1) {
-          Toast.show("Você removeu seu próprio acesso a esta tela — passará a valer na próxima vez que você abrir o sistema.", "info", 5000);
-        }
-      } else if (linkedUser && linkedUser.active) {
-        DB.update("users", linkedUser.id, { active: false });
-        DB.log("Acesso", "Desativou o acesso de " + name + " (pelo cadastro de Funcionário)");
-      }
 
-      Modal.close();
-      render();
+        Modal.close();
+        render();
+      }).catch(function () {
+        Toast.show("Não foi possível salvar a senha de acesso. Tente novamente.", "danger");
+      });
     });
   }
 })();

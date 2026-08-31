@@ -35,11 +35,30 @@
       var user = DB.findOne("users", function (u) { return u.cpf === cpf; });
       if (!user) { showError("CPF não encontrado."); return; }
       if (!user.active) { showError("Este acesso está inativo. Fale com um administrador."); return; }
-      if (user.password !== pass) { showError("Senha incorreta."); return; }
 
-      CurrentUser.set({ id: user.id, firstName: user.firstName, lastName: user.lastName, role: user.role });
-      DB.log("Acesso", user.firstName + " " + user.lastName + " entrou no sistema");
-      goToRedirect();
+      var submitBtn = form.querySelector('[type="submit"]');
+      if (submitBtn) submitBtn.disabled = true;
+
+      Utils.verifyPassword(pass, user.password).then(function (ok) {
+        if (!ok) {
+          if (submitBtn) submitBtn.disabled = false;
+          showError("Senha incorreta.");
+          return;
+        }
+
+        // migração silenciosa: se a senha ainda estava em texto puro, salva já com hash
+        var migrate = Utils.isHashedPassword(user.password) ? Promise.resolve() :
+          Utils.hashPassword(pass).then(function (hashed) { return DB.update("users", user.id, { password: hashed }); });
+
+        migrate.catch(function () { /* falha na migração silenciosa não deve bloquear o login */ }).then(function () {
+          CurrentUser.set({ id: user.id, firstName: user.firstName, lastName: user.lastName, role: user.role });
+          DB.log("Acesso", user.firstName + " " + user.lastName + " entrou no sistema");
+          goToRedirect();
+        });
+      }).catch(function () {
+        if (submitBtn) submitBtn.disabled = false;
+        showError("Não foi possível validar a senha. Tente novamente.");
+      });
     });
 
     function showError(msg) {

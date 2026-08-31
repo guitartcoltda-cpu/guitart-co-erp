@@ -342,20 +342,28 @@
       }
 
       var patch = { cpf: cpf, firstName: first, lastName: last, role: role, active: active, phone: phone, employeeId: employeeId };
-      if (pass) patch.password = pass;
+      var saveBtn = box.querySelector("#usr-save");
+      saveBtn.disabled = true;
 
-      if (u) {
-        DB.update("users", u.id, patch);
-        DB.log("Acesso", "Atualizou o acesso de " + first + " " + last + (autoCreateEmployee ? " e criou o funcionário vinculado automaticamente" : ""));
-        Toast.show(autoCreateEmployee ? "Acesso atualizado e funcionário criado" : "Acesso atualizado", "success");
-      } else {
-        patch.password = pass;
-        DB.insert("users", patch);
-        DB.log("Acesso", "Criou o acesso de " + first + " " + last + " (" + role + ")" + (autoCreateEmployee ? " e o funcionário vinculado automaticamente" : ""));
-        Toast.show(autoCreateEmployee ? "Acesso e funcionário criados" : "Acesso criado", "success");
-      }
-      Modal.close();
-      renderUsers(); renderLog(); renderPerms();
+      (pass ? Utils.hashPassword(pass) : Promise.resolve(null)).then(function (hashedPass) {
+        if (hashedPass) patch.password = hashedPass;
+
+        if (u) {
+          DB.update("users", u.id, patch);
+          DB.log("Acesso", "Atualizou o acesso de " + first + " " + last + (autoCreateEmployee ? " e criou o funcionário vinculado automaticamente" : ""));
+          Toast.show(autoCreateEmployee ? "Acesso atualizado e funcionário criado" : "Acesso atualizado", "success");
+        } else {
+          patch.password = hashedPass;
+          DB.insert("users", patch);
+          DB.log("Acesso", "Criou o acesso de " + first + " " + last + " (" + role + ")" + (autoCreateEmployee ? " e o funcionário vinculado automaticamente" : ""));
+          Toast.show(autoCreateEmployee ? "Acesso e funcionário criados" : "Acesso criado", "success");
+        }
+        Modal.close();
+        renderUsers(); renderLog(); renderPerms();
+      }).catch(function () {
+        saveBtn.disabled = false;
+        Toast.show("Não foi possível salvar a senha. Tente novamente.", "danger");
+      });
     });
   }
 

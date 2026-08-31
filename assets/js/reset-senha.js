@@ -133,9 +133,13 @@
         return;
       }
       if (!newPassword || newPassword.length < 4) { reject({ code: "weak_password", message: "A nova senha precisa ter pelo menos 4 dígitos." }); return; }
-      DB.update("users", userId, { password: newPassword, resetCode: null, resetCodeExpiresAt: null, resetCodeAttempts: 0 });
-      DB.log("Acesso", (user.firstName + " " + user.lastName) + " redefiniu a própria senha (código enviado por e-mail)", { userName: user.firstName + " " + user.lastName });
-      resolve(true);
+      Utils.hashPassword(newPassword).then(function (hashed) {
+        DB.update("users", userId, { password: hashed, resetCode: null, resetCodeExpiresAt: null, resetCodeAttempts: 0 });
+        DB.log("Acesso", (user.firstName + " " + user.lastName) + " redefiniu a própria senha (código enviado por e-mail)", { userName: user.firstName + " " + user.lastName });
+        resolve(true);
+      }).catch(function () {
+        reject({ code: "hash_failed", message: "Não foi possível concluir a redefinição. Tente novamente." });
+      });
     });
   }
 
