@@ -26,6 +26,34 @@
     return (window.AppLayout ? window.AppLayout.NAV : []).filter(function (item) { return !item.section; });
   }
 
+  // Grupos de Acesso (Configurações → Grupos de Acesso, guardado em
+  // settings.accessGroups) — lidos aqui também porque este modal permite
+  // vincular o acesso do funcionário a um grupo, igual à aba Permissões de
+  // Configurações (mesma duplicação de código das outras funções deste
+  // arquivo, já que cada tela é independente, sem módulos/import).
+  function getAccessGroups() {
+    return (DB.getSettings() || {}).accessGroups || [];
+  }
+  function hasConfigAccess(allowedPages) {
+    return !allowedPages || !Array.isArray(allowedPages) || allowedPages.indexOf("configuracoes.html") !== -1;
+  }
+  function effectiveAllowedPages(u, groups) {
+    if (!u.groupId) return u.allowedPages;
+    var g = groups.find(function (x) { return x.id === u.groupId; });
+    return g ? g.allowedPages : u.allowedPages;
+  }
+  // Mesma rede de segurança de Configurações → Permissões: nunca deixa
+  // salvar um estado que tiraria de todo mundo ativo o acesso à tela de
+  // Configurações (a única que desfaz esse tipo de erro).
+  function wouldLeaveNoConfigAccess(userId, futureAllowedPages) {
+    if (hasConfigAccess(futureAllowedPages)) return false;
+    var groups = getAccessGroups();
+    return !DB.all("users").some(function (other) {
+      if (other.id === userId || !other.active) return false;
+      return hasConfigAccess(effectiveAllowedPages(other, groups));
+    });
+  }
+
   // Separa "Nome Completo" em primeiro nome + sobrenome, pro cadastro de
   // Acesso (que guarda os dois campos separados, ver Configurações →
   // Acessos). Sem sobrenome digitado, usa o próprio nome como sobrenome
@@ -161,7 +189,9 @@
     // registro de Acesso (tabela "users"), sincronizado ao salvar.
     var linkedUser = e ? linkedUserFor(e.id, e.cpf) : null;
     var hasAccess = !!(linkedUser && linkedUser.active);
-    var accFullAccess = !linkedUser || !linkedUser.allowedPages || !Array.isArray(linkedUser.allowedPages);
+    var groups = getAccessGroups();
+    var linkedGroup = (linkedUser && linkedUser.groupId) ? groups.find(function (g) { return g.id === linkedUser.groupId; }) : null;
+    var accFullAccess = linkedGroup ? (!linkedGroup.allowedPages || !Array.isArray(linkedGroup.allowedPages)) : (!linkedUser || !linkedUser.allowedPages || !Array.isArray(linkedUser.allowedPages));
     var body =
       '<div class="flex items-center gap-16 mb-16">' +
         '<div id="em-photo-preview">' + Utils.avatarHtml(e ? e.name : "Novo", photoDataUrl, "avatar-lg") + '</div>' +
@@ -198,8 +228,11 @@
         '<div class="form-field"><label>Perfil de acesso</label><select id="em-acc-role">' + ACCESS_ROLE_OPTIONS.map(function (r) { return '<option value="' + r + '"' + (linkedUser && linkedUser.role === r ? " selected" : "") + '>' + r + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Senha' + (linkedUser ? " (deixe em branco para manter)" : "") + '</label><input type="password" id="em-acc-pass" inputmode="numeric" placeholder="mín. 6 dígitos, só números" autocomplete="new-password"></div>' +
         '</div>' +
+        '<div class="form-field mb-8"><label>Grupo de acesso</label><select id="em-acc-group"><option value="">Personalizado (sem grupo)</option>' +
+          groups.map(function (g) { return '<option value="' + g.id + '"' + (linkedGroup && linkedGroup.id === g.id ? " selected" : "") + '>' + Utils.escapeHtml(g.name) + '</option>'; }).join("") +
+        '</select><div class="hint" id="em-acc-group-hint"></div></div>' +
         '<label class="flex items-center gap-8 mb-8 mt-8"><input type="checkbox" id="em-acc-full"' + (accFullAccess ? " checked" : "") + '> <span><strong>Acesso total</strong> — pode abrir todas as telas do sistema, inclusive as que forem criadas mais adiante</span></label>' +
-        '<label class="flex items-center gap-8 mb-8"><input type="checkbox" id="em-acc-approve"' + (linkedUser && linkedUser.canApprove ? " checked" : "") + '> <span><strong>Pode aprovar solicitações</strong> — aparece com os botões de aprovar/recusar na aba Aprovações de Configurações</span></label>' +
+        '<label class="flex items-center gap-8 mb-8"><input type="checkbox" id="em-acc-approve"' + ((linkedGroup ? linkedGroup.canApprove : (linkedUser && linkedUser.canApprove)) ? " checked" : "") + '> <span><strong>Pode aprovar solicitações</strong> — aparece com os botões de aprovar/recusar na aba Aprovações de Configurações</span></label>' +
         '<div id="em-acc-checklist" class="form-grid"></div>' +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="em-save">Salvar Funcionário</button>';
@@ -213,16 +246,46 @@
     // Checklist de telas liberadas para o acesso deste funcionário — mesmo
     // padrão de Configurações → Permissões (ver renderPermsForUser em
     // configuracoes.js): "Acesso total" marcado desabilita e marca tudo;
-    // desmarcado, o administrador escolhe manualmente.
+    // desmarcado, o administrador escolhe manualmente. Quando o acesso está
+    // vinculado a um Grupo de Acesso, os três controles (Acesso total, Pode
+    // aprovar, checklist) ficam travados mostrando o que vem do grupo —
+    // trocar para "Personalizado" no seletor acima libera a edição manual.
     var accChecklist = box.querySelector("#em-acc-checklist");
-    accChecklist.innerHTML = permPageItems().map(function (it) {
-      var checked = accFullAccess || (linkedUser && Array.isArray(linkedUser.allowedPages) && linkedUser.allowedPages.indexOf(it.href) !== -1);
-      return '<label class="flex items-center gap-8">' +
-        '<input type="checkbox" class="em-acc-item-cb" value="' + it.href + '"' + (checked ? " checked" : "") + (accFullAccess ? " disabled" : "") + '>' +
-        '<span><i class="fa-solid ' + it.icon + '"></i> ' + Utils.escapeHtml(it.label) + '</span>' +
-        '</label>';
-    }).join("");
-    box.querySelector("#em-acc-full").addEventListener("change", function (ev) {
+    var accFullCb = box.querySelector("#em-acc-full");
+    var accApproveCb = box.querySelector("#em-acc-approve");
+    var accGroupSelect = box.querySelector("#em-acc-group");
+    var accGroupHint = box.querySelector("#em-acc-group-hint");
+    var items = permPageItems();
+
+    function applyAccessState(fullAccess, allowedPages, canApproveVal, fromGroup) {
+      accFullCb.checked = fullAccess;
+      accFullCb.disabled = fromGroup;
+      accApproveCb.checked = !!canApproveVal;
+      accApproveCb.disabled = fromGroup;
+      accChecklist.innerHTML = items.map(function (it) {
+        var checked = fullAccess || (allowedPages && allowedPages.indexOf(it.href) !== -1);
+        return '<label class="flex items-center gap-8">' +
+          '<input type="checkbox" class="em-acc-item-cb" value="' + it.href + '"' + (checked ? " checked" : "") + (fromGroup || fullAccess ? " disabled" : "") + '>' +
+          '<span><i class="fa-solid ' + it.icon + '"></i> ' + Utils.escapeHtml(it.label) + '</span>' +
+          '</label>';
+      }).join("");
+      accGroupHint.textContent = fromGroup ? 'Permissões definidas pelo grupo selecionado — para personalizar só este acesso, mude para "Personalizado (sem grupo)" acima.' : "";
+    }
+    applyAccessState(accFullAccess, (linkedGroup ? linkedGroup.allowedPages : (linkedUser ? linkedUser.allowedPages : null)), (linkedGroup ? linkedGroup.canApprove : (linkedUser && linkedUser.canApprove)), !!linkedGroup);
+
+    accGroupSelect.addEventListener("change", function () {
+      var gsel = accGroupSelect.value ? groups.find(function (g) { return g.id === accGroupSelect.value; }) : null;
+      if (gsel) {
+        applyAccessState(!gsel.allowedPages || !Array.isArray(gsel.allowedPages), gsel.allowedPages, gsel.canApprove, true);
+      } else {
+        var currentFull = accFullCb.checked;
+        var currentAllowed = Utils.qsa(".em-acc-item-cb", accChecklist).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+        var currentApprove = accApproveCb.checked;
+        applyAccessState(currentFull, currentAllowed, currentApprove, false);
+      }
+    });
+    accFullCb.addEventListener("change", function (ev) {
+      if (accFullCb.disabled) return;
       Utils.qsa(".em-acc-item-cb", accChecklist).forEach(function (cb) { cb.disabled = ev.target.checked; cb.checked = ev.target.checked; });
     });
     box.querySelector("#em-has-access").addEventListener("change", function (ev) {
@@ -260,23 +323,23 @@
       var hasAccessVal = box.querySelector("#em-has-access").value === "1";
       var accPass = box.querySelector("#em-acc-pass").value;
       var accRole = box.querySelector("#em-acc-role").value;
-      var accFullCb = box.querySelector("#em-acc-full");
-      var accCanApprove = box.querySelector("#em-acc-approve").checked;
-      var accAllowedPages = accFullCb.checked ? null : Utils.qsa(".em-acc-item-cb", box).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+      var accSelectedGroupId = box.querySelector("#em-acc-group").value || null;
+      var accSelectedGroup = accSelectedGroupId ? groups.find(function (g) { return g.id === accSelectedGroupId; }) : null;
+      // Vinculado a um grupo: as permissões salvas são sempre as do grupo
+      // (mesmo padrão de Configurações → Permissões) — os controles manuais
+      // ficam só de referência visual, travados. Sem grupo ("Personalizado"):
+      // usa o que foi marcado manualmente no checklist.
+      var accCanApprove = accSelectedGroup ? !!accSelectedGroup.canApprove : accApproveCb.checked;
+      var accAllowedPages = accSelectedGroup ? accSelectedGroup.allowedPages :
+        (accFullCb.checked ? null : Utils.qsa(".em-acc-item-cb", box).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; }));
       if (hasAccessVal) {
         if (!cpfDigits) { Toast.show("Para dar acesso ao sistema, informe o CPF do funcionário (login é feito com ele)", "danger"); return; }
         if (!linkedUser && !accPass) { Toast.show("Informe uma senha para o acesso deste funcionário", "danger"); return; }
         if (accPass && !Utils.isValidPassword(accPass)) { Toast.show("A senha do acesso deve ter no mínimo 6 dígitos, apenas números", "danger"); return; }
         var dupCpf = DB.findOne("users", function (x) { return x.cpf === cpfDigits && (!linkedUser || x.id !== linkedUser.id); });
         if (dupCpf) { Toast.show("Já existe um outro acesso cadastrado com este CPF", "danger"); return; }
-        if (accAllowedPages && accAllowedPages.indexOf("configuracoes.html") === -1) {
-          var someoneElseHasConfig = DB.all("users").some(function (other) {
-            if (linkedUser && other.id === linkedUser.id) return false;
-            if (!other.active) return false;
-            var oa = other.allowedPages;
-            return !oa || !Array.isArray(oa) || oa.indexOf("configuracoes.html") !== -1;
-          });
-          if (!someoneElseHasConfig) { Toast.show("Não é possível salvar: nenhum outro acesso ativo ficaria com acesso a Configurações.", "danger"); return; }
+        if (wouldLeaveNoConfigAccess(linkedUser ? linkedUser.id : null, accAllowedPages)) {
+          Toast.show("Não é possível salvar: nenhum outro acesso ativo ficaria com acesso a Configurações.", "danger"); return;
         }
       }
 
@@ -304,12 +367,12 @@
         var accessPatch = {
           cpf: cpfDigits, firstName: nameParts.first, lastName: nameParts.last, role: accRole,
           active: true, phone: empPhone, allowedPages: accAllowedPages, canApprove: accCanApprove,
-          employeeId: savedEmp.id
+          employeeId: savedEmp.id, groupId: accSelectedGroupId
         };
         if (accPass) accessPatch.password = accPass;
         if (linkedUser) {
           DB.update("users", linkedUser.id, accessPatch);
-          DB.log("Acesso", "Atualizou o acesso de " + name + " (pelo cadastro de Funcionário)");
+          DB.log("Acesso", "Atualizou o acesso de " + name + (accSelectedGroup ? (" (vinculado ao grupo " + accSelectedGroup.name + ")") : "") + " (pelo cadastro de Funcionário)");
         } else {
           accessPatch.password = accPass;
           DB.insert("users", accessPatch);
