@@ -842,7 +842,11 @@
     var tbl = Utils.qs("#tbl-groups");
     if (!tbl) return;
     if (!list.length) {
-      Utils.emptyTable(tbl, "fa-people-group", "Nenhum grupo de acesso cadastrado ainda");
+      // emptyTable() sempre usa o estilo "fa-regular" (ver Utils.emptyTable em
+      // utils.js) — fa-people-group só existe no estilo "solid" no Font
+      // Awesome Free, então ficava sem ícone (glifo ausente). fa-object-group
+      // tem versão regular e combina bem com "agrupamento de acessos".
+      Utils.emptyTable(tbl, "fa-object-group", "Nenhum grupo de acesso cadastrado ainda");
       return;
     }
     tbl.innerHTML = '<thead><tr><th>Grupo</th><th>Telas liberadas</th><th class="text-right">Acessos vinculados</th><th></th></tr></thead><tbody>' +
