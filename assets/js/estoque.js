@@ -413,9 +413,7 @@
     if (!employees.length) { Toast.show("Nenhum profissional ativo cadastrado", "danger"); return; }
 
     var body = '<div class="form-grid">' +
-      '<div class="form-field"><label>Profissional</label><select id="cm-employee">' +
-        employees.map(function (e) { return '<option value="' + e.id + '">' + Utils.escapeHtml(e.name) + '</option>'; }).join("") +
-      '</select></div>' +
+      '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: "cm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="cm-date" value="' + Utils.todayISO() + '"></div>' +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
@@ -428,6 +426,7 @@
       '<div class="small text-muted mt-8">O custo de cada item é dividido 50/50: metade vira desconto no comissionamento do profissional, metade vira despesa do salão.</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cm-save">Lançar Consumo</button>';
     var box = Modal.open({ title: "Lançar Consumo de Insumos", wide: true, bodyHtml: body, footHtml: foot });
+    NameCombo.wire(box, { id: "cm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
 
     var itemsEl = box.querySelector("#cm-items");
     itemsEl.insertAdjacentHTML("beforeend", consumoItemRowHtml());

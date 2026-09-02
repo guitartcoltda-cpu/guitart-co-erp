@@ -297,10 +297,8 @@
           '<option value="pago"' + (record.status === "pago" ? " selected" : "") + '>Pago</option>' +
           '<option value="pendente"' + (record.status === "pendente" ? " selected" : "") + '>Pendente</option>' +
           '</select></div>' +
-        '<div class="form-field"><label>Cliente (opcional)</label><select id="m-client"><option value="">-</option>' +
-          clients.map(function (c) { return '<option value="' + c.id + '"' + (record.clientId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
-        '<div class="form-field"><label>Funcionário (opcional)</label><select id="m-employee"><option value="">-</option>' +
-          employees.map(function (e) { return '<option value="' + e.id + '"' + (record.employeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") + '</select></div>' +
+        '<div class="form-field"><label>Cliente (opcional)</label>' + NameCombo.html({ id: "m-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }), value: record.clientId || "", placeholder: "Nome e sobrenome do cliente" }) + '</div>' +
+        '<div class="form-field"><label>Funcionário (opcional)</label>' + NameCombo.html({ id: "m-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: record.employeeId || "", placeholder: "Nome e sobrenome do funcionário" }) + '</div>' +
       '</div>' +
       Utils.attachmentFieldHtml("m", "Comprovante (opcional)");
 
@@ -308,6 +306,8 @@
 
     var box = Modal.open({ title: "Editar Lançamento", bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#m-amount"), record.amount);
+    NameCombo.wire(box, { id: "m-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }) });
+    NameCombo.wire(box, { id: "m-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
     var mAttachment = Utils.wireAttachmentField(box, "m", record.attachment || null);
     // O anexo do cache é "leve" (sem o dataUrl — ver BOOT_VIEW em db.js);
     // busca a versão completa em segundo plano só para corrigir o preview
@@ -415,8 +415,7 @@
         '<button type="button" class="tab-btn" data-mtype="despesa">Despesa</button>' +
       '</div>' +
       '<div class="form-grid mb-16">' +
-        '<div class="form-field"><label>Cliente (opcional, aplica-se a todos os itens)</label><select id="tm-client"><option value="">-</option>' +
-          clients.map(function (c) { return '<option value="' + c.id + '">' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
+        '<div class="form-field"><label>Cliente (opcional, aplica-se a todos os itens)</label>' + NameCombo.html({ id: "tm-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }), placeholder: "Nome e sobrenome do cliente" }) + '</div>' +
         '<div class="form-field"><label>Data</label><input type="date" id="tm-date" value="' + Utils.todayISO() + '"></div>' +
         '<div class="form-field"><label>Forma de Pagamento</label><select id="tm-pay">' +
           ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Boleto"].map(function (p) { return '<option value="' + p + '">' + p + '</option>'; }).join("") + '</select></div>' +
@@ -435,6 +434,7 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="tm-save">Salvar Lançamento</button>';
     var box = Modal.open({ title: "Novo Lançamento", wide: true, bodyHtml: body, footHtml: foot });
     var tmAttachment = Utils.wireAttachmentField(box, "tm");
+    NameCombo.wire(box, { id: "tm-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }) });
 
     function itemRowHtml(item, idx) {
       var filteredCats = catsForType(type);
@@ -447,8 +447,7 @@
             filteredCats.map(function (c) { return '<option value="' + c.id + '"' + (item.categoryId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
           '<div class="form-field"><label>Centro de Custo</label><select class="si-cc">' +
             costCenters.map(function (c) { return '<option value="' + c.id + '"' + (item.costCenterId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
-          '<div class="form-field"><label>Profissional (opcional)</label><select class="si-emp"><option value="">-</option>' +
-            employees.map(function (e) { return '<option value="' + e.id + '"' + (item.employeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") + '</select></div>' +
+          '<div class="form-field"><label>Profissional (opcional)</label>' + NameCombo.html({ id: "si-emp-" + idx, items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: item.employeeId || "", hiddenClass: "si-emp", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
           '<div class="form-field"><label>Valor (R$)</label><input type="text" inputmode="numeric" autocomplete="off" placeholder="0,00" class="si-amount" value="' + Utils.escapeHtml(item.amount) + '"></div>' +
         '</div>' +
         '</div>';
@@ -475,6 +474,10 @@
     function renderItems() {
       var itemsEl = box.querySelector("#tm-items");
       itemsEl.innerHTML = items.map(function (it, idx) { return itemRowHtml(it, idx); }).join("");
+
+      items.forEach(function (it, idx) {
+        NameCombo.wire(itemsEl, { id: "si-emp-" + idx, items: employees.map(function (e) { return { id: e.id, label: e.name }; }), onChange: function () { updateTotal(); } });
+      });
 
       Utils.qsa(".si-cat", itemsEl).forEach(function (sel) {
         sel.addEventListener("change", function () {
