@@ -538,8 +538,7 @@
 
     var body =
       '<div class="form-grid">' +
-        '<div class="form-field full"><label>Profissional</label><select id="bm-employee"' + (presetEmployeeId ? " disabled" : "") + '>' +
-          employees.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + ' — ' + Utils.escapeHtml(e.role) + '</option>'; }).join("") + '</select></div>' +
+        '<div class="form-field full"><label>Profissional</label>' + NameCombo.html({ id: "bm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: presetEmployeeId || "", disabled: !!presetEmployeeId, placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
         '<div class="form-field"><label>Mês de Competência</label><select id="bm-month">' +
           months.map(function (m) { return '<option value="' + m + '"' + (m === selectedMonth ? " selected" : "") + '>' + Utils.monthLabel(m + "-01") + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Tipo</label><select id="bm-kind">' +
@@ -557,6 +556,7 @@
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="bm-save">Salvar Lançamento</button>';
     var box = Modal.open({ title: "Novo Comissionamento Esporádico", bodyHtml: body, footHtml: foot });
+    NameCombo.wire(box, { id: "bm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
     Utils.wireMoneyMask(box.querySelector("#bm-amount-fixed"), 0);
     Utils.wireMoneyMask(box.querySelector("#bm-pct-value"), 0);
     Utils.wireMoneyMask(box.querySelector("#bm-amount-desconto"), 0);
