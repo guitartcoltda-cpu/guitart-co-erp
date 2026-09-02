@@ -356,6 +356,29 @@
     return rows.map(function (r) { return r.data; });
   }
 
+  // O Supabase/PostgREST limita cada resposta a no máximo 1000 linhas por
+  // padrão. Tabelas como "appointments" já passam disso (ex.: histórico
+  // migrado + agendamentos novos), então uma busca sem paginação simplesmente
+  // vinha truncada — faltavam registros no cache local sem nenhum aviso.
+  // Esta função busca todas as páginas (1000 em 1000) até a última vir
+  // incompleta, e só então considera que pegou tudo.
+  var FETCH_PAGE_SIZE = 1000;
+  function fetchAllRows(src) {
+    return new Promise(function (resolve, reject) {
+      var acc = [];
+      function fetchPage(offset) {
+        supa.from(src).select("data").range(offset, offset + FETCH_PAGE_SIZE - 1).then(function (res) {
+          if (res.error) { reject(res.error); return; }
+          var rows = res.data || [];
+          acc = acc.concat(rows);
+          if (rows.length < FETCH_PAGE_SIZE) resolve(acc);
+          else fetchPage(offset + FETCH_PAGE_SIZE);
+        }).catch(reject);
+      }
+      fetchPage(0);
+    });
+  }
+
   function bootstrapOnline() {
     // Cópia local de reserva: tenta o IndexedDB (cota grande, guarda tudo
     // incluindo fotos/anexos); se não achar nada lá, cai para a reserva
@@ -389,9 +412,8 @@
 
       var fetches = TABLES.map(function (t) {
         var src = BOOT_VIEW[t] || t;
-        return supa.from(src).select("data").then(function (res) {
-          if (res.error) throw res.error;
-          return { table: t, rows: res.data || [] };
+        return fetchAllRows(src).then(function (rows) {
+          return { table: t, rows: rows };
         });
       });
 
@@ -663,9 +685,8 @@
       var lightTables = Object.keys(BOOT_VIEW);
       if (!supa) return Promise.resolve(JSON.stringify(snapshot, null, 2));
       var fetches = lightTables.map(function (t) {
-        return supa.from(t).select("data").then(function (res) {
-          if (res.error) throw res.error;
-          return { table: t, rows: res.data || [] };
+        return fetchAllRows(t).then(function (rows) {
+          return { table: t, rows: rows };
         }).catch(function (err) {
           console.error("Erro ao buscar dados completos de \"" + t + "\" para o backup — o backup vai sair sem os anexos dessa tabela.", err);
           return { table: t, rows: null };
