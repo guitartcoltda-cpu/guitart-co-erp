@@ -759,3 +759,7 @@ body.modal-open-lock { overflow: hidden; }
   border: 1px solid var(--border-color); cursor: pointer; flex-shrink: 0;
 }
 }
+
+/* ---- NameCombo (campo de nome com digitação livre + sugestões) ---- */
+.name-combo-item:hover { background: var(--gray-100, #f2f2f2); }
+.name-combo-input:focus { border-color: var(--color-accent, #2a78d6); }
