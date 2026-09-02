@@ -240,9 +240,8 @@
     var linkOptions = employeesAvailableForLink(u ? u.id : null);
     var body = (emp ? '<div class="small text-muted mb-16"><i class="fa-solid fa-circle-info"></i> Este acesso está vinculado ao funcionário <strong>' + Utils.escapeHtml(emp.name) + '</strong>. Nome, CPF e telefone normalmente são editados por lá (Funcionários → editar), mas também podem ser ajustados aqui se precisar.</div>' : '') +
       '<div class="form-grid">' +
-      '<div class="form-field full"><label>Funcionário vinculado (opcional)</label><select id="usr-employee"><option value="">Nenhum</option>' +
-        linkOptions.map(function (e) { return '<option value="' + e.id + '"' + (u && u.employeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") +
-      '</select><div class="hint">Vincular preenche automaticamente CPF/nome/telefone (só nos campos que ainda estiverem vazios) e passa a mostrar esta pessoa como "vinculada" na lista de Acessos.</div></div>' +
+      '<div class="form-field full"><label>Funcionário vinculado (opcional)</label>' + NameCombo.html({ id: "usr-employee", items: linkOptions.map(function (e) { return { id: e.id, label: e.name }; }), value: u && u.employeeId ? u.employeeId : "", placeholder: "Nome e sobrenome do funcionário" }) +
+      '<div class="hint">Vincular preenche automaticamente CPF/nome/telefone (só nos campos que ainda estiverem vazios) e passa a mostrar esta pessoa como "vinculada" na lista de Acessos.</div></div>' +
       '<div class="form-field full" id="usr-create-emp-wrap"><label class="flex items-center gap-8"><input type="checkbox" id="usr-create-emp"' + (emp ? " checked disabled" : "") + '> Criar acesso de Funcionário automaticamente</label>' +
         '<div class="hint" id="usr-create-emp-hint">' + (emp ? "Este acesso já está vinculado ao funcionário " + Utils.escapeHtml(emp.name) + " — nada a fazer aqui." : "Se marcado, ao salvar será cadastrado automaticamente um novo Funcionário (na tela Funcionários) já vinculado a este acesso, usando nome/telefone/CPF preenchidos acima.") + '</div></div>' +
       '<div class="form-field"><label>CPF</label><input type="text" id="usr-cpf" maxlength="14" placeholder="000.000.000-00" value="' + (u ? Utils.fmtCPF(u.cpf) : "") + '"></div>' +
@@ -255,6 +254,7 @@
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="usr-save">Salvar</button>';
     var box = Modal.open({ title: u ? "Editar Acesso" : "Novo Acesso", wide: true, bodyHtml: body, footHtml: foot });
+    NameCombo.wire(box, { id: "usr-employee", items: linkOptions.map(function (e) { return { id: e.id, label: e.name }; }) });
 
     box.querySelector("#usr-cpf").addEventListener("input", function (e) {
       var digits = Utils.onlyDigits(e.target.value).slice(0, 11);
