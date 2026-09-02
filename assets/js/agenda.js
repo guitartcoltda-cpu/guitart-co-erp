@@ -745,9 +745,23 @@
     updateUnit();
   }
 
+  // Ponto de entrada de "Concluir": quando o cliente tem só um atendimento
+  // agendado para aquele horário, segue o fluxo simples de sempre. Quando
+  // tem mais de um (ex.: corte com um profissional e manicure com outro,
+  // no mesmo dia e mesma hora), abre o consolidado "Fechar Conta" — a
+  // pedido do usuário, para ver e concluir tudo de uma vez, mencionando
+  // cada profissional envolvido.
   function concludeAppointment(apptId) {
     var appt = DB.get("appointments", apptId);
     if (!appt) return;
+    var group = DB.all("appointments").filter(function (x) {
+      return x.status === "agendado" && x.clientId === appt.clientId && x.date === appt.date && x.time === appt.time;
+    });
+    if (group.length > 1) openConcludeGroupModal(group);
+    else openConcludeSingleModal(appt);
+  }
+
+  function openConcludeSingleModal(appt) {
     var service = DB.get("services", appt.serviceId);
     var client = DB.get("clients", appt.clientId);
     var category = DB.findOne("categories", function (c) { return c.id === service.categoryId; });
@@ -827,6 +841,139 @@
     });
   }
 
+  // "Fechar Conta": consolidado de todos os atendimentos agendados de um
+  // cliente no mesmo dia/horário (ex.: dois serviços simultâneos, cada um
+  // com um profissional diferente). Mostra cada serviço + profissional
+  // envolvido e permite ajustar o valor cobrado e os insumos/produtos de
+  // cada um, com uma única forma de pagamento e um total geral — mas
+  // conclui e lança financeiramente cada atendimento separadamente por
+  // baixo dos panos (mesmo comportamento de sempre, só que revisado e
+  // confirmado de uma vez só).
+  function openConcludeGroupModal(group) {
+    var client = DB.get("clients", group[0].clientId);
+    var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
+    var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
+
+    var lines = group.map(function (appt, idx) {
+      return {
+        appt: appt,
+        service: DB.get("services", appt.serviceId),
+        employee: DB.get("employees", appt.employeeId),
+        assistant: appt.assistantId ? DB.get("employees", appt.assistantId) : null,
+        rowPrefix: "ccg" + idx
+      };
+    });
+
+    var body = '<div class="small text-muted mb-16"><i class="fa-solid fa-circle-info"></i> ' + Utils.escapeHtml(client.name) + ' tem ' + group.length + ' atendimentos agendados para ' + Utils.fmtDate(group[0].date) + ' às ' + group[0].time + '. Confira e conclua tudo de uma vez.</div>' +
+      lines.map(function (l) {
+        return '<div class="ccg-line" style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-bottom:12px;">' +
+          '<div class="mb-8"><strong>' + Utils.escapeHtml(l.service ? l.service.name : "Serviço") + '</strong>' +
+            '<div class="small text-muted">Profissional: ' + Utils.escapeHtml(l.employee ? l.employee.name : "-") + (l.assistant ? " · Assistente: " + Utils.escapeHtml(l.assistant.name) : "") + '</div>' +
+          '</div>' +
+          '<div class="form-grid">' +
+            '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="' + l.rowPrefix + '-amount"></div>' +
+          '</div>' +
+          '<div class="flex items-center justify-between mb-8" style="margin-top:8px;">' +
+            '<label class="small" style="font-weight:600;">Insumos / Produtos (opcional)</label>' +
+            '<button type="button" class="btn btn-sm btn-outline ccg-add-insumo" data-target="' + l.rowPrefix + '-rows"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
+          '</div>' +
+          '<div id="' + l.rowPrefix + '-rows"></div>' +
+        '</div>';
+      }).join("") +
+      '<div class="divider" style="margin:14px 0;"></div>' +
+      '<div class="form-grid">' +
+        '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + PAYMENT_OPTIONS.map(function (p) { return "<option>" + p + "</option>"; }).join("") + '</select></div>' +
+        '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
+      '</div>';
+
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ccg-save">Fechar Conta</button>';
+    var box = Modal.open({ title: "Fechar Conta — " + client.name, wide: true, bodyHtml: body, footHtml: foot });
+
+    function updateTotal() {
+      var total = 0;
+      lines.forEach(function (l) {
+        total += Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || 0;
+      });
+      Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), total);
+    }
+
+    lines.forEach(function (l) {
+      var amountInput = box.querySelector("#" + l.rowPrefix + "-amount");
+      Utils.wireMoneyMask(amountInput, l.appt.price);
+      amountInput.addEventListener("input", updateTotal);
+      var rowsEl = box.querySelector("#" + l.rowPrefix + "-rows");
+      box.querySelector('.ccg-add-insumo[data-target="' + l.rowPrefix + '-rows"]').addEventListener("click", function () {
+        rowsEl.insertAdjacentHTML("beforeend", insumoRowHtml());
+        wireInsumoRow(rowsEl.lastElementChild);
+      });
+    });
+    updateTotal();
+
+    box.querySelector("#ccg-save").addEventListener("click", function () {
+      var payMethod = box.querySelector("#ccg-pay").value;
+      var totalAmount = 0;
+      var summaryParts = [];
+      var insumoCount = 0;
+
+      DB.batch(function () {
+        lines.forEach(function (l) {
+          var appt = l.appt, service = l.service;
+          var amount = Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || appt.price;
+          totalAmount += amount;
+          var category = service ? DB.findOne("categories", function (c) { return c.id === service.categoryId; }) : null;
+          var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
+
+          DB.update("appointments", appt.id, { status: "concluido", price: amount });
+          DB.insert("transactions", {
+            type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: round2(amount),
+            date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+            paymentMethod: payMethod, status: "pago",
+            employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+          });
+
+          summaryParts.push((service ? service.name : "Atendimento") + " (" + (l.employee ? l.employee.name : "-") + ")");
+
+          var rows = Utils.qsa(".insumo-item-row", box.querySelector("#" + l.rowPrefix + "-rows"));
+          rows.forEach(function (row) {
+            var tipo = row.querySelector(".ir-tipo").value;
+            var productId = row.querySelector(".ir-produto").value;
+            var qtd = parseFloat(row.querySelector(".ir-qtd").value) || 0;
+            if (!productId || qtd <= 0) return;
+            insumoCount++;
+            if (tipo === "consumo") {
+              if (window.Consumo) {
+                try {
+                  Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "" });
+                } catch (err) { Toast.show(String(err), "danger"); }
+              }
+            } else {
+              var product = DB.get("products", productId);
+              if (!product) return;
+              var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
+              DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+              DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
+              DB.insert("transactions", {
+                type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
+                categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
+                paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+                productId: productId, appointmentId: appt.id, reconciled: false
+              });
+            }
+          });
+        });
+      });
+
+      DB.log("Agenda", "Fechou conta consolidada de " + client.name + " (" + summaryParts.join(" + ") + ") — total " + Utils.fmtMoney(totalAmount) + (insumoCount ? " com " + insumoCount + " item(ns) de insumo/produto" : ""));
+      // Um único pedido de avaliação por visita (não um por serviço), para
+      // não mandar vários pedidos de avaliação seguidos para o mesmo
+      // cliente por causa de um mesmo atendimento com vários serviços.
+      if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", lines[0].appt.id));
+      Modal.close();
+      Toast.show("Conta fechada: " + group.length + " atendimentos concluídos", "success");
+      render();
+    });
+  }
+
   function round2(n) { return Math.round(n * 100) / 100; }
 
   // Cargos que sempre contaram como "realiza serviços" antes desse campo
@@ -890,7 +1037,7 @@
       '<div class="form-field full"><label>Serviço</label><select id="am-service">' + services.map(function (s) { return '<option value="' + s.id + '" data-price="' + s.price + '" data-group="' + s.group + '"' + (a && a.serviceId === s.id ? " selected" : "") + '>' + s.name + " (" + s.group + ")" + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: "am-employee", items: [], value: "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
       '<div class="form-field"><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
-      '<div class="form-field"><label>Data</label><input type="date" id="am-date"' + (a ? "" : ' min="' + Utils.todayISO() + '"') + ' value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
+      '<div class="form-field"><label>Data</label><input type="date" id="am-date" value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
       '<div class="form-field"><label>Status</label><select id="am-status">' +
         '<option value="agendado"' + (a && a.status === "agendado" ? " selected" : "") + '>Agendado</option>' +
@@ -1119,19 +1266,11 @@
       if (!patch.date || !patch.time) { Toast.show("Informe data e hora", "danger"); return; }
       if (!patch.employeeId) { Toast.show("Selecione um profissional", "danger"); return; }
       if (hasAsst && !patch.assistantId) { Toast.show("Selecione o assistente ou desmarque a opção", "danger"); return; }
-      // Agendamentos com status "agendado" só podem ficar no presente/futuro
-      // — não faz sentido marcar um horário que já passou. Edições de
-      // atendimentos já concluídos/faltosos/cancelados no passado continuam
-      // permitidas normalmente (só valida quando o status final é "agendado").
-      if (patch.status === "agendado") {
-        var nowD = new Date();
-        var nowDateStr = Utils.todayISO();
-        var nowTimeStr = String(nowD.getHours()).padStart(2, "0") + ":" + String(nowD.getMinutes()).padStart(2, "0");
-        if (patch.date < nowDateStr || (patch.date === nowDateStr && patch.time < nowTimeStr)) {
-          Toast.show("Não é possível agendar em uma data/hora que já passou", "danger");
-          return;
-        }
-      }
+      // Lançamento em data/hora retroativa é permitido para qualquer status
+      // (inclusive "agendado") — a pedido do usuário, para registrar
+      // atendimentos feitos no passado sem precisar passar por "Concluído"
+      // primeiro. Removido o bloqueio que antes impedia salvar um horário
+      // já passado.
       var savedAppt;
       if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time); Toast.show("Agendamento atualizado", "success"); }
       else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
