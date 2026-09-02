@@ -13,6 +13,14 @@
   var GENERAL_PAGE_SIZE = 30;
   var generalPage = 1;
   var DOW_NAMES = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  // Lote de migração de histórico (Histórico do Cliente / Base Clientes):
+  // esses agendamentos ficam disponíveis na ficha do cliente (Clientes →
+  // Histórico), mas não devem aparecer na Agenda — a Agenda mostra apenas
+  // agendamentos ativos/futuros de verdade, não o histórico importado.
+  var HISTORICAL_IMPORT_BATCH = "migracao-2026-08-31";
+  function visibleAppointments() {
+    return DB.all("appointments").filter(function (a) { return a._importBatch !== HISTORICAL_IMPORT_BATCH; });
+  }
   var PAYMENT_OPTIONS = ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"];
   var OCC_TYPES = ["Ausência Médica", "Falta Justificada", "Compromisso Pessoal", "Bloqueio / Manutenção", "Outro"];
 
@@ -204,7 +212,7 @@
   }
 
   function render() {
-    var appointments = DB.all("appointments");
+    var appointments = visibleAppointments();
     var today = Utils.todayISO();
     var hasFilter = !!(filt.employee || filt.service || filt.status);
     var filterNote = document.getElementById("ag-filter-note");
@@ -279,7 +287,7 @@
     var servicesById = {}; services.forEach(function (s) { servicesById[s.id] = s; });
     var employeesById = {}; employees.forEach(function (e) { employeesById[e.id] = e; });
     var clientsById = {}; clients.forEach(function (c) { clientsById[c.id] = c; });
-    var list = DB.all("appointments").filter(function (a) {
+    var list = visibleAppointments().filter(function (a) {
       if (periodStart && a.date < periodStart) return false;
       if (periodEnd && a.date > periodEnd) return false;
       if (filt.employee && a.employeeId !== filt.employee) return false;
@@ -427,7 +435,7 @@
       return;
     }
 
-    var dayAppts = DB.all("appointments").filter(function (a) {
+    var dayAppts = visibleAppointments().filter(function (a) {
       if (a.date !== selectedDate) return false;
       if (filt.service && a.serviceId !== filt.service) return false;
       if (filt.status && a.status !== filt.status) return false;
@@ -583,9 +591,7 @@
     var defaultEnd = o ? o.endTime : (opts.endTime || minToTime(timeToMin(defaultStart) + 60));
 
     var body = '<div class="form-grid">' +
-      '<div class="form-field full"><label>Profissional</label><select id="om-employee">' +
-        employees.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") +
-      '</select></div>' +
+      '<div class="form-field full"><label>Profissional</label>' + NameCombo.html({ id: "om-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: presetEmployeeId || "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="om-date" value="' + (o ? o.date : (opts.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Tipo</label><select id="om-type">' +
         OCC_TYPES.map(function (t) { return '<option' + (o && o.type === t ? " selected" : "") + '>' + t + '</option>'; }).join("") +
@@ -605,6 +611,7 @@
     var delBtn = o ? '<button class="btn btn-ghost" id="om-delete" style="color:var(--color-danger);">Excluir</button>' : "";
     var foot = delBtn + '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="om-save">Salvar Ocorrência</button>';
     var box = Modal.open({ title: o ? "Editar Ocorrência" : "Registrar Ocorrência", bodyHtml: body, footHtml: foot });
+    NameCombo.wire(box, { id: "om-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
 
     var attachment = o && o.attachment ? o.attachment : null;
     var initialAttachmentRef = attachment;
@@ -875,13 +882,13 @@
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Cliente</label>' +
         '<div class="flex gap-8" style="align-items:center;">' +
-          '<select id="am-client" style="flex:1;">' + clients.map(function (c) { return '<option value="' + c.id + '"' + (a && a.clientId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select>' +
+          '<div style="flex:1;">' + NameCombo.html({ id: "am-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }), value: a ? a.clientId : "", placeholder: "Nome e sobrenome do cliente" }) + '</div>' +
           (window.ClientesQuick ? '<button type="button" class="btn btn-sm btn-outline" id="am-new-client" style="white-space:nowrap;"><i class="fa-solid fa-user-plus"></i> Criar novo cliente</button>' : "") +
         '</div>' +
         (window.ClientesQuick ? '<div id="am-new-client-panel" style="display:none;border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-top:8px;background:var(--gray-50);">' + ClientesQuick.inlinePanelHtml("am-nc") + '</div>' : "") +
       '</div>' +
       '<div class="form-field full"><label>Serviço</label><select id="am-service">' + services.map(function (s) { return '<option value="' + s.id + '" data-price="' + s.price + '" data-group="' + s.group + '"' + (a && a.serviceId === s.id ? " selected" : "") + '>' + s.name + " (" + s.group + ")" + '</option>'; }).join("") + '</select></div>' +
-      '<div class="form-field"><label>Profissional</label><select id="am-employee"></select></div>' +
+      '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: "am-employee", items: [], value: "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
       '<div class="form-field"><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="am-date"' + (a ? "" : ' min="' + Utils.todayISO() + '"') + ' value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
@@ -897,9 +904,7 @@
       '<div class="form-grid">' +
         '<div class="form-field full"><label class="flex items-center gap-6" style="font-weight:600;"><input type="checkbox" id="am-has-assistant" style="width:auto;"' + (hasAssistant ? " checked" : "") + '> Incluir assistente neste atendimento</label></div>' +
         '<div id="am-assistant-fields" class="form-grid" style="grid-column:1/-1;display:' + (hasAssistant ? "grid" : "none") + ';">' +
-          '<div class="form-field"><label>Assistente</label><select id="am-assistant">' +
-            allActiveEmployees.map(function (e) { return '<option value="' + e.id + '"' + (a && a.assistantId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("") +
-          '</select></div>' +
+          '<div class="form-field"><label>Assistente</label>' + NameCombo.html({ id: "am-assistant", items: allActiveEmployees.map(function (e) { return { id: e.id, label: e.name }; }), value: a ? a.assistantId : "", placeholder: "Nome e sobrenome do assistente" }) + '</div>' +
           commissionFieldHtml({ id: "am-assistant-pct", label: "Comissão do Assistente (%)", currentValue: a && a.assistantCommissionPercent != null ? a.assistantCommissionPercent : 10, defaultRate: currentAssistant ? currentAssistant.commissionRate : null, forceEditable: true }) +
         '</div>' +
       '</div>';
@@ -913,6 +918,10 @@
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
     var box = Modal.open({ title: a ? "Editar Agendamento" : "Novo Agendamento", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#am-price"), a ? a.price : 0);
+
+    var amClientCombo = NameCombo.wire(box, { id: "am-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }) });
+    var amEmployeeCombo = NameCombo.wire(box, { id: "am-employee", items: [] });
+    var amAssistantCombo = NameCombo.wire(box, { id: "am-assistant", items: allActiveEmployees.map(function (e) { return { id: e.id, label: e.name }; }) });
 
     // Preenche o campo de comissão do profissional automaticamente com a
     // taxa padrão cadastrada no funcionário (Funcionários → Comissão), sem
@@ -936,11 +945,9 @@
     // employeePerformsServices) como opção de Profissional — não filtra
     // mais por um grupo de serviço específico do cargo.
     function fillEmployeesFor() {
-      var empSel = box.querySelector("#am-employee");
       var presetEmployeeId = a ? a.employeeId : presets.employeeId;
-      empSel.innerHTML = employees.length
-        ? employees.map(function (e) { return '<option value="' + e.id + '"' + (presetEmployeeId === e.id ? " selected" : "") + '>' + Utils.escapeHtml(e.name) + '</option>'; }).join("")
-        : '<option value="">Nenhum profissional cadastrado</option>';
+      amEmployeeCombo.setItems(employees.map(function (e) { return { id: e.id, label: e.name }; }));
+      if (presetEmployeeId) amEmployeeCombo.setValue(presetEmployeeId);
       updateDefaultCommission();
     }
     var serviceSel = box.querySelector("#am-service");
@@ -994,13 +1001,10 @@
       });
       ClientesQuick.wireInlinePanel(newClientPanel, "am-nc",
         function (client) {
-          // insere o cliente recém-criado no seletor e já o deixa selecionado
-          var clientSel = box.querySelector("#am-client");
-          var opt = document.createElement("option");
-          opt.value = client.id;
-          opt.textContent = client.name;
-          clientSel.appendChild(opt);
-          clientSel.value = client.id;
+          // insere o cliente recém-criado na lista de sugestões e já o deixa selecionado
+          clients.push(client);
+          amClientCombo.setItems(clients.map(function (c) { return { id: c.id, label: c.name }; }));
+          amClientCombo.setValue(client.id);
           newClientPanel.style.display = "none";
           newClientBtn.style.display = "";
         },
