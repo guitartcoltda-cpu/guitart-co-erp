@@ -316,6 +316,7 @@
         var id = btn.getAttribute("data-approve-req");
         Approvals.approve(id, PontoAjustes.apply);
         Toast.show("Solicitação aprovada", "success");
+        if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
         render();
       });
     });
@@ -327,6 +328,7 @@
           onConfirm: function () {
             Approvals.reject(id);
             Toast.show("Solicitação recusada", "info");
+            if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
             render();
           }
         });
