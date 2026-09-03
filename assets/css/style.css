@@ -603,8 +603,10 @@ body.modal-open-lock { overflow: hidden; }
 .gap-6 { gap: 6px; }
 .gap-8 { gap: 8px; }
 .gap-10 { gap: 10px; }
+.mt-4 { margin-top: 4px; }
 .mt-8 { margin-top: 8px; }
 .mt-16 { margin-top: 16px; }
+.mb-8 { margin-bottom: 8px; }
 .mb-16 { margin-bottom: 16px; }
 .w-full { width: 100%; }
 .small { font-size: 12px; }
@@ -758,6 +760,8 @@ body.modal-open-lock { overflow: hidden; }
   transition: border-color .15s, box-shadow .15s;
 }
 .ponto-emp-card:hover { border-color: var(--color-accent, #2a78d6); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.ponto-emp-card { font-family: inherit; }
+.ponto-emp-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .ponto-thumb {
   width: 48px; height: 48px; border-radius: var(--radius-sm);
   background-size: cover; background-position: center;
@@ -767,8 +771,55 @@ body.modal-open-lock { overflow: hidden; }
   display: flex; align-items: center; justify-content: center;
   background: var(--gray-100, #f2f2f2); color: var(--gray-500, #8a8a8a); font-size: 16px;
 }
-.ponto-emp-card-inner { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; width: 100%; background: none; border: none; padding: 0; font-family: inherit; cursor: pointer; }
-.ponto-emp-adjust-link { border: none; background: none; padding: 4px 0 0; margin-top: 4px; font-size: 11.5px; color: var(--color-accent, #2a78d6); cursor: pointer; text-decoration: underline; font-family: inherit; }
+
+/* ---- Ponto — "Meu Dia" (fluxo do dia, espelho de ponto) ---- */
+.ponto-day-card { padding: 18px 0; border-bottom: 1px solid var(--border-color); }
+.ponto-day-card:last-child { border-bottom: none; padding-bottom: 4px; }
+.ponto-day-card-title { font-size: 13.5px; font-weight: 700; margin-bottom: 14px; }
+.ponto-day-actions { margin-top: 14px; }
+.ponto-day-status { display: flex; align-items: center; gap: 8px; color: var(--color-success); font-weight: 600; font-size: 13.5px; }
+
+.ponto-steps { display: flex; align-items: flex-start; }
+.ponto-step { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; flex: 0 0 auto; width: 92px; }
+.ponto-step-icon {
+  width: 40px; height: 40px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+  background: var(--gray-100); color: var(--gray-400); border: 2px solid var(--gray-100); font-size: 15px;
+}
+.ponto-step.current .ponto-step-icon { background: var(--color-accent-light); color: var(--color-accent); border-color: var(--color-accent); }
+.ponto-step.done .ponto-step-icon { background: var(--color-success); color: #fff; border-color: var(--color-success); }
+.ponto-step-label { font-size: 11px; font-weight: 700; color: var(--gray-700); }
+.ponto-step-time { font-size: 11px; color: var(--gray-500); font-variant-numeric: tabular-nums; }
+.ponto-step-line { flex: 1 1 auto; height: 2px; background: var(--gray-100); margin-top: 19px; min-width: 12px; }
+.ponto-step-line.filled { background: var(--color-success); }
+
+.ponto-kind-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.ponto-kind-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  padding: 16px 8px; border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  background: var(--bg-card); cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--gray-700);
+  transition: border-color .15s, box-shadow .15s;
+}
+.ponto-kind-card i { font-size: 19px; color: var(--gray-500); }
+.ponto-kind-card:hover { border-color: var(--color-accent, #2a78d6); }
+.ponto-kind-card.active { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); background: var(--color-primary-light); }
+.ponto-kind-card.active i { color: var(--color-primary); }
+
+.ponto-espelho-totals td { font-weight: 700; border-top: 2px solid var(--border-color); background: var(--gray-50); }
+
+/* ---- Gestão de Ponto — solicitações / ocorrências (lista com ícone) ---- */
+.ponto-request-row { display: flex; align-items: flex-start; gap: 14px; border-top: 1px solid var(--border-color); padding: 12px 0; }
+.ponto-request-row:first-child { border-top: none; }
+.ponto-request-icon {
+  width: 36px; height: 36px; border-radius: 999px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-accent-light); color: var(--color-accent); font-size: 14px;
+}
+.ponto-request-body { flex: 1 1 auto; min-width: 0; }
+
+@media (max-width: 640px) {
+  .ponto-step { width: 68px; }
+  .ponto-step-label { font-size: 10px; }
+}
 
 /* ---- NameCombo (campo de nome com digitação livre + sugestões) ---- */
 .name-combo-item:hover { background: var(--gray-100, #f2f2f2); }
