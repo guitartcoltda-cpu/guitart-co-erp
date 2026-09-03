@@ -434,38 +434,6 @@
     return (s && s.durationMin) ? s.durationMin : 30;
   }
 
-  // Depois de salvar um agendamento (nova duração, novo horário etc.),
-  // "arruma" o resto da agenda do mesmo profissional naquele dia: nunca
-  // deixa um atendimento sobrepor o seguinte — se um atendimento durou mais
-  // do que o esperado, todo mundo que vem depois dele (do mesmo
-  // profissional, no mesmo dia) é empurrado para frente na mesma medida, em
-  // cadeia, até não sobrar nenhuma sobreposição. Só EMPURRA agendamentos que
-  // ainda estão como "agendado" — um atendimento já concluído registra o que
-  // realmente aconteceu e não deve ser reescrito sozinho, mas ainda conta
-  // como um bloco de tempo ocupado (empurra os agendamentos depois dele,
-  // mesmo sem se mover). Retorna a lista do que foi movido, para avisar o
-  // usuário quando isso acontecer.
-  function reflowProfessionalDay(employeeId, date) {
-    if (!employeeId || !date) return [];
-    var dayAppts = DB.all("appointments").filter(function (x) {
-      return x.employeeId === employeeId && x.date === date && (x.status === "agendado" || x.status === "concluido");
-    }).sort(function (a, b) { return timeToMin(a.time) - timeToMin(b.time); });
-
-    var cursorEnd = null;
-    var shifted = [];
-    dayAppts.forEach(function (appt) {
-      var startMin = timeToMin(appt.time);
-      if (cursorEnd != null && startMin < cursorEnd && appt.status === "agendado") {
-        startMin = cursorEnd;
-        var newTime = minToTime(startMin);
-        DB.update("appointments", appt.id, { time: newTime });
-        shifted.push({ id: appt.id, from: appt.time, to: newTime });
-      }
-      cursorEnd = startMin + apptDurationMin(appt);
-    });
-    return shifted;
-  }
-
   function renderDayCalendar() {
     var services = DB.all("services"), employees = DB.all("employees"), clients = DB.all("clients");
     var activeEmployees = employees.filter(function (e) { return e.status === "ativo" && employeePerformsServices(e); })
@@ -1128,7 +1096,7 @@
       '<div class="form-field"><label>Data</label><input type="date" id="am-date" value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
       '<div class="form-field"><label>Duração (min)</label><input type="number" id="am-duration" min="5" step="5" value="' + apptModalInitialDuration + '"></div>' +
-      '<div class="form-field full"><div class="small text-muted">Ajuste aqui se o atendimento durar mais (ou menos) do que o padrão do serviço. Ao salvar, os próximos agendamentos deste profissional no mesmo dia são reorganizados automaticamente para não sobrepor.</div></div>' +
+      '<div class="form-field full"><div class="small text-muted">Ajuste aqui se o atendimento durar mais (ou menos) do que o padrão do serviço. Isso não move outros agendamentos automaticamente — ajuste a agenda manualmente se precisar.</div></div>' +
       '<div class="form-field"><label>Status</label><select id="am-status">' +
         '<option value="agendado"' + (a && a.status === "agendado" ? " selected" : "") + '>Agendado</option>' +
         '<option value="concluido"' + (a && a.status === "concluido" ? " selected" : "") + '>Concluído</option>' +
@@ -1376,16 +1344,10 @@
       var savedAppt;
       if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time); Toast.show("Agendamento atualizado", "success"); }
       else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
-      // Se este atendimento durou mais (ou menos) do que o previsto, arruma
-      // o resto da agenda do profissional naquele dia para não deixar
-      // nenhuma sobreposição — empurra em cadeia só quem ainda está
-      // "agendado" (ver reflowProfessionalDay).
-      var shiftedAppts = reflowProfessionalDay(patch.employeeId, patch.date);
-      if (shiftedAppts.length) {
-        var reflowEmp = DB.get("employees", patch.employeeId);
-        DB.log("Agenda", "Ajuste de duração/horário reorganizou " + shiftedAppts.length + " agendamento(s) seguinte(s) de " + (reflowEmp ? reflowEmp.name : "profissional") + " em " + Utils.fmtDate(patch.date));
-        Toast.show(shiftedAppts.length + " agendamento(s) seguinte(s) foi(ram) reorganizado(s) automaticamente para não sobrepor", "info");
-      }
+      // A agenda permite salvar agendamentos no mesmo horário/sobrepostos
+      // sem mexer em mais nada — o sistema não reorganiza automaticamente
+      // os agendamentos seguintes do profissional; quem administra a
+      // agenda ajusta manualmente quando precisar.
       // Se uma alteração de comissão do profissional foi pedida antes de o
       // agendamento existir (tela de Novo Agendamento), a solicitação só
       // pôde ser preparada até agora — dispara ela de verdade aqui, já com
