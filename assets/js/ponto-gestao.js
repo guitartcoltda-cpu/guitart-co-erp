@@ -36,6 +36,8 @@
       render();
     });
     Utils.qs("#btn-new-manual-entry").addEventListener("click", openManualEntryModal);
+    var folhaBtn = Utils.qs("#btn-folha-ponto");
+    if (folhaBtn) folhaBtn.addEventListener("click", openFolhaModal);
 
     render();
   }
@@ -486,5 +488,217 @@
       pgEspelhoRef = new Date(pgEspelhoRef.getFullYear(), pgEspelhoRef.getMonth() + 1, 1);
       renderEspelho();
     });
+  }
+
+  // ---------------- Folha de Ponto (PDF do período fechado) ----------------
+  // Gera um PDF pronto para impressão/assinatura com os lançamentos (batidas
+  // e ocorrências) de um funcionário — ou de todos os que tiveram algum
+  // lançamento — dentro do mês escolhido. "Fechar o período" aqui significa
+  // fixar a janela de datas do mês selecionado: para o mês corrente a data
+  // de corte é hoje (o mês ainda está em andamento), para um mês anterior o
+  // corte é o último dia dele — mesmo critério já usado em Comissões.
+
+  function capFirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+  function currentUserDisplayName() {
+    var u = window.CurrentUser && window.CurrentUser.get && window.CurrentUser.get();
+    return u ? ((u.firstName || "") + " " + (u.lastName || "")).trim() || "-" : "-";
+  }
+
+  function folhaMonthOptions() {
+    var months = [];
+    var today = Utils.todayISO();
+    for (var i = 0; i < 12; i++) months.push(Utils.monthKey(Utils.addMonths(today, -i)));
+    return months;
+  }
+
+  function folhaCutoffDate(monthKey) {
+    var today = Utils.todayISO();
+    if (monthKey === Utils.monthKey(today)) return today;
+    var parts = monthKey.split("-").map(Number);
+    var lastDay = new Date(parts[0], parts[1], 0).getDate();
+    return monthKey + "-" + String(lastDay).padStart(2, "0");
+  }
+
+  // Todo funcionário (ativo ou não) que tenha pelo menos um lançamento de
+  // ponto dentro do período — é isso que "Todos os Funcionários" gera na
+  // folha, e não só quem está atualmente marcado para bater ponto, já que
+  // o período pode ser de um mês passado com alguém que já saiu.
+  function employeesWithEntriesInRange(entries, start, end) {
+    var byId = {};
+    entries.forEach(function (t) {
+      if (t.date >= start && t.date <= end) byId[t.employeeId] = t.employeeName || byId[t.employeeId] || "Funcionário";
+    });
+    return Object.keys(byId).map(function (id) {
+      return DB.get("employees", id) || { id: id, name: byId[id], dailyWorkHours: null };
+    }).sort(function (a, b) { return (a.name || "").localeCompare(b.name || ""); });
+  }
+
+  // Lista de opções do seletor "Funcionário" do modal: qualquer um com
+  // histórico de lançamentos (de qualquer época) mais quem está ativo e
+  // marcado para bater ponto agora (mesmo que ainda sem nenhum registro).
+  function folhaPickerEmployees() {
+    var ids = {};
+    DB.all("timeClockEntries").forEach(function (t) { ids[t.employeeId] = true; });
+    activeTimeClockEmployees().forEach(function (e) { ids[e.id] = true; });
+    return Object.keys(ids).map(function (id) { return DB.get("employees", id); }).filter(Boolean)
+      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+  }
+
+  function openFolhaModal() {
+    var months = folhaMonthOptions();
+    var pickEmployees = folhaPickerEmployees();
+
+    var body =
+      '<div class="form-field full"><label>Funcionário</label><select id="fp-employee">' +
+        '<option value="">Todos os Funcionários</option>' +
+        pickEmployees.map(function (e) { return '<option value="' + e.id + '">' + Utils.escapeHtml(e.name) + '</option>'; }).join("") +
+      '</select></div>' +
+      '<div class="form-field full"><label>Mês de Referência</label><select id="fp-month">' +
+        months.map(function (m, idx) {
+          var label = capFirst(PontoCalc.monthRange(m + "-01").label);
+          return '<option value="' + m + '"' + (idx === 0 ? " selected" : "") + '>' + label + (idx === 0 ? " (em aberto até hoje)" : "") + '</option>';
+        }).join("") +
+      '</select></div>' +
+      '<div class="small text-muted">Gera um PDF por funcionário, pronto para impressão e assinatura, com todas as batidas e ocorrências (faltas, atestados, folgas) do período fechado.</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="fp-generate"><i class="fa-solid fa-file-pdf"></i> Gerar PDF</button>';
+    var box = Modal.open({ title: "Gerar Folha de Ponto", bodyHtml: body, footHtml: foot });
+    box.querySelector("#fp-generate").addEventListener("click", function () {
+      generateFolhaPdf(box.querySelector("#fp-employee").value, box.querySelector("#fp-month").value);
+    });
+  }
+
+  var FOLHA_COLS = [
+    { key: "data", label: "Data", x: 40, w: 55 },
+    { key: "entrada", label: "Entrada", x: 95, w: 50 },
+    { key: "saidaAlmoco", label: "Saída Almoço", x: 145, w: 62 },
+    { key: "voltaAlmoco", label: "Volta Almoço", x: 207, w: 62 },
+    { key: "saida", label: "Saída", x: 269, w: 48 },
+    { key: "trabalhado", label: "Trabalhado", x: 317, w: 62 },
+    { key: "extras", label: "Extras", x: 379, w: 52 },
+    { key: "faltantes", label: "Faltantes", x: 431, w: 52 },
+    { key: "saldo", label: "Saldo", x: 483, w: 52 },
+    { key: "obs", label: "Ocorrência / Observação", x: 535, w: 267 }
+  ];
+
+  function generateFolhaPdf(employeeId, monthKey) {
+    var jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
+    if (!jsPDFCtor) { Toast.show("Não foi possível carregar a biblioteca de PDF — verifique sua conexão e tente novamente", "danger"); return; }
+    if (!monthKey) { Toast.show("Selecione o mês de referência", "danger"); return; }
+
+    var range = PontoCalc.monthRange(monthKey + "-01");
+    var cutoff = folhaCutoffDate(monthKey);
+    var endForRange = cutoff < range.end ? cutoff : range.end; // mês corrente: não mostra dias futuros
+    var monthLabel = capFirst(range.label);
+    var allEntries = DB.all("timeClockEntries");
+    var employees = employeeId
+      ? [DB.get("employees", employeeId) || { id: employeeId, name: (allEntries.find(function (t) { return t.employeeId === employeeId; }) || {}).employeeName || "Funcionário" }]
+      : employeesWithEntriesInRange(allEntries, range.start, endForRange);
+
+    if (!employees.length) { Toast.show("Nenhum funcionário com lançamentos nesse período", "info"); return; }
+
+    var doc = new jsPDFCtor({ unit: "pt", format: "a4", orientation: "landscape" });
+    var pageWidth = doc.internal.pageSize.getWidth();
+    var pageHeight = doc.internal.pageSize.getHeight();
+    var marginX = 40, tableEnd = pageWidth - marginX;
+
+    function drawColHeaders(y) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      FOLHA_COLS.forEach(function (c) { doc.text(c.label, c.x, y); });
+      y += 6;
+      doc.setLineWidth(0.6);
+      doc.line(marginX, y, tableEnd, y);
+      return y + 13;
+    }
+
+    function ensureSpace(y, needed, withHeaders) {
+      if (y + needed <= pageHeight - 40) return y;
+      doc.addPage();
+      var ny = 50;
+      if (withHeaders) ny = drawColHeaders(ny);
+      return ny;
+    }
+
+    employees.forEach(function (emp, empIdx) {
+      if (empIdx > 0) doc.addPage();
+      var y = 46;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.text("Guitart & Co. — Folha de Ponto", marginX, y);
+      y += 20;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text("Funcionário: " + emp.name + (emp.role ? " — " + emp.role : ""), marginX, y);
+      doc.text("Mês de referência: " + monthLabel, tableEnd, y, { align: "right" });
+      y += 15;
+      doc.text("Carga horária diária: " + (PontoCalc.dailyExpectedMin(emp) / 60) + "h", marginX, y);
+      doc.text("Período fechado em: " + Utils.fmtDate(cutoff), tableEnd, y, { align: "right" });
+      y += 15;
+      doc.text("Gerado em " + Utils.fmtDate(Utils.todayISO()) + " por " + currentUserDisplayName(), marginX, y);
+      y += 18;
+
+      var data = PontoCalc.espelho(emp.id, range.start, endForRange, emp, allEntries);
+      var days = data.days.slice().reverse(); // cronológico (mais antigo primeiro) numa folha impressa
+
+      y = drawColHeaders(y);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+
+      if (!days.length) {
+        doc.text("Nenhum lançamento neste período.", marginX, y);
+        y += 16;
+      } else {
+        days.forEach(function (d) {
+          y = ensureSpace(y, 14, true);
+          if (d.occurrence) {
+            var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
+            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
+            var obsTxt = (k.label || d.occurrence.type) + (d.occurrence.note ? " — " + d.occurrence.note : "");
+            doc.text(obsTxt, FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
+          } else {
+            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
+            doc.text(pgHhmm(d.entrada), FOLHA_COLS[1].x, y);
+            doc.text(pgHhmm(d.saidaAlmoco), FOLHA_COLS[2].x, y);
+            doc.text(pgHhmm(d.voltaAlmoco), FOLHA_COLS[3].x, y);
+            doc.text(pgHhmm(d.saida), FOLHA_COLS[4].x, y);
+            doc.text(d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-", FOLHA_COLS[5].x, y);
+            doc.text(d.workedMin != null ? "+" + PontoCalc.fmtHM(d.extraMin) : "-", FOLHA_COLS[6].x, y);
+            doc.text(d.workedMin != null ? "-" + PontoCalc.fmtHM(d.missingMin) : "-", FOLHA_COLS[7].x, y);
+            doc.text(d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-", FOLHA_COLS[8].x, y);
+            if (d.status !== "completo") doc.text(d.statusLabel, FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
+          }
+          y += 14;
+        });
+      }
+
+      y = ensureSpace(y, 20, false);
+      doc.setLineWidth(0.6);
+      doc.line(marginX, y, tableEnd, y);
+      y += 13;
+      doc.setFont("helvetica", "bold");
+      doc.text("Total do período", FOLHA_COLS[0].x, y);
+      doc.text(PontoCalc.fmtHM(data.totals.workedMin), FOLHA_COLS[5].x, y);
+      doc.text("+" + PontoCalc.fmtHM(data.totals.extraMin), FOLHA_COLS[6].x, y);
+      doc.text("-" + PontoCalc.fmtHM(data.totals.missingMin), FOLHA_COLS[7].x, y);
+      doc.text(PontoCalc.fmtHM(data.totals.saldoMin), FOLHA_COLS[8].x, y);
+
+      y = ensureSpace(y, 70, false);
+      y += 50;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setLineWidth(0.6);
+      doc.line(marginX, y, marginX + 220, y);
+      doc.line(tableEnd - 220, y, tableEnd, y);
+      y += 12;
+      doc.text("Assinatura do Funcionário", marginX, y);
+      doc.text("Assinatura do Responsável", tableEnd - 220, y);
+    });
+
+    var fileSuffix = employeeId ? Utils.slugify(employees[0].name) : "todos";
+    doc.save("folha-ponto_" + fileSuffix + "_" + monthKey + ".pdf");
+    DB.log("Ponto", "Gerou a Folha de Ponto em PDF de " + (employeeId ? employees[0].name : "todos os funcionários") + " (ref. " + monthLabel + ", período fechado em " + Utils.fmtDate(cutoff) + ")");
+    Toast.show("Folha de Ponto gerada", "success");
+    Modal.close();
   }
 })();
