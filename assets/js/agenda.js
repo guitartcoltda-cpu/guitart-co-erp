@@ -474,7 +474,8 @@
     var colsHtml = cols.map(function (e) {
       var empAppts = dayAppts.filter(function (a) { return a.employeeId === e.id; });
       var empOcc = dayOcc.filter(function (o) { return o.employeeId === e.id; });
-      var blocksHtml = empAppts.map(function (a) { return apptBlockHtml(a, services, clients, employees); }).join("") +
+      var overlapLayout = computeOverlapLayout(empAppts, services);
+      var blocksHtml = empAppts.map(function (a) { return apptBlockHtml(a, services, clients, employees, overlapLayout[a.id]); }).join("") +
         empOcc.map(function (o) { return occBlockHtml(o); }).join("");
       return '<div class="cal-col" data-employee="' + e.id + '" style="height:' + totalHeight + 'px;background-size:100% ' + hourPx + 'px;">' + blocksHtml + '</div>';
     }).join("");
@@ -514,7 +515,57 @@
     return '<div class="ag-prof-strip">' + chips + allChip + '</div>';
   }
 
-  function apptBlockHtml(a, services, clients, employees) {
+  // A agenda permite salvar agendamentos sobrepostos (ver comentário mais
+  // abaixo, na função de salvar) — mas antes disso, dois agendamentos no
+  // mesmo horário do mesmo profissional simplesmente desenhavam um bloco
+  // por cima do outro na grade (largura sempre ~100% da coluna), tampando
+  // um o outro e deixando só uma tira colorida da borda aparecendo. Isto
+  // calcula, para os agendamentos de UM profissional no dia, um "lane"
+  // (faixa) e o total de faixas de cada grupo de horários que se cruzam —
+  // clássico algoritmo de layout de agenda (tipo Google Agenda): ordena por
+  // início, varre marcando o primeiro lane livre entre os que ainda estão
+  // "abertos" (não terminaram), e fecha o grupo (fixando quantos lanes ele
+  // usou) sempre que não sobra nenhum agendamento aberto — cada novo grupo
+  // reinicia a contagem de lanes do zero. O resultado {lane, lanes} de cada
+  // agendamento é usado por apptBlockHtml para desenhá-los lado a lado.
+  function computeOverlapLayout(empAppts, services) {
+    var items = empAppts.map(function (a) {
+      var s = services.find(function (x) { return x.id === a.serviceId; });
+      var start = timeToMin(a.time);
+      var dur = Math.max(apptDurationMin(a, s), 1);
+      return { appt: a, start: start, end: start + dur };
+    }).sort(function (x, y) { return x.start - y.start || x.end - y.end; });
+
+    var layout = {};
+    var active = []; // { end, lane } dos agendamentos ainda "abertos" no grupo atual
+    var group = [];
+    var groupMaxLane = 0;
+
+    function closeGroup() {
+      if (!group.length) return;
+      var lanes = groupMaxLane + 1;
+      group.forEach(function (it) { layout[it.appt.id].lanes = lanes; });
+      group = [];
+      groupMaxLane = 0;
+    }
+
+    items.forEach(function (it) {
+      active = active.filter(function (x) { return x.end > it.start; });
+      if (!active.length) closeGroup(); // ninguém mais aberto: fecha o grupo anterior e recomeça
+      var usedLanes = {};
+      active.forEach(function (x) { usedLanes[x.lane] = true; });
+      var lane = 0;
+      while (usedLanes[lane]) lane++;
+      layout[it.appt.id] = { lane: lane, lanes: 1 };
+      groupMaxLane = Math.max(groupMaxLane, lane);
+      active.push({ end: it.end, lane: lane });
+      group.push(it);
+    });
+    closeGroup();
+    return layout;
+  }
+
+  function apptBlockHtml(a, services, clients, employees, layoutInfo) {
     var s = services.find(function (x) { return x.id === a.serviceId; });
     var c = clients.find(function (x) { return x.id === a.clientId; });
     var startMin = timeToMin(a.time);
@@ -527,7 +578,17 @@
     // visualmente, sem abrir o agendamento, que esse horário foi remarcado
     // por causa de um atendimento que durou mais (ou menos) que o esperado.
     var durAdjusted = a.durationMin != null;
-    return '<div class="cal-block status-' + (a.status || "agendado") + '" style="top:' + top + 'px;height:' + height + 'px;" data-appt-id="' + a.id + '" title="' +
+    // Lado a lado quando sobrepõe outro(s) agendamento(s) do mesmo
+    // profissional (ver computeOverlapLayout) — sem sobreposição, mantém a
+    // largura cheia de sempre (left/right definidos pela classe .cal-block).
+    var lanes = (layoutInfo && layoutInfo.lanes) || 1;
+    var posStyle = "";
+    if (lanes > 1) {
+      var lane = layoutInfo.lane;
+      posStyle = "left:calc(3px + (100% - 6px) * " + lane + " / " + lanes + ");" +
+        "width:calc((100% - 6px) / " + lanes + " - 3px);";
+    }
+    return '<div class="cal-block status-' + (a.status || "agendado") + '" style="top:' + top + 'px;height:' + height + 'px;' + posStyle + '" data-appt-id="' + a.id + '" title="' +
       Utils.escapeHtml((s ? s.name : "") + " - " + (c ? c.name : "") + (durAdjusted ? " (" + dur + "min)" : "")) + '">' +
       '<div class="cb-time">' + a.time + (hasAsst ? ' <i class="fa-solid fa-user-plus" title="Com assistente"></i>' : '') + (durAdjusted ? ' <i class="fa-solid fa-clock" title="Duração ajustada: ' + dur + ' min"></i>' : '') + '</div>' +
       '<div class="cb-title">' + Utils.escapeHtml(s ? s.name : "-") + '</div>' +
