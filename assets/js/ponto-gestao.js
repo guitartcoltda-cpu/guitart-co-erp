@@ -137,47 +137,153 @@
     renderSummary();
     renderRecentOcorrencias();
     renderEspelho();
+    renderDayTable();
+  }
+
+  // ---------------- Registros: tabela consolidada por dia ----------------
+  // Em vez de uma linha por batida (ilegível com 4 batidas/dia por
+  // funcionário), agrupa os registros filtrados por funcionário+data e
+  // mostra um resumo do dia (entrada/almoço/saída/trabalhado/saldo), igual
+  // ao raciocínio do espelho de ponto. Os filtros continuam decidindo QUAIS
+  // dias aparecem, mas o resumo de cada linha sempre usa TODOS os
+  // lançamentos daquele funcionário naquele dia (não só os que bateram no
+  // filtro de Tipo) — senão "Entrada" batida sumiria da linha ao filtrar só
+  // por "Saída", por exemplo. Ver a lupa de cada linha para as batidas
+  // detalhadas (a marcação individual, com selfie e conferência).
+  function dayReviewBadge(dayEntries) {
+    if (dayEntries.some(function (t) { return t.flagged; })) return '<span class="badge badge-danger">Sinalizado</span>';
+    if (dayEntries.some(function (t) { return !t.reviewed; })) return '<span class="badge badge-gray">Pendente</span>';
+    return '<span class="badge badge-success">Conferido</span>';
+  }
+
+  function groupEntriesByDay(entries) {
+    var byKey = {};
+    var order = [];
+    entries.forEach(function (t) {
+      var key = t.employeeId + "|" + t.date;
+      if (!byKey[key]) { byKey[key] = { employeeId: t.employeeId, employeeName: t.employeeName, date: t.date }; order.push(key); }
+    });
+    var allEntries = DB.all("timeClockEntries");
+    return order.map(function (key) {
+      var g = byKey[key];
+      var employee = DB.get("employees", g.employeeId);
+      var dayEntries = allEntries.filter(function (t) { return t.employeeId === g.employeeId && t.date === g.date; });
+      return {
+        employeeId: g.employeeId,
+        employeeName: (employee && employee.name) || g.employeeName || "-",
+        employee: employee,
+        date: g.date,
+        dayEntries: dayEntries,
+        day: PontoCalc.computeDay(g.date, dayEntries, employee)
+      };
+    });
+  }
+
+  function pgConsolidatedRowHtml(row) {
+    var d = row.day;
+    var avatar = Utils.avatarHtml(row.employeeName, row.employee ? row.employee.photoDataUrl : null);
+    var reviewBadge = dayReviewBadge(row.dayEntries);
+    var openBtn = '<button class="btn btn-icon btn-ghost" data-open-day="' + row.employeeId + '|' + row.date + '" title="Ver marcações detalhadas"><i class="fa-solid fa-magnifying-glass"></i></button>';
+    if (d.occurrence) {
+      var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
+      return '<tr>' +
+        '<td class="text-num">' + Utils.fmtDate(row.date) + '</td>' +
+        '<td><div class="flex items-center gap-8">' + avatar + Utils.escapeHtml(row.employeeName) + '</div></td>' +
+        '<td colspan="4"><span class="badge ' + (k.badge || "badge-gray") + '"><i class="fa-solid ' + (k.icon || "fa-circle-info") + '"></i> ' + (k.label || d.occurrence.type) + '</span>' +
+          (d.occurrence.note ? '<span class="small text-muted"> — ' + Utils.escapeHtml(d.occurrence.note) + '</span>' : '') +
+        '</td>' +
+        '<td>' + reviewBadge + '</td>' +
+        '<td>' + openBtn + '</td>' +
+        '</tr>';
+    }
+    var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
+    return '<tr>' +
+      '<td class="text-num">' + Utils.fmtDate(row.date) + '</td>' +
+      '<td><div class="flex items-center gap-8">' + avatar + Utils.escapeHtml(row.employeeName) + '</div></td>' +
+      '<td class="text-num">' + pgHhmm(d.entrada) + '</td>' +
+      '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : '-') + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
+      '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') +
+        (d.workedMin != null ? '<div class="small ' + (d.saldoMin < 0 ? "text-danger" : "text-success") + '">saldo ' + PontoCalc.fmtHM(d.saldoMin) + '</div>' : '') +
+      '</td>' +
+      '<td>' + reviewBadge + '</td>' +
+      '<td>' + openBtn + '</td>' +
+      '</tr>';
+  }
+
+  var pgDaySortGetters = {
+    date: function (r) { return r.date; },
+    employeeName: function (r) { return r.employeeName; }
+  };
+
+  function renderDayTable() {
     var entries = getEntries();
     var tbl = document.getElementById("tbl-ponto");
-    document.getElementById("pg-count-sub").textContent = entries.length + " registro(s)";
-    if (!entries.length) {
+    var rows = groupEntriesByDay(entries);
+    document.getElementById("pg-count-sub").textContent = rows.length + " dia(s) · " + entries.length + " registro(s)";
+    if (!rows.length) {
       Utils.emptyTable(tbl, "fa-fingerprint", "Nenhum registro de ponto encontrado");
       return;
     }
-    var pgSortGetters = {
-      hora: function (t) { return t.timestamp; },
-      tipo: function (t) { return anyTypeLabel(t.type); }
-    };
-    entries = Utils.sortBy(entries, pgSortState, pgSortGetters);
-    tbl.innerHTML = '<thead><tr><th></th>' +
+    rows.sort(function (a, b) { return b.date.localeCompare(a.date) || a.employeeName.localeCompare(b.employeeName, "pt-BR"); });
+    rows = Utils.sortBy(rows, pgSortState, pgDaySortGetters);
+    tbl.innerHTML = '<thead><tr>' +
       Utils.thSort("Data", "date", pgSortState) +
-      Utils.thSort("Hora", "hora", pgSortState) +
       Utils.thSort("Funcionário", "employeeName", pgSortState) +
-      Utils.thSort("Tipo", "tipo", pgSortState) +
+      '<th>Entrada</th><th>Almoço</th><th>Saída</th><th>Trabalhado / Saldo</th>' +
       '<th>Conferência</th><th></th></tr></thead><tbody>' +
-      entries.map(function (t) {
-        var d = new Date(t.timestamp);
-        var statusHtml = t.flagged
-          ? '<span class="badge badge-danger">Sinalizado</span>'
-          : t.reviewed ? '<span class="badge badge-success">Conferido</span>' : '<span class="badge badge-gray">Pendente</span>';
-        return '<tr>' +
-          '<td>' + thumbHtml(t) + '</td>' +
-          '<td class="text-num">' + Utils.fmtDate(t.date) + '</td>' +
-          '<td class="text-num">' + (PontoCalc.isOccurrenceType(t.type) ? '-' : d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })) + '</td>' +
-          '<td>' + Utils.escapeHtml(t.employeeName || "-") + '</td>' +
-          '<td>' + typeBadge(t.type) + (t.origin && ORIGIN_LABELS[t.origin] ? '<div class="small text-muted">' + ORIGIN_LABELS[t.origin] + '</div>' : '') + '</td>' +
-          '<td>' + statusHtml + (t.note ? '<div class="small text-muted">' + Utils.escapeHtml(t.note) + '</div>' : '') + (t.attachment ? '<div class="mt-4">' + attachmentLinkHtml(t.attachment) + '</div>' : '') + '</td>' +
-          '<td><div class="flex gap-6">' +
-            '<button class="btn btn-icon btn-ghost" data-open="' + t.id + '" title="Ver / conferir"><i class="fa-solid fa-magnifying-glass"></i></button>' +
-            '<button class="btn btn-icon btn-ghost" data-del="' + t.id + '" title="Excluir"><i class="fa-solid fa-trash"></i></button>' +
-          '</div></td>' +
-          '</tr>';
-      }).join("") + '</tbody>';
+      rows.map(pgConsolidatedRowHtml).join("") + '</tbody>';
 
     Utils.wireSortHeaders(tbl, pgSortState, render);
-    Utils.qsa("[data-zoom]", tbl).forEach(function (el) { el.addEventListener("click", function () { openReview(el.getAttribute("data-zoom")); }); });
-    Utils.qsa("[data-open]", tbl).forEach(function (el) { el.addEventListener("click", function () { openReview(el.getAttribute("data-open")); }); });
-    Utils.qsa("[data-del]", tbl).forEach(function (el) { el.addEventListener("click", function () { confirmDeleteEntry(el.getAttribute("data-del")); }); });
+    Utils.qsa("[data-open-day]", tbl).forEach(function (el) {
+      el.addEventListener("click", function () {
+        var parts = el.getAttribute("data-open-day").split("|");
+        openDayDetail(parts[0], parts[1]);
+      });
+    });
+  }
+
+  // Modal com as marcações detalhadas (cada batida/ocorrência individual,
+  // com selfie/anexo e status de conferência) de um funcionário num dia —
+  // aberta a partir da lupa da linha consolidada.
+  function openDayDetail(employeeId, date) {
+    var employee = DB.get("employees", employeeId);
+    var dayEntries = DB.all("timeClockEntries").filter(function (t) { return t.employeeId === employeeId && t.date === date; })
+      .sort(function (a, b) { return a.timestamp.localeCompare(b.timestamp); });
+    var employeeName = (employee && employee.name) || (dayEntries[0] && dayEntries[0].employeeName) || "-";
+    var d = PontoCalc.computeDay(date, dayEntries, employee);
+
+    var summaryHtml = !d.occurrence
+      ? '<div class="flex mb-16" style="gap:24px;padding:10px 12px;border-radius:8px;background:var(--gray-50);font-size:13px;">' +
+          '<div><b>Trabalhado:</b> ' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + '</div>' +
+          '<div><b>Saldo:</b> <span class="' + (d.workedMin != null && d.saldoMin < 0 ? "text-danger" : "text-success") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</span></div>' +
+          (d.status !== "completo" ? '<div>' + d.statusLabel + '</div>' : '') +
+        '</div>'
+      : "";
+
+    var rowsHtml = dayEntries.map(function (t) {
+      var td = new Date(t.timestamp);
+      var statusHtml = t.flagged
+        ? '<span class="badge badge-danger">Sinalizado</span>'
+        : t.reviewed ? '<span class="badge badge-success">Conferido</span>' : '<span class="badge badge-gray">Pendente</span>';
+      return '<div class="ponto-request-row">' +
+        thumbHtml(t) +
+        '<div class="ponto-request-body">' +
+          '<div class="font-bold">' + typeBadge(t.type) + (PontoCalc.isOccurrenceType(t.type) ? '' : ' <span class="small text-muted">' + td.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + '</span>') + '</div>' +
+          (t.note ? '<div class="small text-muted">' + Utils.escapeHtml(t.note) + '</div>' : '') +
+          (t.attachment ? '<div class="mt-4">' + attachmentLinkHtml(t.attachment) + '</div>' : '') +
+          '<div class="small text-muted mt-4">' + statusHtml + (t.origin && ORIGIN_LABELS[t.origin] ? ' · ' + ORIGIN_LABELS[t.origin] : '') + '</div>' +
+        '</div>' +
+        '<button class="btn btn-icon btn-ghost" data-day-entry="' + t.id + '" title="Ver / conferir esta marcação"><i class="fa-solid fa-magnifying-glass"></i></button>' +
+      '</div>';
+    }).join("");
+
+    var body = summaryHtml + (rowsHtml || '<div class="small text-muted">Nenhum lançamento neste dia.</div>');
+    var foot = '<button class="btn btn-secondary" data-close-modal>Fechar</button>';
+    var box = Modal.open({ title: "Marcações do Dia — " + employeeName + " — " + Utils.fmtDate(date), wide: true, bodyHtml: body, footHtml: foot });
+    Utils.qsa("[data-day-entry]", box).forEach(function (el) {
+      el.addEventListener("click", function () { openReview(el.getAttribute("data-day-entry")); });
+    });
   }
 
   function confirmDeleteEntry(id) {
