@@ -41,9 +41,17 @@
             <h2>Gestão de Ponto</h2>
             <p>Confira os pontos batidos pela equipe e as selfies de cada registro</p>
           </div>
+          <div class="toolbar-actions">
+            <button class="btn btn-primary" id="btn-new-manual-entry"><i class="fa-solid fa-pen"></i> Lançar Ponto Manual</button>
+          </div>
         </div>
 
         <div class="kpi-grid" id="pg-summary" style="margin-bottom:16px;"></div>
+
+        <div id="pg-requests-card" class="card mb-16" style="display:none;">
+          <div class="card-header"><h3>Solicitações de Ajuste de Ponto</h3><div class="card-header-sub">Pedidas pelo próprio funcionário na tela de Ponto</div></div>
+          <div class="card-body"><div id="pg-requests-list"></div></div>
+        </div>
 
         <div id="pg-missing-card" class="card mb-16" style="display:none;">
           <div class="card-header"><h3>Ainda não bateram entrada hoje</h3></div>
@@ -81,6 +89,7 @@
   <script src="assets/js/auth.js"></script>
   <script src="assets/js/utils.js"></script>
   <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/ponto-ajustes.js"></script>
   <script src="assets/js/recorrencia.js"></script>
   <script src="assets/js/notificacoes.js"></script>
   <script src="assets/js/layout.js"></script>
