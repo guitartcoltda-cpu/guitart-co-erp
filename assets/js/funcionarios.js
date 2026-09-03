@@ -227,6 +227,8 @@
         '<div class="hint">Só quem tem essa opção em "Sim" ganha uma coluna própria na Visão do Dia da Agenda. Útil para marcar um assistente que também atende sozinho.</div></div>' +
       '<div class="form-field"><label>Bate ponto pelo sistema?</label><select id="em-timeclock"><option value="1"' + (requiresTimeClock ? " selected" : "") + '>Sim</option><option value="0"' + (!requiresTimeClock ? " selected" : "") + '>Não</option></select>' +
         '<div class="hint">Só quem tem essa opção em "Sim" aparece na lista de nomes da tela Ponto.</div></div>' +
+      '<div class="form-field"><label>Carga Horária Diária (horas)</label><input type="number" min="1" max="14" step="0.5" id="em-workhours" value="' + (e && e.dailyWorkHours ? e.dailyWorkHours : 8) + '">' +
+        '<div class="hint">Usada para calcular horas extras/faltantes e o saldo no espelho de ponto do funcionário.</div></div>' +
       '<div class="form-field"><label>Telefone (com DDD)</label><input type="tel" id="em-phone" placeholder="(11) 98765-4321" value="' + (e ? Utils.escapeHtml(e.phone) : "") + '"></div>' +
       '<div class="form-field"><label>E-mail</label><input type="email" id="em-email" value="' + (e ? Utils.escapeHtml(e.email) : "") + '"></div>' +
       '<div class="form-field"><label>CPF</label><input type="text" id="em-cpf" placeholder="000.000.000-00" value="' + (e && e.cpf ? Utils.fmtCPF(e.cpf) : "") + '"></div>' +
@@ -370,6 +372,7 @@
         commissionRate: parseFloat(box.querySelector("#em-comm").value) || 0,
         performsServices: box.querySelector("#em-performs").value === "1",
         requiresTimeClock: box.querySelector("#em-timeclock").value === "1",
+        dailyWorkHours: parseFloat(box.querySelector("#em-workhours").value) || 8,
         photoDataUrl: photoDataUrl
       };
       var savedEmp;
