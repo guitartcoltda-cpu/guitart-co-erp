@@ -14,6 +14,7 @@
 
   var selectedEmployeeId = "";
   var selectedMonth = "";
+  var ecSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -215,9 +216,24 @@
     if (!data.appointments.length) {
       Utils.emptyTable(tbl, "fa-calendar", "Nenhum atendimento concluído neste mês");
     } else {
+      var ecSortGetters = {
+        dataHora: function (a) { return a.date + " " + a.time; },
+        cliente: function (a) { var c = data.clients.find(function (x) { return x.id === a.clientId; }); return c ? c.name : ""; },
+        servico: function (a) { var s = data.services.find(function (x) { return x.id === a.serviceId; }); return s ? s.name : ""; },
+        produtos: function (a) { return consumoByAppt[a.id] || 0; },
+        commission: function (a) { return Utils.apptCommissionSplit(a, e).mainCommission; }
+      };
+      var sortedAppointments = Utils.sortBy(data.appointments, ecSortState, ecSortGetters);
       var linkedConsumoTotal = 0;
-      tbl.innerHTML = '<thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Produtos</th><th class="text-right">Comissão</th></tr></thead><tbody>' +
-        data.appointments.map(function (a) {
+      tbl.innerHTML = '<thead><tr>' +
+        Utils.thSort("Data/Hora", "dataHora", ecSortState) +
+        Utils.thSort("Cliente", "cliente", ecSortState) +
+        Utils.thSort("Serviço", "servico", ecSortState) +
+        Utils.thSort("Valor Cobrado", "price", ecSortState, { className: "text-right" }) +
+        Utils.thSort("Produtos", "produtos", ecSortState, { className: "text-right" }) +
+        Utils.thSort("Comissão", "commission", ecSortState, { className: "text-right" }) +
+        '</tr></thead><tbody>' +
+        sortedAppointments.map(function (a) {
           var s = data.services.find(function (x) { return x.id === a.serviceId; });
           var c = data.clients.find(function (x) { return x.id === a.clientId; });
           var commission = Utils.apptCommissionSplit(a, e).mainCommission;
@@ -238,6 +254,7 @@
           '<td class="text-right text-num' + (linkedConsumoTotal > 0 ? ' text-danger' : '') + '">' + (linkedConsumoTotal > 0 ? "- " + Utils.fmtMoney(round2(linkedConsumoTotal)) : "-") + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(data.mainCommissionTotal) + '</td>' +
         '</tr></tfoot>';
+      Utils.wireSortHeaders(tbl, ecSortState, render);
     }
 
     // atendimentos em que o profissional atuou como assistente de outro

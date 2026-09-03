@@ -53,7 +53,7 @@
   }
 
   function showOnly(id) {
-    ["ponto-picker", "ponto-confirm", "ponto-done"].forEach(function (elId) {
+    ["ponto-picker", "ponto-confirm", "ponto-adjust", "ponto-done"].forEach(function (elId) {
       document.getElementById(elId).style.display = elId === id ? "" : "none";
     });
   }
@@ -76,14 +76,20 @@
       var badge = next
         ? '<div class="small text-muted">' + Utils.escapeHtml(next.label) + '</div>'
         : '<div class="small" style="color:var(--color-success);">Dia concluído</div>';
-      return '<button type="button" class="ponto-emp-card" data-emp="' + e.id + '">' +
-        Utils.avatarHtml(e.name, e.photoDataUrl, "avatar-lg") +
-        '<div class="font-bold mt-8">' + Utils.escapeHtml(e.name) + '</div>' +
-        badge +
-        '</button>';
+      return '<div class="ponto-emp-card">' +
+        '<button type="button" class="ponto-emp-card-inner" data-emp="' + e.id + '">' +
+          Utils.avatarHtml(e.name, e.photoDataUrl, "avatar-lg") +
+          '<div class="font-bold mt-8">' + Utils.escapeHtml(e.name) + '</div>' +
+          badge +
+        '</button>' +
+        '<button type="button" class="ponto-emp-adjust-link" data-emp-adjust="' + e.id + '">Esqueceu de bater ou horário errado? Solicitar ajuste</button>' +
+        '</div>';
     }).join("");
     Utils.qsa("[data-emp]", grid).forEach(function (btn) {
       btn.addEventListener("click", function () { openConfirm(btn.getAttribute("data-emp")); });
+    });
+    Utils.qsa("[data-emp-adjust]", grid).forEach(function (btn) {
+      btn.addEventListener("click", function () { openAdjustForm(btn.getAttribute("data-emp-adjust")); });
     });
   }
 
@@ -166,6 +172,100 @@
         '<p class="small text-muted">' + Utils.escapeHtml(step.label) + ' às ' + now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + '</p>' +
       '</div>';
     Toast.show("Ponto registrado: " + step.label, "success");
+    setTimeout(renderPicker, 4000);
+  }
+
+  // ---------------- Solicitar ajuste (registro que faltou ou horário errado) ----------------
+  function stepLabel(type) {
+    for (var i = 0; i < STEPS.length; i++) if (STEPS[i].type === type) return STEPS[i].label;
+    return type;
+  }
+
+  function employeeRecentEntries(employeeId) {
+    return DB.all("timeClockEntries").filter(function (t) { return t.employeeId === employeeId; })
+      .sort(function (a, b) { return (b.timestamp || "").localeCompare(a.timestamp || ""); })
+      .slice(0, 20);
+  }
+
+  function openAdjustForm(employeeId) {
+    var e = DB.get("employees", employeeId);
+    if (!e) return;
+    showOnly("ponto-adjust");
+    var recent = employeeRecentEntries(employeeId);
+    var body = document.getElementById("ponto-adjust-body");
+    body.innerHTML =
+      '<div class="flex items-center gap-16 mb-16">' + Utils.avatarHtml(e.name, e.photoDataUrl, "avatar-lg") +
+        '<div><div class="font-bold">' + Utils.escapeHtml(e.name) + '</div><div class="small text-muted">A solicitação vai para aprovação de um administrador antes de valer.</div></div>' +
+      '</div>' +
+      '<div class="form-field full"><label>O que você precisa?</label><select id="adj-kind">' +
+        '<option value="novo">Registrar um horário que esqueci de bater</option>' +
+        (recent.length ? '<option value="corrigir">Corrigir o horário de um registro já feito</option>' : '') +
+      '</select></div>' +
+      '<div id="adj-fields-novo">' +
+        '<div class="form-field full"><label>Tipo</label><select id="adj-type">' +
+          STEPS.map(function (s) { return '<option value="' + s.type + '">' + s.label + '</option>'; }).join("") +
+        '</select></div>' +
+        '<div class="flex gap-16">' +
+          '<div class="form-field"><label>Data</label><input type="date" id="adj-date" value="' + Utils.todayISO() + '" max="' + Utils.todayISO() + '"></div>' +
+          '<div class="form-field"><label>Horário</label><input type="time" id="adj-time"></div>' +
+        '</div>' +
+      '</div>' +
+      '<div id="adj-fields-corrigir" style="display:none;">' +
+        '<div class="form-field full"><label>Qual registro?</label><select id="adj-target">' +
+          recent.map(function (t) {
+            var d = new Date(t.timestamp);
+            var hh = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+            return '<option value="' + t.id + '">' + Utils.fmtDate(t.date) + ' — ' + stepLabel(t.type) + ' — ' + hh + '</option>';
+          }).join("") +
+        '</select></div>' +
+        '<div class="form-field"><label>Horário correto</label><input type="time" id="adj-target-time"></div>' +
+      '</div>' +
+      '<div class="form-field full"><label>Motivo</label><textarea id="adj-reason" rows="2" placeholder="Explique rapidamente o que aconteceu"></textarea></div>' +
+      '<div class="flex gap-8 mt-8">' +
+        '<button class="btn btn-primary" id="adj-send">Enviar Solicitação</button>' +
+        '<button class="btn btn-secondary" id="adj-back">Cancelar</button>' +
+      '</div>';
+
+    document.getElementById("adj-back").addEventListener("click", renderPicker);
+    var kindSel = document.getElementById("adj-kind");
+    kindSel.addEventListener("change", function () {
+      var isNovo = kindSel.value === "novo";
+      document.getElementById("adj-fields-novo").style.display = isNovo ? "" : "none";
+      document.getElementById("adj-fields-corrigir").style.display = isNovo ? "none" : "";
+    });
+
+    document.getElementById("adj-send").addEventListener("click", function () {
+      var reason = document.getElementById("adj-reason").value.trim();
+      if (!reason) { Toast.show("Descreva o motivo da solicitação", "danger"); return; }
+      var payload;
+      if (kindSel.value === "novo") {
+        var type = document.getElementById("adj-type").value;
+        var date = document.getElementById("adj-date").value;
+        var time = document.getElementById("adj-time").value;
+        if (!date || !time) { Toast.show("Preencha data e horário", "danger"); return; }
+        payload = { employeeId: e.id, employeeName: e.name, date: date, type: type, typeLabel: stepLabel(type), requestedTime: time, reason: reason };
+      } else {
+        var targetId = document.getElementById("adj-target").value;
+        var target = DB.get("timeClockEntries", targetId);
+        var newTime = document.getElementById("adj-target-time").value;
+        if (!target || !newTime) { Toast.show("Escolha o registro e o novo horário", "danger"); return; }
+        payload = { employeeId: e.id, employeeName: e.name, date: target.date, type: target.type, typeLabel: stepLabel(target.type), requestedTime: newTime, targetEntryId: target.id, reason: reason };
+      }
+      if (!window.PontoAjustes) { Toast.show("Não foi possível enviar a solicitação agora — tente de novo.", "danger"); return; }
+      PontoAjustes.request(payload);
+      showAdjustDone(e);
+    });
+  }
+
+  function showAdjustDone(e) {
+    showOnly("ponto-done");
+    document.getElementById("ponto-done-body").innerHTML =
+      '<div class="empty-state">' +
+        '<div class="es-icon" style="color:var(--color-success);"><i class="fa-solid fa-circle-check"></i></div>' +
+        '<h4>Solicitação enviada, ' + Utils.escapeHtml(e.name.split(" ")[0]) + '!</h4>' +
+        '<p class="small text-muted">Um administrador vai revisar e aprovar seu pedido de ajuste de ponto.</p>' +
+      '</div>';
+    Toast.show("Solicitação de ajuste enviada", "success");
     setTimeout(renderPicker, 4000);
   }
 })();

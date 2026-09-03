@@ -21,6 +21,7 @@
   var CTX = "maquininha";
   var selectedSlipId = null, selectedBankId = null;
   var mfilter = { start: "", end: "", machineId: "" };
+  var mqrHistSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -444,7 +445,12 @@
     if (!historyPairs.length) {
       Utils.emptyTable(histTbl, "fa-clock", "Nenhuma conciliação realizada ainda");
     } else {
-      histTbl.innerHTML = '<thead><tr><th>Data Slip</th><th>Descrição Slip</th><th class="text-right">Valor</th><th>Extrato Bancário</th><th></th></tr></thead><tbody>' +
+      historyPairs = Utils.sortBy(historyPairs, mqrHistSortState);
+      histTbl.innerHTML = '<thead><tr>' +
+        Utils.thSort("Data Slip", "date", mqrHistSortState) +
+        Utils.thSort("Descrição Slip", "description", mqrHistSortState) +
+        Utils.thSort("Valor", "amount", mqrHistSortState, { className: "text-right" }) +
+        '<th>Extrato Bancário</th><th></th></tr></thead><tbody>' +
         historyPairs.map(function (s) {
           var b = s.matchedLineId ? DB.get("bankLines", s.matchedLineId) : null;
           return '<tr><td class="text-num">' + Utils.fmtDate(s.date) + '</td><td>' + Utils.escapeHtml(s.description) + '</td>' +
@@ -452,6 +458,7 @@
             '<td>' + (b ? Utils.escapeHtml(b.description) + ' · ' + Utils.fmtDate(b.date) : '<span class="text-muted">registro removido</span>') + '</td>' +
             '<td><button class="btn btn-sm btn-ghost" data-mqr-unmatch="' + s.id + '">Desfazer</button></td></tr>';
         }).join("") + '</tbody>';
+      Utils.wireSortHeaders(histTbl, mqrHistSortState, render);
       Utils.qsa("[data-mqr-unmatch]", histTbl).forEach(function (btn) {
         btn.addEventListener("click", function () { unmatch(btn.getAttribute("data-mqr-unmatch")); });
       });

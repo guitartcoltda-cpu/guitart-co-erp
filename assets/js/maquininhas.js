@@ -22,6 +22,7 @@
 
   var pfCtrl = null;
   var state = { simMachineId: "" };
+  var mqSortState = { field: null, dir: "asc" }; // clique no cabeçalho da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -143,8 +144,20 @@
       Utils.emptyTable(tbl, "fa-credit-card", "Nenhuma maquininha cadastrada", "Cadastre a primeira maquininha e suas taxas de crédito, débito e Pix.");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Maquininha</th><th>Operadora</th><th class="text-right">Crédito à Vista</th><th class="text-right">Débito</th><th class="text-right">Pix</th><th class="text-right">Antecipação</th><th>Status</th><th></th></tr></thead><tbody>' +
-      machines.map(function (m) {
+    var mqGetters = {
+      active: function (m) { return m.active !== false; }
+    };
+    var rows = Utils.sortBy(machines, mqSortState, mqGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Maquininha", "name", mqSortState) +
+      Utils.thSort("Operadora", "operator", mqSortState) +
+      Utils.thSort("Crédito à Vista", "feeCreditPercent", mqSortState, { className: "text-right" }) +
+      Utils.thSort("Débito", "feeDebitPercent", mqSortState, { className: "text-right" }) +
+      Utils.thSort("Pix", "feePixPercent", mqSortState, { className: "text-right" }) +
+      Utils.thSort("Antecipação", "anticipationFeePercent", mqSortState, { className: "text-right" }) +
+      Utils.thSort("Status", "active", mqSortState) +
+      '<th></th></tr></thead><tbody>' +
+      rows.map(function (m) {
         return '<tr>' +
           '<td><span class="font-bold">' + Utils.escapeHtml(m.name) + '</span>' + (m.cnpj ? '<div class="small text-muted">' + Utils.escapeHtml(m.cnpj) + '</div>' : '') + '</td>' +
           '<td class="small text-muted">' + Utils.escapeHtml(m.operator || "-") + '</td>' +
@@ -160,6 +173,7 @@
           '</div></td></tr>';
       }).join("") + '</tbody>';
 
+    Utils.wireSortHeaders(tbl, mqSortState, function () { renderTable(machines); });
     Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openMqModal(b.getAttribute("data-edit")); }); });
     Utils.qsa("[data-parcelas]", tbl).forEach(function (b) { b.addEventListener("click", function () { openParcelasModal(b.getAttribute("data-parcelas")); }); });
     Utils.qsa("[data-del]", tbl).forEach(function (b) {

@@ -12,8 +12,11 @@
     "30d": "8–30 dias", futuro: "Mais de 30 dias"
   };
 
+  var BUCKET_RANK = { vencida: 0, hoje: 1, "7d": 2, "30d": 3, futuro: 4 };
+
   var state = { bucket: "", cc: "", cat: "", search: "" };
   var selectedIds = {}; // id -> true, only for currently pending/visible rows
+  var sortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -139,7 +142,12 @@
     });
 
     // table
-    var filtered = filteredForCc;
+    var sortGetters = {
+      category: function (t) { var c = categories.find(function (x) { return x.id === t.categoryId; }); return c ? c.name : ""; },
+      costCenter: function (t) { var c = costCenters.find(function (x) { return x.id === t.costCenterId; }); return c ? c.name : ""; },
+      situacao: function (t) { return BUCKET_RANK[t._bucket]; }
+    };
+    var filtered = Utils.sortBy(filteredForCc, sortState, sortGetters);
     // drop selections that are no longer visible under the current filters
     var visibleIds = {};
     filtered.forEach(function (t) { visibleIds[t.id] = true; });
@@ -150,7 +158,14 @@
     if (!filtered.length) {
       Utils.emptyTable(tbl, "fa-circle-check", "Nenhuma conta a pagar encontrada", "Ajuste os filtros ou a situação selecionada.");
     } else {
-      tbl.innerHTML = '<thead><tr><th class="cp-col-check"><input type="checkbox" id="cp-select-all"></th><th>Vencimento</th><th>Descrição</th><th>Categoria</th><th>Centro de Custo</th><th>Situação</th><th class="text-right">Valor</th><th></th></tr></thead><tbody>' +
+      tbl.innerHTML = '<thead><tr><th class="cp-col-check"><input type="checkbox" id="cp-select-all"></th>' +
+        Utils.thSort("Vencimento", "date", sortState) +
+        Utils.thSort("Descrição", "description", sortState) +
+        Utils.thSort("Categoria", "category", sortState) +
+        Utils.thSort("Centro de Custo", "costCenter", sortState) +
+        Utils.thSort("Situação", "situacao", sortState) +
+        Utils.thSort("Valor", "amount", sortState, { className: "text-right" }) +
+        '<th></th></tr></thead><tbody>' +
         filtered.map(function (t) {
           var cat = categories.find(function (c) { return c.id === t.categoryId; });
           var cc = costCenters.find(function (c) { return c.id === t.costCenterId; });
@@ -165,6 +180,7 @@
             '<td><button class="btn btn-sm btn-primary" data-pay="' + t.id + '">Marcar como pago</button></td>' +
             '</tr>';
         }).join("") + '</tbody>';
+      Utils.wireSortHeaders(tbl, sortState, render);
       Utils.qsa("[data-pay]", tbl).forEach(function (b) { b.addEventListener("click", function () { openPayModal(b.getAttribute("data-pay")); }); });
       Utils.qsa(".cp-row-check", tbl).forEach(function (cb) {
         cb.addEventListener("change", function () {

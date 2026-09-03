@@ -3,6 +3,7 @@
 
   var filt = { tag: "", search: "" };
   var page = 1, PAGE_SIZE = 20;
+  var cliSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -79,6 +80,12 @@
       bdayCard.addEventListener("click", function () { Aniversarios.openModal(); });
     }
 
+    var cliSortGetters = {
+      lastVisit: function (c) { return lastVisitByClient[c.id] || null; },
+      totalSpend: function (c) { return spendByClient[c.id] || 0; }
+    };
+    clients = Utils.sortBy(clients, cliSortState, cliSortGetters);
+
     var totalPages = Math.max(1, Math.ceil(clients.length / PAGE_SIZE));
     page = Math.min(page, totalPages);
     var pageItems = clients.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -87,7 +94,13 @@
     if (!pageItems.length) {
       Utils.emptyTable(tbl, "fa-address-card", "Nenhum cliente encontrado");
     } else {
-      tbl.innerHTML = '<thead><tr><th>Cliente</th><th>Contato</th><th>Primeira Visita</th><th>Última Visita</th><th class="text-right">Total Gasto</th><th>Tags</th><th></th></tr></thead><tbody>' +
+      tbl.innerHTML = '<thead><tr>' +
+        Utils.thSort("Cliente", "name", cliSortState) +
+        '<th>Contato</th>' +
+        Utils.thSort("Primeira Visita", "firstVisit", cliSortState) +
+        Utils.thSort("Última Visita", "lastVisit", cliSortState) +
+        Utils.thSort("Total Gasto", "totalSpend", cliSortState, { className: "text-right" }) +
+        '<th>Tags</th><th></th></tr></thead><tbody>' +
         pageItems.map(function (c) {
           var lv = lastVisitByClient[c.id] || null;
           return '<tr>' +
@@ -104,6 +117,7 @@
             '</div></td></tr>';
         }).join("") + '</tbody>';
 
+      Utils.wireSortHeaders(tbl, cliSortState, render);
       Utils.qsa("[data-view]", tbl).forEach(function (b) { b.addEventListener("click", function () { openHistoryModal(b.getAttribute("data-view")); }); });
       Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openClientModal(b.getAttribute("data-edit")); }); });
       Utils.qsa("[data-del]", tbl).forEach(function (b) {

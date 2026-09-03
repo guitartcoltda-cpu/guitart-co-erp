@@ -4,6 +4,7 @@
   var PAGE_SIZE = 25;
   var state = { page: 1, type: "", start: "", end: "", cc: "", cat: "", status: "", search: "" };
   var selected = {}; // txn id -> true; only tracks the currently rendered page/filter set
+  var txnSortState = { field: null, dir: "asc" };
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -100,6 +101,14 @@
       kpi("Lançamentos", String(all.length), "fa-list", "#b8923f", "#f6ecd3")
     ].join("");
 
+    var txnGetters = {
+      category: function (t) { var c = categories.find(function (x) { return x.id === t.categoryId; }); return c ? c.name : ""; },
+      costCenter: function (t) { var c = costCenters.find(function (x) { return x.id === t.costCenterId; }); return c ? c.name : ""; },
+      status: function (t) { return t.status === "pago" ? 1 : 0; },
+      reconciled: function (t) { return t.reconciled ? 1 : 0; }
+    };
+    all = Utils.sortBy(all, txnSortState, txnGetters);
+
     var totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
     state.page = Math.min(state.page, totalPages);
     var pageItems = all.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
@@ -109,7 +118,16 @@
       Utils.emptyTable(tbl, "fa-folder-open", "Nenhum lançamento encontrado", "Ajuste os filtros ou cadastre um novo lançamento.");
       updateBulkBar();
     } else {
-      tbl.innerHTML = '<thead><tr><th class="col-check"><input type="checkbox" id="chk-all" title="Selecionar todos os pendentes desta página"></th><th>Data</th><th>Descrição</th><th>Categoria</th><th>Centro de Custo</th><th>Pagamento</th><th>Status</th><th class="text-right">Valor</th><th>Conciliado</th><th></th></tr></thead><tbody>' +
+      tbl.innerHTML = '<thead><tr><th class="col-check"><input type="checkbox" id="chk-all" title="Selecionar todos os pendentes desta página"></th>' +
+        Utils.thSort("Data", "date", txnSortState) +
+        Utils.thSort("Descrição", "description", txnSortState) +
+        Utils.thSort("Categoria", "category", txnSortState) +
+        Utils.thSort("Centro de Custo", "costCenter", txnSortState) +
+        Utils.thSort("Pagamento", "paymentMethod", txnSortState) +
+        Utils.thSort("Status", "status", txnSortState) +
+        Utils.thSort("Valor", "amount", txnSortState, { className: "text-right" }) +
+        Utils.thSort("Conciliado", "reconciled", txnSortState) +
+        '<th></th></tr></thead><tbody>' +
         pageItems.map(function (t) {
           var cat = categories.find(function (c) { return c.id === t.categoryId; });
           var cc = costCenters.find(function (c) { return c.id === t.costCenterId; });
@@ -133,6 +151,7 @@
             '</tr>';
         }).join("") + '</tbody>';
 
+      Utils.wireSortHeaders(tbl, txnSortState, render);
       Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openTxnModal(b.getAttribute("data-edit")); }); });
       wireBulkCheckboxes(tbl);
       Utils.qsa("[data-view-sale]", tbl).forEach(function (b) {

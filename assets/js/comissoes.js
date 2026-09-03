@@ -3,6 +3,14 @@
 
   var selectedMonth = "";
   var selectedIds = {};
+  var commissionSortState = { field: null, dir: "asc" };
+  var COMMISSION_SORT_GETTERS = {
+    employee: function (r) { return r.employee.name; },
+    cargo: function (r) { return r.employee.role; },
+    taxa: function (r) { return r.employee.commissionRate; },
+    saldo: function (r) { return Math.max(0, r.saldo); },
+    status: function (r) { return r.saldo <= 0.01 ? 0 : (r.pago > 0 ? 1 : 2); }
+  };
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -274,7 +282,18 @@
       updateBulkBar();
       return;
     }
-    tbl.innerHTML = '<thead><tr><th class="com-col-check"><input type="checkbox" id="com-select-all"></th><th>Profissional</th><th>Cargo</th><th class="text-right">Atendimentos</th><th class="text-right">Receita de Serviços</th><th class="text-right">Taxa</th><th class="text-right">Devido</th><th class="text-right">Pago</th><th class="text-right">Saldo</th><th>Status</th><th></th></tr></thead><tbody>' +
+    rows = Utils.sortBy(rows, commissionSortState, COMMISSION_SORT_GETTERS);
+    tbl.innerHTML = '<thead><tr><th class="com-col-check"><input type="checkbox" id="com-select-all"></th>' +
+      Utils.thSort("Profissional", "employee", commissionSortState) +
+      Utils.thSort("Cargo", "cargo", commissionSortState) +
+      Utils.thSort("Atendimentos", "atendimentos", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Receita de Serviços", "serviceRevenue", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Taxa", "taxa", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Devido", "devido", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Pago", "pago", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Saldo", "saldo", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Status", "status", commissionSortState) +
+      '<th></th></tr></thead><tbody>' +
       rows.map(function (r) {
         var status = r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
         var bonusNote = "";
@@ -301,6 +320,7 @@
           '</tr>';
       }).join("") + '</tbody>';
 
+    Utils.wireSortHeaders(tbl, commissionSortState, function () { render(); });
     Utils.qsa("[data-pay]", tbl).forEach(function (b) {
       b.addEventListener("click", function () { registerPayment(b.getAttribute("data-pay")); });
     });

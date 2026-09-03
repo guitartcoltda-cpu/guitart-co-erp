@@ -3,6 +3,7 @@
 
   var selectedBankId = null, selectedTxnId = null;
   var rfilter = { start: "", end: "" };
+  var histSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -470,7 +471,12 @@
     if (!historyPairs.length) {
       Utils.emptyTable(histTbl, "fa-clock", "Nenhuma conciliação realizada ainda");
     } else {
-      histTbl.innerHTML = '<thead><tr><th>Data Extrato</th><th>Descrição Banco</th><th class="text-right">Valor</th><th>Lançamento do Sistema</th><th></th></tr></thead><tbody>' +
+      historyPairs = Utils.sortBy(historyPairs, histSortState);
+      histTbl.innerHTML = '<thead><tr>' +
+        Utils.thSort("Data Extrato", "date", histSortState) +
+        Utils.thSort("Descrição Banco", "description", histSortState) +
+        Utils.thSort("Valor", "amount", histSortState, { className: "text-right" }) +
+        '<th>Lançamento do Sistema</th><th></th></tr></thead><tbody>' +
         historyPairs.map(function (b) {
           var t = txns.find(function (x) { return x.id === b.matchedTransactionId; });
           return '<tr><td class="text-num">' + Utils.fmtDate(b.date) + '</td><td>' + Utils.escapeHtml(b.description) + '</td>' +
@@ -478,6 +484,7 @@
             '<td>' + (t ? Utils.escapeHtml(t.description) : '<span class="text-muted">registro removido</span>') + '</td>' +
             '<td><button class="btn btn-sm btn-ghost" data-unmatch="' + b.id + '">Desfazer</button></td></tr>';
         }).join("") + '</tbody>';
+      Utils.wireSortHeaders(histTbl, histSortState, render);
       Utils.qsa("[data-unmatch]", histTbl).forEach(function (btn) {
         btn.addEventListener("click", function () { unmatch(btn.getAttribute("data-unmatch")); });
       });

@@ -588,6 +588,48 @@
         removeBtn.addEventListener("click", function () { attachment = null; renderPreview(); });
       }
       return { get: function () { return attachment; }, set: function (val) { attachment = val; renderPreview(); } };
+    },
+
+    // ---------------- Ordenação de tabelas (clicar no rótulo da coluna) ----------------
+    // Uso típico numa tela de lista: guarde `var sortState = { field: null, dir: "asc" };`
+    // no escopo do módulo; monte cada <th> ordenável com Utils.thSort(...); depois de
+    // setar tbl.innerHTML, chame Utils.wireSortHeaders(tbl, sortState, render) uma vez;
+    // e ordene a lista antes de montar as linhas com Utils.sortBy(list, sortState, getters)
+    // — `getters` é opcional, um mapa { campo: function(item){ return valorComparável; } }
+    // para colunas cujo valor de ordenação não é `item[field]` direto (dinheiro formatado,
+    // nome vindo de uma tabela relacionada, badge calculado etc).
+    thSort: function (label, field, state, opts) {
+      opts = opts || {};
+      var active = !!(state && state.field === field);
+      var icon = active ? (state.dir === "desc" ? "fa-sort-down" : "fa-sort-up") : "fa-sort";
+      return '<th class="th-sortable' + (active ? " active" : "") + (opts.className ? " " + opts.className : "") + '" data-sort="' + field + '">' +
+        '<span class="th-sortable-label">' + label + '<i class="fa-solid ' + icon + ' sort-icon"></i></span></th>';
+    },
+
+    wireSortHeaders: function (tbl, state, onChange) {
+      this.qsa("th[data-sort]", tbl).forEach(function (th) {
+        th.addEventListener("click", function () {
+          var field = th.getAttribute("data-sort");
+          if (state.field === field) state.dir = state.dir === "asc" ? "desc" : "asc";
+          else { state.field = field; state.dir = "asc"; }
+          onChange();
+        });
+      });
+    },
+
+    sortBy: function (list, state, getters) {
+      if (!state || !state.field) return list;
+      var get = (getters && getters[state.field]) || function (item) { return item[state.field]; };
+      var out = list.slice().sort(function (a, b) {
+        var va = get(a), vb = get(b);
+        if (va == null && vb == null) return 0;
+        if (va == null) return -1;
+        if (vb == null) return 1;
+        if (typeof va === "number" && typeof vb === "number") return va - vb;
+        return String(va).localeCompare(String(vb), "pt-BR", { numeric: true, sensitivity: "base" });
+      });
+      if (state.dir === "desc") out.reverse();
+      return out;
     }
   };
 

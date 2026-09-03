@@ -130,6 +130,12 @@
 
   // ---------------- Acessos (users) ----------------
   var ROLE_OPTIONS = ["Administrador", "Gerente", "Financeiro", "Recepcionista", "Profissional", "Desenvolvedor"];
+  var usersSortState = { field: null, dir: "asc" };
+  var USERS_SORT_GETTERS = {
+    name: function (u) { return u.firstName + " " + u.lastName; },
+    employee: function (u) { var e = u.employeeId ? DB.get("employees", u.employeeId) : null; return e ? e.name : ""; },
+    status: function (u) { return u.active ? 1 : 0; }
+  };
 
   function renderUsers() {
     var list = DB.all("users").slice().sort(function (a, b) { return (a.firstName + a.lastName).localeCompare(b.firstName + b.lastName); });
@@ -138,7 +144,15 @@
       Utils.emptyTable(tbl, "fa-user", "Nenhum acesso cadastrado");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Funcionário vinculado</th><th>Status</th><th>Criado em</th><th></th></tr></thead><tbody>' +
+    list = Utils.sortBy(list, usersSortState, USERS_SORT_GETTERS);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Nome", "name", usersSortState) +
+      Utils.thSort("CPF", "cpf", usersSortState) +
+      Utils.thSort("Perfil", "role", usersSortState) +
+      Utils.thSort("Funcionário vinculado", "employee", usersSortState) +
+      Utils.thSort("Status", "status", usersSortState) +
+      Utils.thSort("Criado em", "createdAt", usersSortState) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (u) {
         var emp = u.employeeId ? DB.get("employees", u.employeeId) : null;
         return '<tr>' +
@@ -158,6 +172,7 @@
           '</tr>';
       }).join("") + '</tbody>';
 
+    Utils.wireSortHeaders(tbl, usersSortState, renderUsers);
     Utils.qsa("[data-edit-user]", tbl).forEach(function (b) { b.addEventListener("click", function () { openUserModal(b.getAttribute("data-edit-user")); }); });
     Utils.qsa("[data-reset-user]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
@@ -538,7 +553,15 @@
       } else if (records.length === 1) {
         DB.insert("transactions", records[0]);
       }
+    },
+    ajuste_ponto: function (payload) {
+      if (window.PontoAjustes) PontoAjustes.apply(payload);
     }
+  };
+
+  var approvalsSortState = { field: null, dir: "asc" };
+  var APPROVALS_SORT_GETTERS = {
+    type: function (a) { return (window.Approvals && Approvals.TYPE_LABELS[a.type]) || a.type; }
   };
 
   function renderApprovals() {
@@ -553,9 +576,16 @@
       Utils.emptyTable(tbl, "fa-user-check", "Nenhuma solicitação de aprovação até agora");
       return;
     }
+    list = Utils.sortBy(list, approvalsSortState, APPROVALS_SORT_GETTERS);
     var canApprove = window.Approvals && Approvals.canApprove();
     var statusBadge = { pendente: '<span class="badge badge-warning">Pendente</span>', aprovada: '<span class="badge badge-success">Aprovada</span>', recusada: '<span class="badge badge-gray">Recusada</span>' };
-    tbl.innerHTML = '<thead><tr><th>Solicitação</th><th>Tipo</th><th>Solicitado por</th><th>Data</th><th>Status</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Solicitação", "summary", approvalsSortState) +
+      Utils.thSort("Tipo", "type", approvalsSortState) +
+      Utils.thSort("Solicitado por", "requestedByName", approvalsSortState) +
+      Utils.thSort("Data", "createdAt", approvalsSortState) +
+      Utils.thSort("Status", "status", approvalsSortState) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (a) {
         var actions = "";
         if (a.status === "pendente" && canApprove) {
@@ -578,6 +608,7 @@
           '</tr>';
       }).join("") + '</tbody>';
 
+    Utils.wireSortHeaders(tbl, approvalsSortState, renderApprovals);
     Utils.qsa("[data-approve]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-approve");
@@ -608,6 +639,7 @@
 
   // ---------------- Log de Atividade ----------------
   var LOG_RENDER_CAP = 200;
+  var logSortState = { field: null, dir: "asc" };
   function renderLog() {
     var search = (Utils.qs("#log-search").value || "").toLowerCase();
     var start = Utils.qs("#log-start").value;
@@ -630,7 +662,13 @@
       Utils.emptyTable(tbl, "fa-clock", "Nenhum registro de atividade encontrado");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Data/Hora</th><th>Usuário</th><th>Ação</th><th>Descrição</th></tr></thead><tbody>' +
+    shown = Utils.sortBy(shown, logSortState);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Data/Hora", "timestamp", logSortState) +
+      Utils.thSort("Usuário", "userName", logSortState) +
+      Utils.thSort("Ação", "action", logSortState) +
+      Utils.thSort("Descrição", "description", logSortState) +
+      '</tr></thead><tbody>' +
       shown.map(function (l) {
         return '<tr>' +
           '<td class="text-num">' + Utils.fmtDateTime(l.timestamp) + '</td>' +
@@ -639,6 +677,7 @@
           '<td>' + Utils.escapeHtml(l.description || "-") + '</td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, logSortState, renderLog);
 
     var note = Utils.qs("#log-note");
     if (note) {
@@ -651,11 +690,18 @@
   function kpiRowless() {}
 
   // ---------------- Cost Centers ----------------
+  var ccSortState = { field: null, dir: "asc" };
   function renderCC() {
     var list = DB.all("costCenters");
     var categories = DB.all("categories");
+    var ccGetters = { count: function (c) { return categories.filter(function (cat) { return cat.costCenterId === c.id; }).length; } };
+    list = Utils.sortBy(list, ccSortState, ccGetters);
     var tbl = Utils.qs("#tbl-cc");
-    tbl.innerHTML = '<thead><tr><th>Nome</th><th>Descrição</th><th class="text-right">Categorias Vinculadas</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Nome", "name", ccSortState) +
+      Utils.thSort("Descrição", "description", ccSortState) +
+      Utils.thSort("Categorias Vinculadas", "count", ccSortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (c) {
         var count = categories.filter(function (cat) { return cat.costCenterId === c.id; }).length;
         return '<tr><td class="font-bold">' + Utils.escapeHtml(c.name) + '</td><td class="small text-muted">' + Utils.escapeHtml(c.description) + '</td>' +
@@ -663,6 +709,7 @@
           '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-cc="' + c.id + '"><i class="fa-solid fa-pen"></i></button>' +
           '<button class="btn btn-icon btn-ghost" data-del-cc="' + c.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, ccSortState, renderCC);
     Utils.qsa("[data-edit-cc]", tbl).forEach(function (b) { b.addEventListener("click", function () { openCcModal(b.getAttribute("data-edit-cc")); }); });
     Utils.qsa("[data-del-cc]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
@@ -694,11 +741,21 @@
   }
 
   // ---------------- Categories ----------------
+  var catSortState = { field: null, dir: "asc" };
   function renderCat() {
     var list = DB.all("categories");
     var costCenters = DB.all("costCenters");
+    var catGetters = {
+      type: function (c) { return c.type === "receita" ? "Receita" : "Despesa"; },
+      costCenter: function (c) { var cc = costCenters.find(function (x) { return x.id === c.costCenterId; }); return cc ? cc.name : ""; }
+    };
+    list = Utils.sortBy(list, catSortState, catGetters);
     var tbl = Utils.qs("#tbl-cat");
-    tbl.innerHTML = '<thead><tr><th>Categoria</th><th>Tipo</th><th>Centro de Custo</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Categoria", "name", catSortState) +
+      Utils.thSort("Tipo", "type", catSortState) +
+      Utils.thSort("Centro de Custo", "costCenter", catSortState) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (c) {
         var cc = costCenters.find(function (x) { return x.id === c.costCenterId; });
         return '<tr><td><span class="dot" style="background:' + c.color + ';margin-right:6px;"></span>' + Utils.escapeHtml(c.name) + '</td>' +
@@ -707,6 +764,7 @@
           '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-cat="' + c.id + '"><i class="fa-solid fa-pen"></i></button>' +
           '<button class="btn btn-icon btn-ghost" data-del-cat="' + c.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, catSortState, renderCat);
     Utils.qsa("[data-edit-cat]", tbl).forEach(function (b) { b.addEventListener("click", function () { openCatModal(b.getAttribute("data-edit-cat")); }); });
     Utils.qsa("[data-del-cat]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
@@ -749,11 +807,17 @@
   // DB.getRoles/DB.saveRoles em db.js), então o CRUD aqui mexe direto
   // nesse array em vez de usar DB.insert/update/remove. É só uma lista de
   // nomes (sem vínculo com grupo de serviço).
+  var rolesSortState = { field: null, dir: "asc" };
   function renderRoles() {
     var list = DB.getRoles();
     var employees = DB.all("employees");
+    var rolesGetters = { count: function (r) { return employees.filter(function (e) { return e.role === r.name; }).length; } };
+    list = Utils.sortBy(list, rolesSortState, rolesGetters);
     var tbl = Utils.qs("#tbl-roles");
-    tbl.innerHTML = '<thead><tr><th>Cargo</th><th class="text-right">Funcionários</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Cargo", "name", rolesSortState) +
+      Utils.thSort("Funcionários", "count", rolesSortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (r) {
         var count = employees.filter(function (e) { return e.role === r.name; }).length;
         return '<tr><td class="font-bold">' + Utils.escapeHtml(r.name) + '</td>' +
@@ -761,6 +825,7 @@
           '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-role="' + r.id + '"><i class="fa-solid fa-pen"></i></button>' +
           '<button class="btn btn-icon btn-ghost" data-del-role="' + r.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, rolesSortState, renderRoles);
     Utils.qsa("[data-edit-role]", tbl).forEach(function (b) { b.addEventListener("click", function () { openRoleModal(b.getAttribute("data-edit-role")); }); });
     Utils.qsa("[data-del-role]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
@@ -848,6 +913,7 @@
     });
   }
 
+  var groupsSortState = { field: null, dir: "asc" };
   function renderGroups() {
     var list = getAccessGroups();
     var users = DB.all("users");
@@ -861,7 +927,16 @@
       Utils.emptyTable(tbl, "fa-object-group", "Nenhum grupo de acesso cadastrado ainda");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Grupo</th><th>Telas liberadas</th><th class="text-right">Acessos vinculados</th><th></th></tr></thead><tbody>' +
+    var groupsGetters = {
+      pages: function (g) { return (!g.allowedPages || !Array.isArray(g.allowedPages)) ? Infinity : g.allowedPages.length; },
+      count: function (g) { return users.filter(function (u) { return u.groupId === g.id; }).length; }
+    };
+    list = Utils.sortBy(list, groupsSortState, groupsGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Grupo", "name", groupsSortState) +
+      Utils.thSort("Telas liberadas", "pages", groupsSortState) +
+      Utils.thSort("Acessos vinculados", "count", groupsSortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (g) {
         var count = users.filter(function (u) { return u.groupId === g.id; }).length;
         var pagesLabel = (!g.allowedPages || !Array.isArray(g.allowedPages)) ? "Acesso total" : (g.allowedPages.length + " tela(s)");
@@ -871,6 +946,7 @@
           '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-group="' + g.id + '"><i class="fa-solid fa-pen"></i></button>' +
           '<button class="btn btn-icon btn-ghost" data-del-group="' + g.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, groupsSortState, renderGroups);
     Utils.qsa("[data-edit-group]", tbl).forEach(function (b) { b.addEventListener("click", function () { openGroupModal(b.getAttribute("data-edit-group")); }); });
     Utils.qsa("[data-del-group]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {
@@ -967,16 +1043,24 @@
   }
 
   // ---------------- Services ----------------
+  var srvSortState = { field: null, dir: "asc" };
   function renderSrv() {
     var list = DB.all("services").sort(function (a, b) { return a.group.localeCompare(b.group) || a.name.localeCompare(b.name); });
+    list = Utils.sortBy(list, srvSortState);
     var tbl = Utils.qs("#tbl-srv");
-    tbl.innerHTML = '<thead><tr><th>Serviço</th><th>Grupo</th><th class="text-right">Preço</th><th class="text-right">Duração</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Serviço", "name", srvSortState) +
+      Utils.thSort("Grupo", "group", srvSortState) +
+      Utils.thSort("Preço", "price", srvSortState, { className: "text-right" }) +
+      Utils.thSort("Duração", "durationMin", srvSortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
       list.map(function (s) {
         return '<tr><td class="font-bold">' + Utils.escapeHtml(s.name) + '</td><td><span class="chip">' + Utils.escapeHtml(s.group) + '</span></td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(s.price) + '</td><td class="text-right text-num">' + s.durationMin + ' min</td>' +
           '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-srv="' + s.id + '"><i class="fa-solid fa-pen"></i></button>' +
           '<button class="btn btn-icon btn-ghost" data-del-srv="' + s.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, srvSortState, renderSrv);
     Utils.qsa("[data-edit-srv]", tbl).forEach(function (b) { b.addEventListener("click", function () { openSrvModal(b.getAttribute("data-edit-srv")); }); });
     Utils.qsa("[data-del-srv]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {

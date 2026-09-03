@@ -2,6 +2,13 @@
   "use strict";
 
   var filt = { role: "", status: "", search: "" };
+  var empSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
+  var empSortGetters = {
+    access: function (e) {
+      var acc = linkedUserFor(e.id, e.cpf);
+      return (acc && acc.active) ? "Sim" : (acc ? "Desativado" : "Não");
+    }
+  };
 
   // Cargos que sempre contaram como "realiza serviços" antes desse campo
   // existir no funcionário — usado só para sugerir o valor padrão do campo
@@ -126,7 +133,17 @@
       Utils.emptyTable(tbl, "fa-id-badge", "Nenhum funcionário encontrado");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Funcionário</th><th>Cargo</th><th>Contato</th><th>Admissão</th><th class="text-right">Salário Base</th><th class="text-right">Comissão</th><th>Status</th><th>Acesso</th><th></th></tr></thead><tbody>' +
+    employees = Utils.sortBy(employees, empSortState, empSortGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Funcionário", "name", empSortState) +
+      Utils.thSort("Cargo", "role", empSortState) +
+      '<th>Contato</th>' +
+      Utils.thSort("Admissão", "hireDate", empSortState) +
+      Utils.thSort("Salário Base", "baseSalary", empSortState, { className: "text-right" }) +
+      Utils.thSort("Comissão", "commissionRate", empSortState, { className: "text-right" }) +
+      Utils.thSort("Status", "status", empSortState) +
+      Utils.thSort("Acesso", "access", empSortState) +
+      '<th></th></tr></thead><tbody>' +
       employees.map(function (e) {
         var acc = linkedUserFor(e.id, e.cpf);
         var accHtml = (acc && acc.active) ? '<span class="badge badge-success">Sim</span>' : (acc ? '<span class="badge badge-gray">Desativado</span>' : '<span class="badge badge-gray">Não</span>');
@@ -145,6 +162,7 @@
           '</div></td></tr>';
       }).join("") + '</tbody>';
 
+    Utils.wireSortHeaders(tbl, empSortState, render);
     Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openEmpModal(b.getAttribute("data-edit")); }); });
     Utils.qsa("[data-del]", tbl).forEach(function (b) {
       b.addEventListener("click", function () {

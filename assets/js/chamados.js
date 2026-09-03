@@ -17,6 +17,8 @@
   var STATUS_ORDER = ["aberto", "em_analise", "em_desenvolvimento", "concluido", "recusado"];
 
   var filt = { status: "", type: "", area: "", search: "", mine: false };
+  var chSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
+  var PRIORITY_ORDER = ["baixa", "media", "alta"];
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -109,7 +111,22 @@
       Utils.emptyTable(tbl, "fa-headset", "Nenhum chamado encontrado");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Data</th><th>Título</th><th>Tipo</th><th>Área</th><th>Prioridade</th><th>Status</th><th>Aberto por</th><th></th></tr></thead><tbody>' +
+    var chSortGetters = {
+      date: function (c) { return c.createdAt || ""; },
+      tipo: function (c) { return TYPE_LABELS[c.type] || c.type; },
+      priority: function (c) { return PRIORITY_ORDER.indexOf(c.priority); },
+      status: function (c) { return STATUS_ORDER.indexOf(c.status); }
+    };
+    chamados = Utils.sortBy(chamados, chSortState, chSortGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Data", "date", chSortState) +
+      Utils.thSort("Título", "title", chSortState) +
+      Utils.thSort("Tipo", "tipo", chSortState) +
+      Utils.thSort("Área", "area", chSortState) +
+      Utils.thSort("Prioridade", "priority", chSortState) +
+      Utils.thSort("Status", "status", chSortState) +
+      Utils.thSort("Aberto por", "createdByName", chSortState) +
+      '<th></th></tr></thead><tbody>' +
       chamados.map(function (c) {
         return '<tr>' +
           '<td class="text-num">' + Utils.fmtDate((c.createdAt || "").slice(0, 10)) + '</td>' +
@@ -122,6 +139,7 @@
           '<td><button class="btn btn-sm btn-outline" data-open="' + c.id + '">Ver</button></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, chSortState, render);
     Utils.qsa("[data-open]", tbl).forEach(function (b) { b.addEventListener("click", function () { openChamadoDetail(b.getAttribute("data-open")); }); });
   }
 

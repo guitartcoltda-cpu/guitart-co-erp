@@ -7,6 +7,9 @@
   var movesPage = 1, MOVES_PAGE_SIZE = 20;
   var productsPage = 1, PRODUCTS_PAGE_SIZE = 30;
   var consumoPage = 1, CONSUMO_PAGE_SIZE = 30;
+  var productsSortState = { field: null, dir: "asc" };
+  var movesSortState = { field: null, dir: "asc" };
+  var consumoSortState = { field: null, dir: "asc" };
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -87,11 +90,27 @@
       return;
     }
 
+    var productsGetters = {
+      type: function (p) { return p.type === "uso_interno" ? "Uso Interno" : "Revenda"; },
+      situacao: function (p) { return p.currentStock <= p.minStock ? 0 : 1; }
+    };
+    products = Utils.sortBy(products, productsSortState, productsGetters);
+
     var totalPages = Math.max(1, Math.ceil(products.length / PRODUCTS_PAGE_SIZE));
     productsPage = Math.min(productsPage, totalPages);
     var pageItems = products.slice((productsPage - 1) * PRODUCTS_PAGE_SIZE, productsPage * PRODUCTS_PAGE_SIZE);
 
-    tbl.innerHTML = '<thead><tr><th>Produto</th><th>SKU</th><th>Tipo</th><th class="text-right">Estoque</th><th class="text-right">Mínimo</th><th class="text-right">Custo</th><th class="text-right">Venda</th><th>Fornecedor</th><th>Situação</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Produto", "name", productsSortState) +
+      Utils.thSort("SKU", "sku", productsSortState) +
+      Utils.thSort("Tipo", "type", productsSortState) +
+      Utils.thSort("Estoque", "currentStock", productsSortState, { className: "text-right" }) +
+      Utils.thSort("Mínimo", "minStock", productsSortState, { className: "text-right" }) +
+      Utils.thSort("Custo", "costPrice", productsSortState, { className: "text-right" }) +
+      Utils.thSort("Venda", "salePrice", productsSortState, { className: "text-right" }) +
+      Utils.thSort("Fornecedor", "supplier", productsSortState) +
+      Utils.thSort("Situação", "situacao", productsSortState) +
+      '<th></th></tr></thead><tbody>' +
       pageItems.map(function (p) {
         var low = p.currentStock <= p.minStock;
         return '<tr>' +
@@ -122,6 +141,7 @@
       if (prNext) prNext.addEventListener("click", function () { productsPage++; renderProducts(); });
     }
 
+    Utils.wireSortHeaders(tbl, productsSortState, renderProducts);
     Utils.qsa("[data-move]", tbl).forEach(function (b) { b.addEventListener("click", function () { openMoveModal(b.getAttribute("data-move")); }); });
     Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openProductModal(b.getAttribute("data-edit")); }); });
     Utils.qsa("[data-del]", tbl).forEach(function (b) {
@@ -152,6 +172,13 @@
       return true;
     }).sort(function (a, b) { return b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || ""); });
 
+    var movesGetters = {
+      product: function (m) { var p = products.find(function (x) { return x.id === m.productId; }); return p ? p.name : ""; },
+      type: function (m) { return m.type === "entrada" ? "Entrada" : "Saída"; },
+      quantity: function (m) { return m.displayQuantity != null ? m.displayQuantity : m.quantity; }
+    };
+    moves = Utils.sortBy(moves, movesSortState, movesGetters);
+
     var totalPages = Math.max(1, Math.ceil(moves.length / MOVES_PAGE_SIZE));
     movesPage = Math.min(movesPage, totalPages);
     var pageItems = moves.slice((movesPage - 1) * MOVES_PAGE_SIZE, movesPage * MOVES_PAGE_SIZE);
@@ -160,7 +187,14 @@
     if (!pageItems.length) {
       Utils.emptyTable(tbl, "fa-clock", "Nenhuma movimentação encontrada");
     } else {
-      tbl.innerHTML = '<thead><tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Motivo</th><th class="text-right">Quantidade</th><th>Observações</th></tr></thead><tbody>' +
+      tbl.innerHTML = '<thead><tr>' +
+        Utils.thSort("Data", "date", movesSortState) +
+        Utils.thSort("Produto", "product", movesSortState) +
+        Utils.thSort("Tipo", "type", movesSortState) +
+        Utils.thSort("Motivo", "reason", movesSortState) +
+        Utils.thSort("Quantidade", "quantity", movesSortState, { className: "text-right" }) +
+        Utils.thSort("Observações", "notes", movesSortState) +
+        '</tr></thead><tbody>' +
         pageItems.map(function (m) {
           var p = products.find(function (x) { return x.id === m.productId; });
           return '<tr><td class="text-num">' + Utils.fmtDate(m.date) + '</td><td>' + Utils.escapeHtml(p ? p.name : "?") + '</td>' +
@@ -169,6 +203,7 @@
             '<td class="text-right text-num">' + (m.displayQuantity != null && window.Consumo ? Consumo.fmtQty(m.displayQuantity, m.displayUnit) : Utils.fmtNumber(m.quantity, m.quantity % 1 ? 2 : 0) + (p ? " " + p.unit : "")) + '</td>' +
             '<td class="small text-muted">' + Utils.escapeHtml(m.notes || "-") + '</td></tr>';
         }).join("") + '</tbody>';
+      Utils.wireSortHeaders(tbl, movesSortState, renderMoves);
     }
     var pag = document.getElementById("moves-pagination");
     pag.innerHTML = '<div>Mostrando ' + pageItems.length + ' de ' + moves.length + '</div>' +
@@ -211,12 +246,27 @@
       return;
     }
 
+    var consumoGetters = {
+      employee: function (c) { return c._employee ? c._employee.name : ""; },
+      product: function (c) { var p = products.find(function (x) { return x.id === c.productId; }); return p ? p.name : ""; }
+    };
+    items = Utils.sortBy(items, consumoSortState, consumoGetters);
+
     var totalPages = Math.max(1, Math.ceil(items.length / CONSUMO_PAGE_SIZE));
     consumoPage = Math.min(consumoPage, totalPages);
     var pageItems = items.slice((consumoPage - 1) * CONSUMO_PAGE_SIZE, consumoPage * CONSUMO_PAGE_SIZE);
 
     var isAdmin = !window.Approvals || Approvals.isAdmin();
-    tbl.innerHTML = '<thead><tr><th>Data</th><th>Profissional</th><th>Produto</th><th class="text-right">Qtd.</th><th class="text-right">Custo Total</th><th class="text-right">Metade Profissional</th><th class="text-right">Metade Salão</th><th>Observações</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Data", "date", consumoSortState) +
+      Utils.thSort("Profissional", "employee", consumoSortState) +
+      Utils.thSort("Produto", "product", consumoSortState) +
+      Utils.thSort("Qtd.", "quantity", consumoSortState, { className: "text-right" }) +
+      Utils.thSort("Custo Total", "totalCost", consumoSortState, { className: "text-right" }) +
+      Utils.thSort("Metade Profissional", "employeeShare", consumoSortState, { className: "text-right" }) +
+      Utils.thSort("Metade Salão", "companyShare", consumoSortState, { className: "text-right" }) +
+      Utils.thSort("Observações", "notes", consumoSortState) +
+      '<th></th></tr></thead><tbody>' +
       pageItems.map(function (c) {
         var p = products.find(function (x) { return x.id === c.productId; });
         return '<tr>' +
@@ -246,6 +296,7 @@
       if (csNext) csNext.addEventListener("click", function () { consumoPage++; renderConsumo(); });
     }
 
+    Utils.wireSortHeaders(tbl, consumoSortState, renderConsumo);
     Utils.qsa("[data-details-consumo]", tbl).forEach(function (b) {
       b.addEventListener("click", function () { openConsumoDetailsModal(b.getAttribute("data-details-consumo")); });
     });

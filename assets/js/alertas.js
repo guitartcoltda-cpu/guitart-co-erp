@@ -20,6 +20,14 @@
   var FOLLOWUP_MIN_DURATION_MIN = 100;   // serviços de ciclo longo/maior ticket (ex.: Coloração, 120min)
   var FOLLOWUP_DAYS_THRESHOLD = 60;      // dias sem retorno após serviço de ciclo longo
 
+  // ---- Estado de ordenação das tabelas (clique no cabeçalho da coluna) ----
+  var noShowSortState = { field: null, dir: "asc" };
+  var inactiveSortState = { field: null, dir: "asc" };
+  var lowProdSortState = { field: null, dir: "asc" };
+  var recurrenceSortState = { field: null, dir: "asc" };
+  var followupSortState = { field: null, dir: "asc" };
+  var salesBreakdownSortState = { field: null, dir: "asc" };
+
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
   function init() {
@@ -92,8 +100,20 @@
       Utils.emptyTable(tbl, "fa-circle-check", "Nenhum cliente faltou recentemente", "Nenhum \"faltou\" registrado nos últimos " + res.windowDays + " dias.");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Cliente</th><th>Data</th><th>Serviço</th><th>Profissional</th></tr></thead><tbody>' +
-      res.rows.map(function (r) {
+    var noShowGetters = {
+      client: function (r) { return r.client ? r.client.name : ""; },
+      date: function (r) { return r.appt.date + " " + (r.appt.time || ""); },
+      service: function (r) { return r.service ? r.service.name : ""; },
+      employee: function (r) { return r.employee ? r.employee.name : ""; }
+    };
+    var rows = Utils.sortBy(res.rows, noShowSortState, noShowGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Cliente", "client", noShowSortState) +
+      Utils.thSort("Data", "date", noShowSortState) +
+      Utils.thSort("Serviço", "service", noShowSortState) +
+      Utils.thSort("Profissional", "employee", noShowSortState) +
+      '</tr></thead><tbody>' +
+      rows.map(function (r) {
         return '<tr>' +
           '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(r.client ? r.client.name : "?") + '</div>' + Utils.escapeHtml(r.client ? r.client.name : "Cliente removido") + '</div></td>' +
           '<td class="text-num">' + Utils.fmtDate(r.appt.date) + ' ' + (r.appt.time || "") + '</td>' +
@@ -101,6 +121,7 @@
           '<td>' + Utils.escapeHtml(r.employee ? r.employee.name : "-") + '</td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, noShowSortState, function () { renderNoShow(res); });
   }
 
   // ================= 2) Clientes inativos =================
@@ -148,8 +169,18 @@
       Utils.emptyTable(tbl, "fa-circle-check", "Nenhum cliente inativo no momento", "Todos os clientes com histórico estão dentro do período esperado ou já têm retorno agendado.");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Cliente</th><th>Telefone</th><th>Última Atividade</th><th class="text-right">Dias Sem Retorno</th></tr></thead><tbody>' +
-      res.rows.map(function (r) {
+    var inactiveGetters = {
+      client: function (r) { return r.client.name; },
+      phone: function (r) { return r.client.phone || ""; }
+    };
+    var rows = Utils.sortBy(res.rows, inactiveSortState, inactiveGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Cliente", "client", inactiveSortState) +
+      Utils.thSort("Telefone", "phone", inactiveSortState) +
+      Utils.thSort("Última Atividade", "lastActivity", inactiveSortState) +
+      Utils.thSort("Dias Sem Retorno", "daysSince", inactiveSortState, { className: "text-right" }) +
+      '</tr></thead><tbody>' +
+      rows.map(function (r) {
         return '<tr>' +
           '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(r.client.name) + '</div>' + Utils.escapeHtml(r.client.name) + '</div></td>' +
           '<td class="small">' + Utils.escapeHtml(r.client.phone || "-") + '</td>' +
@@ -157,6 +188,7 @@
           '<td class="text-right text-num"><span class="badge badge-warning">' + r.daysSince + ' dias</span></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, inactiveSortState, function () { renderInactive(res); });
   }
 
   // ================= 3) Profissionais com baixa produção =================
@@ -209,8 +241,19 @@
       Utils.emptyTable(tbl, "fa-circle-check", "Nenhum profissional abaixo da média", "A produção da equipe está equilibrada neste mês (ou ainda não há dados suficientes).");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Profissional</th><th>Cargo</th><th class="text-right">Receita no Mês</th><th class="text-right">Atendimentos</th><th class="text-right">% da Média</th></tr></thead><tbody>' +
-      res.rows.map(function (r) {
+    var lowProdGetters = {
+      employee: function (r) { return r.employee.name; },
+      role: function (r) { return r.employee.role || ""; }
+    };
+    var rows = Utils.sortBy(res.rows, lowProdSortState, lowProdGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Profissional", "employee", lowProdSortState) +
+      Utils.thSort("Cargo", "role", lowProdSortState) +
+      Utils.thSort("Receita no Mês", "revenue", lowProdSortState, { className: "text-right" }) +
+      Utils.thSort("Atendimentos", "count", lowProdSortState, { className: "text-right" }) +
+      Utils.thSort("% da Média", "pctOfAvg", lowProdSortState, { className: "text-right" }) +
+      '</tr></thead><tbody>' +
+      rows.map(function (r) {
         return '<tr>' +
           '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(r.employee.name) + '</div>' + Utils.escapeHtml(r.employee.name) + '</div></td>' +
           '<td class="small">' + Utils.escapeHtml(r.employee.role || "-") + '</td>' +
@@ -219,6 +262,7 @@
           '<td class="text-right text-num"><span class="badge badge-danger">' + r.pctOfAvg.toFixed(0) + '%</span></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, lowProdSortState, function () { renderLowProd(res); });
   }
 
   // ================= 4) Horários ociosos =================
@@ -313,8 +357,20 @@
       Utils.emptyTable(tbl, "fa-circle-check", "Nenhuma recorrência prevista no momento", "Nenhum cliente com padrão de retorno se aproximando da data esperada agora.");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Cliente</th><th>Serviço</th><th class="text-right">Intervalo Médio</th><th>Última Vez</th><th>Situação</th></tr></thead><tbody>' +
-      res.rows.map(function (r) {
+    var recurrenceGetters = {
+      client: function (r) { return r.client ? r.client.name : ""; },
+      service: function (r) { return r.service ? r.service.name : ""; },
+      situacao: function (r) { return r.daysUntil; }
+    };
+    var rows = Utils.sortBy(res.rows, recurrenceSortState, recurrenceGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Cliente", "client", recurrenceSortState) +
+      Utils.thSort("Serviço", "service", recurrenceSortState) +
+      Utils.thSort("Intervalo Médio", "avgGap", recurrenceSortState, { className: "text-right" }) +
+      Utils.thSort("Última Vez", "lastDate", recurrenceSortState) +
+      Utils.thSort("Situação", "situacao", recurrenceSortState) +
+      '</tr></thead><tbody>' +
+      rows.map(function (r) {
         var sitLabel = r.daysUntil < 0 ? ("provável retorno vencido há " + Math.abs(r.daysUntil) + " dia(s)") : (r.daysUntil === 0 ? "provável retorno hoje" : "provável retorno em " + r.daysUntil + " dia(s)");
         var badgeClass = r.daysUntil < 0 ? "badge-warning" : "badge-info";
         return '<tr>' +
@@ -325,6 +381,7 @@
           '<td><span class="badge ' + badgeClass + '">' + sitLabel + '</span></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, recurrenceSortState, function () { renderRecurrence(res); });
   }
 
   // ================= 6) Retorno sugerido após serviço específico =================
@@ -364,8 +421,18 @@
       Utils.emptyTable(tbl, "fa-circle-check", "Nenhum retorno pendente no momento", "Nenhum cliente com serviço de ciclo longo vencido para contato.");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Cliente</th><th>Serviço</th><th>Última Vez</th><th class="text-right">Dias Desde a Última Vez</th></tr></thead><tbody>' +
-      res.rows.map(function (r) {
+    var followupGetters = {
+      client: function (r) { return r.client ? r.client.name : ""; },
+      service: function (r) { return r.service ? r.service.name : ""; }
+    };
+    var rows = Utils.sortBy(res.rows, followupSortState, followupGetters);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Cliente", "client", followupSortState) +
+      Utils.thSort("Serviço", "service", followupSortState) +
+      Utils.thSort("Última Vez", "lastDate", followupSortState) +
+      Utils.thSort("Dias Desde a Última Vez", "daysSince", followupSortState, { className: "text-right" }) +
+      '</tr></thead><tbody>' +
+      rows.map(function (r) {
         return '<tr>' +
           '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(r.client ? r.client.name : "?") + '</div>' + Utils.escapeHtml(r.client ? r.client.name : "-") + '</div></td>' +
           '<td>' + Utils.escapeHtml(r.service ? r.service.name : "-") + '</td>' +
@@ -373,6 +440,7 @@
           '<td class="text-right text-num"><span class="badge badge-info">' + r.daysSince + ' dias</span></td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, followupSortState, function () { renderFollowup(res); });
   }
 
   // ================= 7) Diagnóstico de queda de vendas =================
@@ -454,8 +522,14 @@
       Utils.emptyTable(tbl, "fa-chart-column", "Sem dados de categoria suficientes para comparação");
       return;
     }
-    tbl.innerHTML = '<thead><tr><th>Categoria</th><th class="text-right">Este Período</th><th class="text-right">Mesmo Período Mês Anterior</th><th class="text-right">Variação</th></tr></thead><tbody>' +
-      res.catBreakdown.map(function (c) {
+    var salesRows = Utils.sortBy(res.catBreakdown, salesBreakdownSortState);
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Categoria", "name", salesBreakdownSortState) +
+      Utils.thSort("Este Período", "thisV", salesBreakdownSortState, { className: "text-right" }) +
+      Utils.thSort("Mesmo Período Mês Anterior", "lastV", salesBreakdownSortState, { className: "text-right" }) +
+      Utils.thSort("Variação", "diff", salesBreakdownSortState, { className: "text-right" }) +
+      '</tr></thead><tbody>' +
+      salesRows.map(function (c) {
         var pctC = c.lastV > 0.01 ? (c.diff / c.lastV) * 100 : null;
         var deltaTxt = pctC === null ? "-" : ((pctC >= 0 ? "+" : "") + pctC.toFixed(1) + "%");
         var deltaClass = c.diff < 0 ? "text-danger" : "";
@@ -466,6 +540,7 @@
           '<td class="text-right text-num ' + deltaClass + '">' + deltaTxt + '</td>' +
           '</tr>';
       }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, salesBreakdownSortState, function () { renderSalesDiagnostic(res); });
   }
 
   // ================= KPI grid =================

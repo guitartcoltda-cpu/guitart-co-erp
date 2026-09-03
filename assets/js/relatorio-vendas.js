@@ -11,6 +11,7 @@
   var PAGE_SIZE = 25;
   var pfCtrl = null;
   var state = { page: 1, tipo: "", employee: "", pay: "", search: "" };
+  var rvSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -136,15 +137,30 @@
     });
 
     // table
-    var totalPages = Math.max(1, Math.ceil(sales.length / PAGE_SIZE));
+    var sortGetters = {
+      cliente: function (t) { var cli = clients.find(function (c) { return c.id === t.clientId; }); return cli ? cli.name : ""; },
+      profissional: function (t) { var emp = employees.find(function (e) { return e.id === t.employeeId; }); return emp ? emp.name : ""; },
+      tipo: function (t) { return t.productId ? "Produto" : "Serviço"; }
+    };
+    var sortedSales = Utils.sortBy(sales, rvSortState, sortGetters);
+    var totalPages = Math.max(1, Math.ceil(sortedSales.length / PAGE_SIZE));
     state.page = Math.min(state.page, totalPages);
-    var pageItems = sales.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+    var pageItems = sortedSales.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
 
     var tbl = document.getElementById("tbl-rv");
     if (!pageItems.length) {
       Utils.emptyTable(tbl, "fa-folder-open", "Nenhuma venda encontrada", "Ajuste os filtros ou o período selecionado.");
     } else {
-      tbl.innerHTML = '<thead><tr><th>Data</th><th>Descrição</th><th>Cliente</th><th>Profissional</th><th>Tipo</th><th>Pagamento</th><th>Status</th><th class="text-right">Valor</th></tr></thead><tbody>' +
+      tbl.innerHTML = '<thead><tr>' +
+        Utils.thSort("Data", "date", rvSortState) +
+        Utils.thSort("Descrição", "description", rvSortState) +
+        Utils.thSort("Cliente", "cliente", rvSortState) +
+        Utils.thSort("Profissional", "profissional", rvSortState) +
+        Utils.thSort("Tipo", "tipo", rvSortState) +
+        Utils.thSort("Pagamento", "paymentMethod", rvSortState) +
+        Utils.thSort("Status", "status", rvSortState) +
+        Utils.thSort("Valor", "amount", rvSortState, { className: "text-right" }) +
+        '</tr></thead><tbody>' +
         pageItems.map(function (t) {
           var cli = clients.find(function (c) { return c.id === t.clientId; });
           var emp = employees.find(function (e) { return e.id === t.employeeId; });
@@ -160,6 +176,7 @@
             '<td class="text-right text-num text-success">+ ' + Utils.fmtMoney(t.amount) + '</td>' +
             '</tr>';
         }).join("") + '</tbody>';
+      Utils.wireSortHeaders(tbl, rvSortState, render);
     }
 
     var pag = document.getElementById("rv-pagination");
