@@ -422,6 +422,50 @@
     return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
   }
 
+  // Duração "de verdade" de um atendimento: usa o valor salvo no próprio
+  // agendamento (appt.durationMin) quando existir — é como fica registrado
+  // que aquele atendimento específico durou mais (ou menos) do que o padrão
+  // do serviço — e cai para a duração cadastrada no serviço (ou 30min) nos
+  // demais casos. `serviceObj`, quando informado pelo chamador, evita um
+  // DB.get repetido (ver apptBlockHtml).
+  function apptDurationMin(appt, serviceObj) {
+    if (appt.durationMin != null) return appt.durationMin;
+    var s = serviceObj !== undefined ? serviceObj : DB.get("services", appt.serviceId);
+    return (s && s.durationMin) ? s.durationMin : 30;
+  }
+
+  // Depois de salvar um agendamento (nova duração, novo horário etc.),
+  // "arruma" o resto da agenda do mesmo profissional naquele dia: nunca
+  // deixa um atendimento sobrepor o seguinte — se um atendimento durou mais
+  // do que o esperado, todo mundo que vem depois dele (do mesmo
+  // profissional, no mesmo dia) é empurrado para frente na mesma medida, em
+  // cadeia, até não sobrar nenhuma sobreposição. Só EMPURRA agendamentos que
+  // ainda estão como "agendado" — um atendimento já concluído registra o que
+  // realmente aconteceu e não deve ser reescrito sozinho, mas ainda conta
+  // como um bloco de tempo ocupado (empurra os agendamentos depois dele,
+  // mesmo sem se mover). Retorna a lista do que foi movido, para avisar o
+  // usuário quando isso acontecer.
+  function reflowProfessionalDay(employeeId, date) {
+    if (!employeeId || !date) return [];
+    var dayAppts = DB.all("appointments").filter(function (x) {
+      return x.employeeId === employeeId && x.date === date && (x.status === "agendado" || x.status === "concluido");
+    }).sort(function (a, b) { return timeToMin(a.time) - timeToMin(b.time); });
+
+    var cursorEnd = null;
+    var shifted = [];
+    dayAppts.forEach(function (appt) {
+      var startMin = timeToMin(appt.time);
+      if (cursorEnd != null && startMin < cursorEnd && appt.status === "agendado") {
+        startMin = cursorEnd;
+        var newTime = minToTime(startMin);
+        DB.update("appointments", appt.id, { time: newTime });
+        shifted.push({ id: appt.id, from: appt.time, to: newTime });
+      }
+      cursorEnd = startMin + apptDurationMin(appt);
+    });
+    return shifted;
+  }
+
   function renderDayCalendar() {
     var services = DB.all("services"), employees = DB.all("employees"), clients = DB.all("clients");
     var activeEmployees = employees.filter(function (e) { return e.status === "ativo" && employeePerformsServices(e); })
@@ -506,13 +550,18 @@
     var s = services.find(function (x) { return x.id === a.serviceId; });
     var c = clients.find(function (x) { return x.id === a.clientId; });
     var startMin = timeToMin(a.time);
-    var dur = (s && s.durationMin) ? s.durationMin : 30;
+    var dur = apptDurationMin(a, s);
     var top = Math.round((startMin - GRID_START_MIN) * PX_PER_MIN);
     var height = Math.max(Math.round(dur * PX_PER_MIN), 24);
     var hasAsst = a.assistantId && employees.find(function (x) { return x.id === a.assistantId; });
+    // Quando a duração deste atendimento foi ajustada manualmente (diferente
+    // do padrão do serviço), mostra um ícone de relógio no bloco — sinaliza
+    // visualmente, sem abrir o agendamento, que esse horário foi remarcado
+    // por causa de um atendimento que durou mais (ou menos) que o esperado.
+    var durAdjusted = a.durationMin != null;
     return '<div class="cal-block status-' + (a.status || "agendado") + '" style="top:' + top + 'px;height:' + height + 'px;" data-appt-id="' + a.id + '" title="' +
-      Utils.escapeHtml((s ? s.name : "") + " - " + (c ? c.name : "")) + '">' +
-      '<div class="cb-time">' + a.time + (hasAsst ? ' <i class="fa-solid fa-user-plus" title="Com assistente"></i>' : '') + '</div>' +
+      Utils.escapeHtml((s ? s.name : "") + " - " + (c ? c.name : "") + (durAdjusted ? " (" + dur + "min)" : "")) + '">' +
+      '<div class="cb-time">' + a.time + (hasAsst ? ' <i class="fa-solid fa-user-plus" title="Com assistente"></i>' : '') + (durAdjusted ? ' <i class="fa-solid fa-clock" title="Duração ajustada: ' + dur + ' min"></i>' : '') + '</div>' +
       '<div class="cb-title">' + Utils.escapeHtml(s ? s.name : "-") + '</div>' +
       '<div class="cb-meta">' + Utils.escapeHtml(c ? c.name : "-") + '</div>' +
     '</div>';
@@ -746,19 +795,46 @@
   }
 
   // Ponto de entrada de "Concluir": quando o cliente tem só um atendimento
-  // agendado para aquele horário, segue o fluxo simples de sempre. Quando
-  // tem mais de um (ex.: corte com um profissional e manicure com outro,
-  // no mesmo dia e mesma hora), abre o consolidado "Fechar Conta" — a
-  // pedido do usuário, para ver e concluir tudo de uma vez, mencionando
-  // cada profissional envolvido.
+  // agendado naquele DIA, segue o fluxo simples de sempre. Quando tem mais
+  // de um agendado no mesmo dia — mesmo em horários diferentes (ex.: corte
+  // às 10h e escova às 15h, ou dois serviços simultâneos com profissionais
+  // diferentes) — pergunta se o usuário quer concluir só este atendimento
+  // ou fechar a conta completa do dia de uma vez (consolidado "Fechar
+  // Conta", mencionando cada profissional envolvido). Antes o consolidado
+  // só considerava o mesmo horário exato e era sempre forçado; agora
+  // considera o dia inteiro e vira uma escolha, a pedido do usuário.
   function concludeAppointment(apptId) {
     var appt = DB.get("appointments", apptId);
     if (!appt) return;
     var group = DB.all("appointments").filter(function (x) {
-      return x.status === "agendado" && x.clientId === appt.clientId && x.date === appt.date && x.time === appt.time;
-    });
-    if (group.length > 1) openConcludeGroupModal(group);
+      return x.status === "agendado" && x.clientId === appt.clientId && x.date === appt.date;
+    }).sort(function (a, b) { return a.time.localeCompare(b.time); });
+    if (group.length > 1) openConcludeChoiceModal(appt, group);
     else openConcludeSingleModal(appt);
+  }
+
+  // Pergunta se o usuário quer concluir só o atendimento clicado ou fechar a
+  // conta completa do cliente naquele dia (todos os atendimentos "agendado"
+  // do dia, não só os do mesmo horário) — ver comentário de
+  // concludeAppointment acima.
+  function openConcludeChoiceModal(appt, group) {
+    var client = DB.get("clients", appt.clientId);
+    var employeesById = {}; DB.all("employees").forEach(function (e) { employeesById[e.id] = e; });
+    var servicesById = {}; DB.all("services").forEach(function (s) { servicesById[s.id] = s; });
+    var listHtml = group.map(function (g) {
+      var s = servicesById[g.serviceId], e = employeesById[g.employeeId];
+      var isThis = g.id === appt.id;
+      return '<div class="small' + (isThis ? '' : ' text-muted') + '" style="padding:3px 0;">' + g.time + ' — ' + Utils.escapeHtml(s ? s.name : "Serviço") + ' (' + Utils.escapeHtml(e ? e.name : "-") + ')' + (isThis ? ' <strong>(este)</strong>' : '') + '</div>';
+    }).join("");
+    var body = '<p class="small text-muted" style="margin-bottom:10px;">' + Utils.escapeHtml(client ? client.name : "Cliente") + ' tem ' + group.length + ' atendimentos agendados para ' + Utils.fmtDate(appt.date) + ':</p>' +
+      listHtml +
+      '<div class="flex" style="gap:10px;flex-direction:column;margin-top:16px;">' +
+      '<button class="btn btn-primary" id="cc-choice-single" style="width:100%;justify-content:center;">Concluir só este atendimento</button>' +
+      '<button class="btn btn-secondary" id="cc-choice-group" style="width:100%;justify-content:center;">Fechar conta completa (' + group.length + ' atendimentos)</button>' +
+      '</div>';
+    var box = Modal.open({ title: "Concluir atendimento", bodyHtml: body });
+    box.querySelector("#cc-choice-single").addEventListener("click", function () { Modal.close(); openConcludeSingleModal(appt); });
+    box.querySelector("#cc-choice-group").addEventListener("click", function () { Modal.close(); openConcludeGroupModal(group); });
   }
 
   function openConcludeSingleModal(appt) {
@@ -864,10 +940,10 @@
       };
     });
 
-    var body = '<div class="small text-muted mb-16"><i class="fa-solid fa-circle-info"></i> ' + Utils.escapeHtml(client.name) + ' tem ' + group.length + ' atendimentos agendados para ' + Utils.fmtDate(group[0].date) + ' às ' + group[0].time + '. Confira e conclua tudo de uma vez.</div>' +
+    var body = '<div class="small text-muted mb-16"><i class="fa-solid fa-circle-info"></i> ' + Utils.escapeHtml(client.name) + ' tem ' + group.length + ' atendimentos agendados para ' + Utils.fmtDate(group[0].date) + '. Confira e conclua tudo de uma vez.</div>' +
       lines.map(function (l) {
         return '<div class="ccg-line" style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-bottom:12px;">' +
-          '<div class="mb-8"><strong>' + Utils.escapeHtml(l.service ? l.service.name : "Serviço") + '</strong>' +
+          '<div class="mb-8"><strong>' + l.appt.time + ' — ' + Utils.escapeHtml(l.service ? l.service.name : "Serviço") + '</strong>' +
             '<div class="small text-muted">Profissional: ' + Utils.escapeHtml(l.employee ? l.employee.name : "-") + (l.assistant ? " · Assistente: " + Utils.escapeHtml(l.assistant.name) : "") + '</div>' +
           '</div>' +
           '<div class="form-grid">' +
@@ -931,7 +1007,7 @@
             employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
           });
 
-          summaryParts.push((service ? service.name : "Atendimento") + " (" + (l.employee ? l.employee.name : "-") + ")");
+          summaryParts.push(l.appt.time + " " + (service ? service.name : "Atendimento") + " (" + (l.employee ? l.employee.name : "-") + ")");
 
           var rows = Utils.qsa(".insumo-item-row", box.querySelector("#" + l.rowPrefix + "-rows"));
           rows.forEach(function (row) {
@@ -1026,6 +1102,18 @@
         '</div>';
     }
 
+    // Duração inicial mostrada no campo "Duração (min)": o valor já ajustado
+    // do agendamento (a.durationMin), quando existir; senão a duração
+    // cadastrada no serviço já selecionado (o serviço do agendamento em
+    // edição, ou o primeiro da lista — mesmo serviço que o <select> abaixo
+    // seleciona por padrão quando não há nenhum "selected" explícito).
+    var apptModalInitialDuration = (function () {
+      if (a && a.durationMin != null) return a.durationMin;
+      var svcId = a ? a.serviceId : (services[0] ? services[0].id : null);
+      var svc = svcId ? services.find(function (s) { return s.id === svcId; }) : null;
+      return (svc && svc.durationMin) ? svc.durationMin : 30;
+    })();
+
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Cliente</label>' +
         '<div class="flex gap-8" style="align-items:center;">' +
@@ -1034,11 +1122,13 @@
         '</div>' +
         (window.ClientesQuick ? '<div id="am-new-client-panel" style="display:none;border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-top:8px;background:var(--gray-50);">' + ClientesQuick.inlinePanelHtml("am-nc") + '</div>' : "") +
       '</div>' +
-      '<div class="form-field full"><label>Serviço</label><select id="am-service">' + services.map(function (s) { return '<option value="' + s.id + '" data-price="' + s.price + '" data-group="' + s.group + '"' + (a && a.serviceId === s.id ? " selected" : "") + '>' + s.name + " (" + s.group + ")" + '</option>'; }).join("") + '</select></div>' +
+      '<div class="form-field full"><label>Serviço</label><select id="am-service">' + services.map(function (s) { return '<option value="' + s.id + '" data-price="' + s.price + '" data-group="' + s.group + '" data-duration="' + (s.durationMin || 30) + '"' + (a && a.serviceId === s.id ? " selected" : "") + '>' + s.name + " (" + s.group + ")" + '</option>'; }).join("") + '</select></div>' +
       '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: "am-employee", items: [], value: "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
       '<div class="form-field"><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="am-date" value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
+      '<div class="form-field"><label>Duração (min)</label><input type="number" id="am-duration" min="5" step="5" value="' + apptModalInitialDuration + '"></div>' +
+      '<div class="form-field full"><div class="small text-muted">Ajuste aqui se o atendimento durar mais (ou menos) do que o padrão do serviço. Ao salvar, os próximos agendamentos deste profissional no mesmo dia são reorganizados automaticamente para não sobrepor.</div></div>' +
       '<div class="form-field"><label>Status</label><select id="am-status">' +
         '<option value="agendado"' + (a && a.status === "agendado" ? " selected" : "") + '>Agendado</option>' +
         '<option value="concluido"' + (a && a.status === "concluido" ? " selected" : "") + '>Concluído</option>' +
@@ -1111,6 +1201,8 @@
       var opt = serviceSel.options[serviceSel.selectedIndex];
       if (!opt) return;
       Utils.setMoneyMaskValue(box.querySelector("#am-price"), opt.getAttribute("data-price"));
+      var durInput = box.querySelector("#am-duration");
+      if (durInput) durInput.value = opt.getAttribute("data-duration") || 30;
     });
 
     box.querySelector("#am-employee").addEventListener("change", updateDefaultCommission);
@@ -1254,10 +1346,20 @@
       // A comissão do assistente fica sempre editável no ato do agendamento
       // (não passa pelo fluxo de aprovação — ver commissionFieldHtml acima).
       var assistantPct = hasAsst ? (parseFloat(box.querySelector("#am-assistant-pct").value) || 0) : null;
+      // Duração real deste atendimento: só grava um valor explícito
+      // (durationMin) quando o usuário deixou diferente do padrão do
+      // serviço selecionado — assim um agendamento nunca ajustado continua
+      // "seguindo" a duração cadastrada no serviço (Configurações →
+      // Serviços), mesmo que ela mude no futuro. Ver apptDurationMin.
+      var selectedServiceObj = DB.get("services", box.querySelector("#am-service").value);
+      var defaultDurationMin = (selectedServiceObj && selectedServiceObj.durationMin) ? selectedServiceObj.durationMin : 30;
+      var durRaw = parseInt(box.querySelector("#am-duration").value, 10);
+      if (isNaN(durRaw) || durRaw <= 0) durRaw = defaultDurationMin;
       var patch = {
         clientId: box.querySelector("#am-client").value, serviceId: box.querySelector("#am-service").value,
         employeeId: box.querySelector("#am-employee").value, price: round2(Utils.moneyMaskToFloat(box.querySelector("#am-price"))),
         date: box.querySelector("#am-date").value, time: box.querySelector("#am-time").value,
+        durationMin: (durRaw !== defaultDurationMin) ? durRaw : null,
         status: box.querySelector("#am-status").value,
         commissionPercent: commPct,
         assistantId: hasAsst ? box.querySelector("#am-assistant").value : null,
@@ -1274,6 +1376,16 @@
       var savedAppt;
       if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time); Toast.show("Agendamento atualizado", "success"); }
       else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
+      // Se este atendimento durou mais (ou menos) do que o previsto, arruma
+      // o resto da agenda do profissional naquele dia para não deixar
+      // nenhuma sobreposição — empurra em cadeia só quem ainda está
+      // "agendado" (ver reflowProfessionalDay).
+      var shiftedAppts = reflowProfessionalDay(patch.employeeId, patch.date);
+      if (shiftedAppts.length) {
+        var reflowEmp = DB.get("employees", patch.employeeId);
+        DB.log("Agenda", "Ajuste de duração/horário reorganizou " + shiftedAppts.length + " agendamento(s) seguinte(s) de " + (reflowEmp ? reflowEmp.name : "profissional") + " em " + Utils.fmtDate(patch.date));
+        Toast.show(shiftedAppts.length + " agendamento(s) seguinte(s) foi(ram) reorganizado(s) automaticamente para não sobrepor", "info");
+      }
       // Se uma alteração de comissão do profissional foi pedida antes de o
       // agendamento existir (tela de Novo Agendamento), a solicitação só
       // pôde ser preparada até agora — dispara ela de verdade aqui, já com
