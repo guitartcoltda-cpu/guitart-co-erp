@@ -91,6 +91,21 @@
     { id: "rol_assistente", name: "Assistente" }
   ];
 
+  // Formas de pagamento (Concluir Atendimento / Fechar Conta, na Agenda) —
+  // mesmo padrão de Cargos: configurável em Configurações → Formas de
+  // Pagamento, guardado em settings.paymentMethods (sem tabela nova no
+  // Supabase). `isParceria: true` marca uma forma como "o cliente não paga
+  // nada" — o valor do atendimento vira só a base para dividir o custo
+  // entre o profissional e o salão (ver agenda.js, telas de conclusão de
+  // atendimento). A seed já inclui "Parceria" com essa flag.
+  var DEFAULT_PAYMENT_METHODS = [
+    { id: "pmt_pix", name: "Pix", isParceria: false },
+    { id: "pmt_credito", name: "Cartão de Crédito", isParceria: false },
+    { id: "pmt_debito", name: "Cartão de Débito", isParceria: false },
+    { id: "pmt_dinheiro", name: "Dinheiro", isParceria: false },
+    { id: "pmt_parceria", name: "Parceria", isParceria: true }
+  ];
+
   var _cache = null;
 
   // ---------------------------------------------------------------
@@ -669,6 +684,30 @@
       persist("settings");
       remoteReplaceSettings(db.settings);
       return db.settings.roles;
+    },
+
+    // Formas de pagamento (ver DEFAULT_PAYMENT_METHODS acima). Mesma ideia
+    // de getRoles: semeia na primeira leitura para sistemas já em produção
+    // (para não deixar nenhum lançamento antigo "órfão" de forma de
+    // pagamento) — o app.js/agenda.js hoje já usava esses mesmos 4 nomes
+    // fixos, mais o novo "Parceria".
+    getPaymentMethods: function () {
+      var db = load();
+      var current = (db.settings && db.settings.paymentMethods) || [];
+      if (!current.length) {
+        current = DEFAULT_PAYMENT_METHODS.slice();
+        db.settings = Object.assign({}, db.settings, { paymentMethods: current });
+        persist("settings");
+        remoteReplaceSettings(db.settings);
+      }
+      return current;
+    },
+    savePaymentMethods: function (list) {
+      var db = load();
+      db.settings = Object.assign({}, db.settings, { paymentMethods: list });
+      persist("settings");
+      remoteReplaceSettings(db.settings);
+      return db.settings.paymentMethods;
     },
 
     // Async (devolve uma Promise<string>) — diferente das outras funções

@@ -21,7 +21,11 @@
   function visibleAppointments() {
     return DB.all("appointments").filter(function (a) { return a._importBatch !== HISTORICAL_IMPORT_BATCH; });
   }
-  var PAYMENT_OPTIONS = ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"];
+  // Formas de pagamento configuráveis em Configurações → Formas de
+  // Pagamento (ver DB.getPaymentMethods em db.js) — busca sempre na hora
+  // (não guarda em cache aqui) para refletir qualquer alteração feita lá
+  // sem precisar recarregar a página, mesmo padrão de DB.getRoles().
+  function paymentMethods() { return DB.getPaymentMethods(); }
   var OCC_TYPES = ["Ausência Médica", "Falta Justificada", "Compromisso Pessoal", "Bloqueio / Manutenção", "Outro"];
 
   // Grade da Visão do Dia: das 08:00 às 21:00, 1.1px por minuto.
@@ -866,15 +870,116 @@
     box.querySelector("#cc-choice-group").addEventListener("click", function () { Modal.close(); openConcludeGroupModal(group); });
   }
 
+  // ---------------- Parceria (forma de pagamento sem cobrança do cliente) ----------------
+  // Quando a forma de pagamento escolhida ao concluir/fechar conta tem
+  // isParceria=true (ver Configurações → Formas de Pagamento), o cliente
+  // não paga nada pelo atendimento — o valor do atendimento vira só a base
+  // para dividir o custo entre o profissional e o salão, numa porcentagem
+  // que parte da comissão cadastrada no funcionário, mas pode ser negociada
+  // por atendimento. Mesmo espírito (e mesmo componente visual) do campo
+  // de comissão do profissional em openApptModal/commissionFieldHtml: quem
+  // não é Administrador só pode solicitar a alteração, que precisa ser
+  // aprovada em Configurações → Aprovações antes de valer.
+  var canEditParceriaSplit = !window.Approvals || Approvals.isAdmin();
+
+  function isParceriaMethod(methodName, methods) {
+    var pm = (methods || paymentMethods()).find(function (p) { return p.name === methodName; });
+    return !!(pm && pm.isParceria);
+  }
+
+  function parceriaSplitFieldHtml(opts) {
+    // opts: { id, appt, employee }
+    // Reaproveita o mesmo campo `commissionPercent` já usado pela comissão
+    // normal do agendamento (ver openApptModal/commissionFieldHtml) — em
+    // vez de um campo paralelo, para que a % negociada da Parceria entre
+    // automaticamente no cálculo de comissão/pagamento (Comissionamento),
+    // sem duplicar/perder sincronismo com Utils.apptCommissionSplit.
+    var currentValue = opts.appt.commissionPercent;
+    var defaultRate = opts.employee ? opts.employee.commissionRate : null;
+    if (canEditParceriaSplit) {
+      var val = currentValue != null ? currentValue : (defaultRate != null ? defaultRate : "");
+      return '<div class="form-field"><label>% do Profissional (Parceria)</label><input type="number" step="0.1" min="0" max="100" id="' + opts.id + '" placeholder="Padrão do funcionário" value="' + val + '"></div>' +
+        '<div class="form-field"><div class="small text-muted" style="margin-top:26px;">O restante do valor fica com o salão.</div></div>';
+    }
+    var displayVal = currentValue != null ? currentValue + "%" : (defaultRate != null ? "Padrão do funcionário (" + defaultRate + "%)" : "Padrão do funcionário");
+    return '<div class="form-field"><label>% do Profissional (Parceria)</label>' +
+      '<input type="text" id="' + opts.id + '-display" value="' + displayVal + '" disabled>' +
+      '<div class="commission-request-row" id="' + opts.id + '-req-row">' +
+        '<a href="#" class="small" id="' + opts.id + '-req-link">Solicitar alteração</a>' +
+        '<div class="commission-request-form" id="' + opts.id + '-req-form" style="display:none;">' +
+          '<input type="number" step="0.1" min="0" max="100" id="' + opts.id + '-req-value" placeholder="Novo % (profissional)" style="max-width:140px;">' +
+          '<button type="button" class="btn btn-sm btn-primary" id="' + opts.id + '-req-send">Enviar solicitação</button>' +
+          '<button type="button" class="btn btn-sm btn-ghost" id="' + opts.id + '-req-cancel">Cancelar</button>' +
+        '</div>' +
+      '</div></div>';
+  }
+
+  function wireParceriaSplitRequest(box, opts) {
+    // opts: { id, appt, employee }
+    if (canEditParceriaSplit) return;
+    var link = box.querySelector("#" + opts.id + "-req-link");
+    if (!link) return;
+    var reqRow = box.querySelector("#" + opts.id + "-req-row");
+    var form = box.querySelector("#" + opts.id + "-req-form");
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      link.style.display = "none";
+      form.style.display = "flex";
+    });
+    box.querySelector("#" + opts.id + "-req-cancel").addEventListener("click", function () {
+      form.style.display = "none";
+      link.style.display = "";
+    });
+    box.querySelector("#" + opts.id + "-req-send").addEventListener("click", function () {
+      var val = parseFloat(box.querySelector("#" + opts.id + "-req-value").value);
+      if (isNaN(val) || val < 0 || val > 100) { Toast.show("Informe uma porcentagem válida (0 a 100)", "danger"); return; }
+      var client = DB.get("clients", opts.appt.clientId);
+      var current = opts.appt.commissionPercent;
+      var summary = "Divisão Parceria do profissional (" + (opts.employee ? opts.employee.name : "-") + ") no atendimento de " + Utils.fmtDate(opts.appt.date) + " (" + (client ? client.name : "cliente") + "): " +
+        (current != null ? current + "%" : "padrão") + " → " + val + "%";
+      Approvals.request("parceria_split", summary, { appointmentId: opts.appt.id, field: "commissionPercent", requestedValue: val });
+      Toast.show("Solicitação enviada para aprovação de um Administrador", "success");
+      reqRow.innerHTML = '<span class="small text-muted">Solicitação enviada — aguardando aprovação.</span>';
+    });
+  }
+
+  // Porcentagem do profissional a usar de fato ao concluir: o que o
+  // Administrador digitou agora (se ele pode editar direto), senão o que já
+  // estava salvo no agendamento, senão a comissão padrão do funcionário —
+  // mesma cascata usada para a comissão normal (commissionPercent).
+  function resolvedParceriaSplitPercent(box, id, appt, employee) {
+    if (canEditParceriaSplit) {
+      var input = box.querySelector("#" + id);
+      var v = input ? parseFloat(input.value) : NaN;
+      if (!isNaN(v)) return Math.max(0, Math.min(100, v));
+    }
+    if (appt.commissionPercent != null) return appt.commissionPercent;
+    return (employee && employee.commissionRate != null) ? employee.commissionRate : 0;
+  }
+
+  var _parceriaCatId;
+  function parceriaCatId() {
+    if (_parceriaCatId !== undefined) return _parceriaCatId;
+    var c = DB.findOne("categories", function (x) { return x.name === "Parceria" && x.type === "despesa"; });
+    _parceriaCatId = c ? c.id : null;
+    return _parceriaCatId;
+  }
+
   function openConcludeSingleModal(appt) {
     var service = DB.get("services", appt.serviceId);
     var client = DB.get("clients", appt.clientId);
+    var employee = DB.get("employees", appt.employeeId);
     var category = DB.findOne("categories", function (c) { return c.id === service.categoryId; });
     var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
+    var methods = paymentMethods();
 
     var body = '<div class="form-grid">' +
       '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
-      '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + PAYMENT_OPTIONS.map(function (p) { return "<option>" + p + "</option>"; }).join("") + '</select></div>' +
+      '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
+      '</div>' +
+      '<div id="cc-parceria-block" class="form-grid" style="display:none;">' +
+        '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este atendimento. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
+        parceriaSplitFieldHtml({ id: "cc-parceria-pct", appt: appt, employee: employee }) +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div class="flex items-center justify-between mb-8">' +
@@ -882,10 +987,19 @@
         '<button type="button" class="btn btn-sm btn-outline" id="cc-add-insumo"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
       '</div>' +
       '<div id="cc-insumo-rows"></div>' +
-      '<div class="small text-muted">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(DB.get("employees", appt.employeeId) ? DB.get("employees", appt.employeeId).name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal.</div>';
+      '<div class="small text-muted">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal.</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cc-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Atendimento", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#cc-amount"), appt.price);
+    wireParceriaSplitRequest(box, { id: "cc-parceria-pct", appt: appt, employee: employee });
+
+    var paySelect = box.querySelector("#cc-pay");
+    var parceriaBlock = box.querySelector("#cc-parceria-block");
+    function syncParceriaVisibility() {
+      parceriaBlock.style.display = isParceriaMethod(paySelect.value, methods) ? "" : "none";
+    }
+    paySelect.addEventListener("change", syncParceriaVisibility);
+    syncParceriaVisibility();
 
     var rowsEl = box.querySelector("#cc-insumo-rows");
     box.querySelector("#cc-add-insumo").addEventListener("click", function () {
@@ -898,15 +1012,37 @@
       var rows = Utils.qsa(".insumo-item-row", rowsEl);
       var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
       var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
+      var payMethod = box.querySelector("#cc-pay").value;
+      var isParceria = isParceriaMethod(payMethod, methods);
+      var splitPct = isParceria ? resolvedParceriaSplitPercent(box, "cc-parceria-pct", appt, employee) : null;
 
       DB.batch(function () {
-        DB.update("appointments", appt.id, { status: "concluido", price: amount });
-        DB.insert("transactions", {
-          type: "receita", description: service.name + " - " + client.name, amount: round2(amount),
-          date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-          paymentMethod: box.querySelector("#cc-pay").value, status: "pago",
-          employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
-        });
+        var apptPatch = { status: "concluido", price: amount };
+        if (isParceria && canEditParceriaSplit) apptPatch.commissionPercent = splitPct;
+        DB.update("appointments", appt.id, apptPatch);
+        if (isParceria) {
+          // Usa o mesmo cálculo de Utils.apptCommissionSplit já usado pelo
+          // Comissionamento (considera assistente, se houver) — a parte do
+          // profissional (mainCommission/assistantCommission) segue pelo
+          // fluxo normal de pagamento de comissão; só a parte que sobra
+          // (o que o salão está absorvendo, já que o cliente não pagou)
+          // vira este lançamento de despesa.
+          var split = Utils.apptCommissionSplit(Object.assign({}, appt, { price: amount, commissionPercent: splitPct }), employee);
+          var salonAmount = round2(amount - split.mainCommission - split.assistantCommission);
+          DB.insert("transactions", {
+            type: "despesa", description: "Parceria - " + service.name + " - " + client.name + " (" + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão)",
+            amount: salonAmount, date: appt.date, categoryId: parceriaCatId(), costCenterId: costCenter ? costCenter.id : null,
+            paymentMethod: payMethod, status: "pago",
+            employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+          });
+        } else {
+          DB.insert("transactions", {
+            type: "receita", description: service.name + " - " + client.name, amount: round2(amount),
+            date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+            paymentMethod: payMethod, status: "pago",
+            employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+          });
+        }
 
         rows.forEach(function (row) {
           var tipo = row.querySelector(".ir-tipo").value;
@@ -928,20 +1064,22 @@
             DB.insert("transactions", {
               type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
               categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
-              paymentMethod: box.querySelector("#cc-pay").value, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+              paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
               productId: productId, appointmentId: appt.id, reconciled: false
             });
           }
         });
       });
 
-      DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name + " (" + Utils.fmtMoney(amount) + ")" + (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
+      DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name +
+        (isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + ")") +
+        (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
       // Enfileira o pedido de avaliação por WhatsApp (envio manual, mesmo
       // fluxo da confirmação de agendamento) — a pedido do cliente, toda
       // conclusão de atendimento deve gerar esse pedido para o cliente.
       if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", appt.id));
       Modal.close();
-      Toast.show("Atendimento concluído e lançamento financeiro gerado", "success");
+      Toast.show(isParceria ? "Atendimento concluído como Parceria — divisão de custo registrada" : "Atendimento concluído e lançamento financeiro gerado", "success");
       render();
     });
   }
@@ -958,6 +1096,7 @@
     var client = DB.get("clients", group[0].clientId);
     var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
     var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
+    var methods = paymentMethods();
 
     var lines = group.map(function (appt, idx) {
       return {
@@ -978,6 +1117,10 @@
           '<div class="form-grid">' +
             '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="' + l.rowPrefix + '-amount"></div>' +
           '</div>' +
+          '<div id="' + l.rowPrefix + '-parceria-block" class="form-grid" style="display:none;margin-top:8px;">' +
+            '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este item. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
+            parceriaSplitFieldHtml({ id: l.rowPrefix + "-parceria-pct", appt: l.appt, employee: l.employee }) +
+          '</div>' +
           '<div class="flex items-center justify-between mb-8" style="margin-top:8px;">' +
             '<label class="small" style="font-weight:600;">Insumos / Produtos (opcional)</label>' +
             '<button type="button" class="btn btn-sm btn-outline ccg-add-insumo" data-target="' + l.rowPrefix + '-rows"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
@@ -987,14 +1130,19 @@
       }).join("") +
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div class="form-grid">' +
-        '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + PAYMENT_OPTIONS.map(function (p) { return "<option>" + p + "</option>"; }).join("") + '</select></div>' +
+        '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
       '</div>';
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ccg-save">Fechar Conta</button>';
     var box = Modal.open({ title: "Fechar Conta — " + client.name, wide: true, bodyHtml: body, footHtml: foot });
 
+    var paySelectG = box.querySelector("#ccg-pay");
+
+    function isGroupParceria() { return isParceriaMethod(paySelectG.value, methods); }
+
     function updateTotal() {
+      if (isGroupParceria()) { Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), 0); return; }
       var total = 0;
       lines.forEach(function (l) {
         total += Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || 0;
@@ -1002,20 +1150,32 @@
       Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), total);
     }
 
+    function syncGroupParceriaVisibility() {
+      var isParc = isGroupParceria();
+      lines.forEach(function (l) {
+        var blk = box.querySelector("#" + l.rowPrefix + "-parceria-block");
+        if (blk) blk.style.display = isParc ? "" : "none";
+      });
+      updateTotal();
+    }
+    paySelectG.addEventListener("change", syncGroupParceriaVisibility);
+
     lines.forEach(function (l) {
       var amountInput = box.querySelector("#" + l.rowPrefix + "-amount");
       Utils.wireMoneyMask(amountInput, l.appt.price);
       amountInput.addEventListener("input", updateTotal);
+      wireParceriaSplitRequest(box, { id: l.rowPrefix + "-parceria-pct", appt: l.appt, employee: l.employee });
       var rowsEl = box.querySelector("#" + l.rowPrefix + "-rows");
       box.querySelector('.ccg-add-insumo[data-target="' + l.rowPrefix + '-rows"]').addEventListener("click", function () {
         rowsEl.insertAdjacentHTML("beforeend", insumoRowHtml());
         wireInsumoRow(rowsEl.lastElementChild);
       });
     });
-    updateTotal();
+    syncGroupParceriaVisibility();
 
     box.querySelector("#ccg-save").addEventListener("click", function () {
-      var payMethod = box.querySelector("#ccg-pay").value;
+      var payMethod = paySelectG.value;
+      var isParceria = isGroupParceria();
       var totalAmount = 0;
       var summaryParts = [];
       var insumoCount = 0;
@@ -1024,19 +1184,39 @@
         lines.forEach(function (l) {
           var appt = l.appt, service = l.service;
           var amount = Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || appt.price;
-          totalAmount += amount;
+          totalAmount += isParceria ? 0 : amount;
           var category = service ? DB.findOne("categories", function (c) { return c.id === service.categoryId; }) : null;
           var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
 
-          DB.update("appointments", appt.id, { status: "concluido", price: amount });
-          DB.insert("transactions", {
-            type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: round2(amount),
-            date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-            paymentMethod: payMethod, status: "pago",
-            employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
-          });
+          var apptPatch = { status: "concluido", price: amount };
+          var splitPct = null;
+          if (isParceria) {
+            splitPct = resolvedParceriaSplitPercent(box, l.rowPrefix + "-parceria-pct", appt, l.employee);
+            if (canEditParceriaSplit) apptPatch.commissionPercent = splitPct;
+          }
+          DB.update("appointments", appt.id, apptPatch);
 
-          summaryParts.push(l.appt.time + " " + (service ? service.name : "Atendimento") + " (" + (l.employee ? l.employee.name : "-") + ")");
+          if (isParceria) {
+            // Mesmo raciocínio do modal de conclusão única — ver comentário
+            // em openConcludeSingleModal.
+            var lineSplit = Utils.apptCommissionSplit(Object.assign({}, appt, { price: amount, commissionPercent: splitPct }), l.employee);
+            var salonAmount = round2(amount - lineSplit.mainCommission - lineSplit.assistantCommission);
+            DB.insert("transactions", {
+              type: "despesa", description: "Parceria - " + (service ? service.name : "Atendimento") + " - " + client.name + " (" + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão)",
+              amount: salonAmount, date: appt.date, categoryId: parceriaCatId(), costCenterId: costCenter ? costCenter.id : null,
+              paymentMethod: payMethod, status: "pago",
+              employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+            });
+          } else {
+            DB.insert("transactions", {
+              type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: round2(amount),
+              date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+              paymentMethod: payMethod, status: "pago",
+              employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+            });
+          }
+
+          summaryParts.push(l.appt.time + " " + (service ? service.name : "Atendimento") + " (" + (l.employee ? l.employee.name : "-") + ")" + (isParceria ? " [Parceria " + splitPct + "%]" : ""));
 
           var rows = Utils.qsa(".insumo-item-row", box.querySelector("#" + l.rowPrefix + "-rows"));
           rows.forEach(function (row) {
@@ -1068,13 +1248,13 @@
         });
       });
 
-      DB.log("Agenda", "Fechou conta consolidada de " + client.name + " (" + summaryParts.join(" + ") + ") — total " + Utils.fmtMoney(totalAmount) + (insumoCount ? " com " + insumoCount + " item(ns) de insumo/produto" : ""));
+      DB.log("Agenda", "Fechou conta consolidada de " + client.name + " (" + summaryParts.join(" + ") + ")" + (isParceria ? " como Parceria" : " — total " + Utils.fmtMoney(totalAmount)) + (insumoCount ? " com " + insumoCount + " item(ns) de insumo/produto" : ""));
       // Um único pedido de avaliação por visita (não um por serviço), para
       // não mandar vários pedidos de avaliação seguidos para o mesmo
       // cliente por causa de um mesmo atendimento com vários serviços.
       if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", lines[0].appt.id));
       Modal.close();
-      Toast.show("Conta fechada: " + group.length + " atendimentos concluídos", "success");
+      Toast.show(isParceria ? "Conta fechada como Parceria: " + group.length + " atendimentos concluídos" : "Conta fechada: " + group.length + " atendimentos concluídos", "success");
       render();
     });
   }

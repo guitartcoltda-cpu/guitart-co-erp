@@ -14,7 +14,8 @@
     comissao_agendamento: "Alteração de comissão",
     desconto_consumo: "Desconto em consumo de insumo",
     parcelamento_venda: "Parcelamento acima de 3x",
-    ajuste_ponto: "Ajuste de ponto"
+    ajuste_ponto: "Ajuste de ponto",
+    parceria_split: "Alteração de divisão (Parceria)"
   };
 
   function isAdmin() {

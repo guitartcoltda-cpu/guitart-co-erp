@@ -26,6 +26,7 @@
     Utils.qs("#btn-new-cat").addEventListener("click", function () { openCatModal(null); });
     Utils.qs("#btn-new-srv").addEventListener("click", function () { openSrvModal(null); });
     Utils.qs("#btn-new-role").addEventListener("click", function () { openRoleModal(null); });
+    Utils.qs("#btn-new-paymethod").addEventListener("click", function () { openPaymentMethodModal(null); });
     Utils.qs("#btn-new-group").addEventListener("click", function () { openGroupModal(null); });
 
     Utils.qs("#cfg-company").value = (DB.getSettings() || {}).companyName || "";
@@ -108,7 +109,7 @@
       else Utils.qs("#perm-card").style.display = "none";
     });
 
-    renderCC(); renderCat(); renderSrv(); renderRoles(); renderGroups(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
+    renderCC(); renderCat(); renderSrv(); renderRoles(); renderPaymentMethods(); renderGroups(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
 
     // Deep-link vindo do sininho de aprovações no topbar (?tab=aprovacoes).
     if (/tab=aprovacoes/.test(location.search)) {
@@ -556,6 +557,15 @@
     },
     ajuste_ponto: function (payload) {
       if (window.PontoAjustes) PontoAjustes.apply(payload);
+    },
+    // Alteração da % de divisão profissional/salão num atendimento fechado
+    // como "Parceria" (ver Agenda → Concluir/Fechar Conta) — mesmo formato
+    // genérico de comissao_agendamento (patch[field] = requestedValue),
+    // só com um tipo próprio para ficar claro na aba Aprovações.
+    parceria_split: function (payload) {
+      var patch = {};
+      patch[payload.field] = payload.requestedValue;
+      DB.update("appointments", payload.appointmentId, patch);
     }
   };
 
@@ -861,6 +871,80 @@
         DB.log("Configurações", "Criou o cargo " + name);
       }
       Modal.close(); Toast.show("Cargo salvo", "success"); renderRoles();
+    });
+  }
+
+  // ---------------- Formas de Pagamento ----------------
+  // Mesmo padrão de Cargos: não é tabela própria no Supabase, fica guardado
+  // em settings.paymentMethods (ver DB.getPaymentMethods/savePaymentMethods
+  // em db.js). Usado nos seletores "Forma de Pagamento" da Agenda ao
+  // concluir um atendimento/fechar conta. `isParceria` marca uma forma como
+  // "o cliente não paga nada" (ex.: a "Parceria" já vem cadastrada) — a
+  // Agenda mostra, para essas, um campo de % de divisão do custo entre o
+  // profissional e o salão em vez de gerar receita.
+  var payMethodsSortState = { field: null, dir: "asc" };
+  function renderPaymentMethods() {
+    var list = DB.getPaymentMethods();
+    var txns = DB.all("transactions");
+    var pmGetters = {
+      count: function (p) { return txns.filter(function (t) { return t.paymentMethod === p.name; }).length; },
+      isParceria: function (p) { return p.isParceria ? 1 : 0; }
+    };
+    list = Utils.sortBy(list, payMethodsSortState, pmGetters);
+    var tbl = Utils.qs("#tbl-paymethods");
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Forma de Pagamento", "name", payMethodsSortState) +
+      Utils.thSort("Tipo", "isParceria", payMethodsSortState) +
+      Utils.thSort("Lançamentos", "count", payMethodsSortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
+      list.map(function (p) {
+        var count = pmGetters.count(p);
+        return '<tr><td class="font-bold">' + Utils.escapeHtml(p.name) + '</td>' +
+          '<td>' + (p.isParceria ? '<span class="badge badge-info">Parceria — sem cobrança do cliente</span>' : '<span class="badge badge-gray">Normal</span>') + '</td>' +
+          '<td class="text-right">' + count + '</td>' +
+          '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-paymethod="' + p.id + '"><i class="fa-solid fa-pen"></i></button>' +
+          '<button class="btn btn-icon btn-ghost" data-del-paymethod="' + p.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
+      }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, payMethodsSortState, renderPaymentMethods);
+    Utils.qsa("[data-edit-paymethod]", tbl).forEach(function (b) { b.addEventListener("click", function () { openPaymentMethodModal(b.getAttribute("data-edit-paymethod")); }); });
+    Utils.qsa("[data-del-paymethod]", tbl).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var id = b.getAttribute("data-del-paymethod");
+        var pm = list.find(function (p) { return p.id === id; });
+        if (pm && txns.some(function (t) { return t.paymentMethod === pm.name; })) { Toast.show("Existem lançamentos usando esta forma de pagamento", "danger"); return; }
+        Modal.confirm({ title: "Excluir forma de pagamento", message: "Confirma a exclusão?", danger: true, onConfirm: function () {
+          DB.savePaymentMethods(DB.getPaymentMethods().filter(function (p) { return p.id !== id; }));
+          if (pm) DB.log("Configurações", "Excluiu a forma de pagamento " + pm.name);
+          Toast.show("Excluída", "success"); renderPaymentMethods();
+        } });
+      });
+    });
+  }
+  function openPaymentMethodModal(id) {
+    var list = DB.getPaymentMethods();
+    var p = id ? list.find(function (x) { return x.id === id; }) : null;
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><label>Nome</label><input type="text" id="paymethod-name" value="' + (p ? Utils.escapeHtml(p.name) : "") + '"></div>' +
+      '<div class="form-field full"><label class="flex items-center gap-6" style="font-weight:600;"><input type="checkbox" id="paymethod-parceria" style="width:auto;"' + (p && p.isParceria ? " checked" : "") + '> Não cobra do cliente (divide o custo com o profissional)</label>' +
+        '<div class="small text-muted" style="margin-top:6px;">Ao concluir um atendimento com essa forma de pagamento, não é gerada receita — a Agenda mostra um campo de % de divisão do custo entre o profissional e o salão (parte com aprovação de Administrador em caso de negociação).</div>' +
+      '</div>' +
+      '</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="paymethod-save">Salvar</button>';
+    var box = Modal.open({ title: p ? "Editar Forma de Pagamento" : "Nova Forma de Pagamento", bodyHtml: body, footHtml: foot });
+    box.querySelector("#paymethod-save").addEventListener("click", function () {
+      var name = box.querySelector("#paymethod-name").value.trim();
+      if (!name) { Toast.show("Informe o nome", "danger"); return; }
+      var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!p || x.id !== p.id); });
+      if (dup) { Toast.show("Já existe uma forma de pagamento com este nome", "danger"); return; }
+      var isParceria = box.querySelector("#paymethod-parceria").checked;
+      if (p) {
+        DB.savePaymentMethods(list.map(function (x) { return x.id === p.id ? Object.assign({}, x, { name: name, isParceria: isParceria }) : x; }));
+        DB.log("Configurações", "Atualizou a forma de pagamento " + name);
+      } else {
+        DB.savePaymentMethods(list.concat([{ id: DB.uid("pmt"), name: name, isParceria: isParceria }]));
+        DB.log("Configurações", "Criou a forma de pagamento " + name);
+      }
+      Modal.close(); Toast.show("Forma de pagamento salva", "success"); renderPaymentMethods();
     });
   }
 
