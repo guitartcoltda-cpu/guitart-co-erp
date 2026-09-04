@@ -102,11 +102,11 @@
     return { start: selectedMonth + "-01", end: monthLastDay(selectedMonth) };
   }
 
-  // Conjunto de meses "tocados" pelo intervalo — usado para os lançamentos
-  // que só têm granularidade de mês de competência (comissionamento
-  // esporádico), já que eles não têm uma data específica dentro do mês.
-  // Um corte personalizado mais curto que o mês ainda assim traz para o
-  // cálculo os esporádicos lançados para aquele mês inteiro (ver hint na tela).
+  // Conjunto de meses "tocados" pelo intervalo — fallback usado só para
+  // lançamentos de comissionamento esporádico antigos, gravados antes da
+  // apuração passar a usar a data exata do lançamento (ver bonusesFor() e
+  // sporadicDiscountTotal()), que por isso só têm mês de competência, sem
+  // uma data específica dentro do mês.
   function touchedMonths(range) {
     var months = {};
     var cur = range.start.slice(0, 7);
@@ -255,15 +255,20 @@
     DB.log("Comissão", "Abriu envio de resumo de comissões para administradores (ref. " + data.monthLabel + ")");
   }
 
-  // Comissionamento esporádico não tem data própria, só mês de competência —
-  // em modo mensal, casa exatamente com o mês selecionado; em modo
-  // personalizado, entram os esporádicos de todo mês tocado pelo intervalo.
+  // Comissionamento esporádico agora tem data própria (ver openBonusModal) e
+  // entra na apuração pelo mesmo corte exato usado para atendimentos e
+  // consumo — dia a dia, não por mês de competência. Lançamentos antigos,
+  // gravados antes dessa mudança, não têm `date` (só `month`); para esses,
+  // mantém a aproximação anterior por mês tocado (ver touchedMonths) como
+  // fallback, sem precisar migrar o histórico.
   function bonusesFor(employeeId) {
-    if (periodMode === "custom") {
-      var touched = touchedMonths(currentRange());
-      return DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && touched[b.month]; });
-    }
-    return DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && b.month === selectedMonth; });
+    var range = currentRange();
+    var touched = periodMode === "custom" ? touchedMonths(range) : null;
+    return DB.all("commissionBonuses").filter(function (b) {
+      if (b.employeeId !== employeeId) return false;
+      if (b.date) return b.date >= range.start && b.date <= range.end;
+      return touched ? touched[b.month] : b.month === selectedMonth;
+    });
   }
 
   // Fonte da verdade: os agendamentos concluídos do mês (e não os
@@ -583,7 +588,7 @@
       asstSectionHtml +
       consumoSectionHtml(row) +
       '<div class="flex items-center justify-between mt-16 mb-8">' +
-        '<h4 style="font-size:14px;">Comissionamento Esporádico do Mês</h4>' +
+        '<h4 style="font-size:14px;">Comissionamento Esporádico do Período</h4>' +
         '<button type="button" class="btn btn-sm btn-outline" id="dm-add-bonus"><i class="fa-solid fa-plus"></i> Novo Lançamento</button>' +
       '</div>' +
       '<div id="dm-bonus-section"></div>' +
@@ -597,22 +602,23 @@
       var bonuses = bonusesFor(employeeId);
       var sec = box.querySelector("#dm-bonus-section");
       if (!bonuses.length) {
-        sec.innerHTML = '<div class="small text-muted">Nenhum comissionamento esporádico lançado para ' + (periodMode === "custom" ? "o(s) mês(es) deste período" : "este mês") + '.</div>';
+        sec.innerHTML = '<div class="small text-muted">Nenhum comissionamento esporádico lançado para este período.</div>';
       } else {
         sec.innerHTML = '<table class="data-table">' +
-          '<thead><tr><th>Descrição</th><th>Tipo</th><th class="text-right">Valor</th><th></th></tr></thead>' +
+          '<thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th class="text-right">Valor</th><th></th></tr></thead>' +
           '<tbody>' + bonuses.map(function (b) {
             var tipoLabel = b.kind === "percentual" ? "Percentual sobre venda (" + b.refPercent + "% de " + Utils.fmtMoney(b.refValue) + ")" :
               b.kind === "desconto" ? "Desconto / dedução" : "Valor fixo";
             var valClass = b.amount < 0 ? "text-danger" : "";
             return '<tr>' +
+              '<td>' + (b.date ? Utils.fmtDate(b.date) : '<span class="small text-muted">' + Utils.monthLabel(b.month + "-01") + '</span>') + '</td>' +
               '<td>' + Utils.escapeHtml(b.description) + '</td>' +
               '<td>' + tipoLabel + '</td>' +
               '<td class="text-right text-num font-bold ' + valClass + '">' + (b.amount < 0 ? "- " + Utils.fmtMoney(Math.abs(b.amount)) : Utils.fmtMoney(b.amount)) + '</td>' +
               '<td><button class="btn btn-icon btn-ghost" data-del-bonus="' + b.id + '" title="Remover"><i class="fa-solid fa-trash"></i></button></td>' +
               '</tr>';
           }).join("") + '</tbody>' +
-          '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="2">Subtotal</td>' +
+          '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="3">Subtotal</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(round2(sumBy(bonuses, "amount"))) + '</td><td></td></tr></tfoot>' +
           '</table>';
         Utils.qsa("[data-del-bonus]", sec).forEach(function (btn) {
@@ -669,23 +675,31 @@
       '<td class="text-right text-num text-danger">- ' + Utils.fmtMoney(row.consumoTotal) + '</td></tr></tfoot></table>';
   }
 
+  // Data padrão sugerida no lançamento de comissionamento esporádico — hoje,
+  // se hoje já cai dentro do período em exibição na tela; senão, o fim do
+  // período (ex.: revisando um mês fechado ou um corte personalizado que já
+  // passou), para o lançamento já nascer dentro da apuração em foco.
+  function defaultBonusDate() {
+    var range = currentRange();
+    var today = Utils.todayISO();
+    if (today >= range.start && today <= range.end) return today;
+    return range.end;
+  }
+
   // Lançamento livre de "Comissionamento Esporádico" — para premiar um
   // profissional fora da regra padrão de comissão (valor fixo, percentual
   // extra sobre uma venda específica) ou para descontar/deduzir algum
   // valor do comissionamento do mês (ex.: material quebrado, adiantamento).
+  // Tem uma data própria (não só mês de competência) para poder entrar na
+  // apuração pelo mesmo corte exato de atendimentos/consumo — ver bonusesFor().
   function openBonusModal(presetEmployeeId, onSaved) {
     var employees = DB.all("employees").filter(function (e) { return e.commissionRate > 0; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
     if (!employees.length) { Toast.show("Nenhum profissional comissionado cadastrado", "danger"); return; }
 
-    var months = [];
-    var today = Utils.todayISO();
-    for (var i = 0; i < 10; i++) months.push(Utils.monthKey(Utils.addMonths(today, -i)));
-
     var body =
       '<div class="form-grid">' +
         '<div class="form-field full"><label>Profissional</label>' + NameCombo.html({ id: "bm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: presetEmployeeId || "", disabled: !!presetEmployeeId, placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
-        '<div class="form-field"><label>Mês de Competência</label><select id="bm-month">' +
-          months.map(function (m) { return '<option value="' + m + '"' + (m === referenceMonthKey() ? " selected" : "") + '>' + Utils.monthLabel(m + "-01") + '</option>'; }).join("") + '</select></div>' +
+        '<div class="form-field"><label>Data do Lançamento</label><input type="date" id="bm-date" value="' + defaultBonusDate() + '"></div>' +
         '<div class="form-field"><label>Tipo</label><select id="bm-kind">' +
           '<option value="fixo">Valor fixo (bônus/prêmio)</option>' +
           '<option value="percentual">Percentual extra sobre uma venda/produto</option>' +
@@ -697,7 +711,6 @@
         '<div class="form-field" id="bm-pct-percent-wrap" style="display:none;"><label>Percentual Extra (%)</label><input type="number" step="0.1" min="0" id="bm-pct-percent"></div>' +
         '<div class="form-field" id="bm-desconto-wrap" style="display:none;"><label>Valor a Descontar (R$)</label><input type="text" id="bm-amount-desconto"></div>' +
       '</div>' +
-      (periodMode === "custom" ? '<div class="small text-muted mt-8">O comissionamento esporádico é lançado por mês de competência inteiro, mesmo com um corte de data personalizado ativo na tela — ele entrará no cálculo de qualquer intervalo que toque esse mês.</div>' : '') +
       '<div class="sale-total-bar" style="margin-top:12px;"><span id="bm-preview-label">Valor que será somado ao Devido</span><span id="bm-preview">R$ 0,00</span></div>';
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="bm-save">Salvar Lançamento</button>';
@@ -746,12 +759,16 @@
 
     box.querySelector("#bm-save").addEventListener("click", function () {
       var employeeId = presetEmployeeId || box.querySelector("#bm-employee").value;
-      var month = box.querySelector("#bm-month").value;
+      var date = box.querySelector("#bm-date").value;
+      if (!date) { Toast.show("Informe a data do lançamento", "danger"); return; }
       var kind = kindSel.value;
       var desc = box.querySelector("#bm-desc").value.trim();
       if (!desc) { Toast.show("Informe uma descrição", "danger"); return; }
 
-      var record = { employeeId: employeeId, month: month, kind: kind, description: desc };
+      // `month` continua sendo gravado (derivado da data) para compatibilidade
+      // com o Extrato de Comissão do profissional (extrato-comissao.js), que
+      // é sempre por mês e ainda filtra só por esse campo.
+      var record = { employeeId: employeeId, date: date, month: Utils.monthKey(date), kind: kind, description: desc };
       if (kind === "fixo") {
         var amount = Utils.moneyMaskToFloat(box.querySelector("#bm-amount-fixed"));
         if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
@@ -774,7 +791,7 @@
       DB.insert("commissionBonuses", record);
       var emp = DB.get("employees", employeeId);
       var verb = record.amount < 0 ? "Lançou desconto" : "Lançou comissionamento esporádico";
-      DB.log("Comissão", verb + " \"" + desc + "\" para " + (emp ? emp.name : "profissional") + " — " + Utils.fmtMoney(Math.abs(record.amount)) + " (ref. " + Utils.monthLabel(month + "-01") + ")");
+      DB.log("Comissão", verb + " \"" + desc + "\" para " + (emp ? emp.name : "profissional") + " — " + Utils.fmtMoney(Math.abs(record.amount)) + " (em " + Utils.fmtDate(date) + ")");
       Modal.close();
       Toast.show(record.amount < 0 ? "Desconto registrado" : "Comissionamento esporádico registrado", "success");
       if (onSaved) onSaved(); else render();
@@ -823,9 +840,14 @@
   // profissionais — separado do desconto automático de consumo interno
   // (esse é recorrente/operacional, não "esporádico"). Ver openBonusModal.
   function sporadicDiscountTotal() {
-    var touched = periodMode === "custom" ? touchedMonths(currentRange()) : null;
+    var range = currentRange();
+    var touched = periodMode === "custom" ? touchedMonths(range) : null;
     var total = DB.all("commissionBonuses")
-      .filter(function (b) { return (touched ? touched[b.month] : b.month === selectedMonth) && b.amount < 0; })
+      .filter(function (b) {
+        if (b.amount >= 0) return false;
+        if (b.date) return b.date >= range.start && b.date <= range.end;
+        return touched ? touched[b.month] : b.month === selectedMonth;
+      })
       .reduce(function (s, b) { return s + b.amount; }, 0);
     return round2(Math.abs(total));
   }
