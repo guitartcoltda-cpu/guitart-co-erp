@@ -551,10 +551,33 @@
         '</tr>';
     }
 
+    // "Produtos" mostra, por atendimento, a metade do profissional no
+    // consumo de insumos lançado naquele atendimento específico (Agenda →
+    // Concluir Atendimento) — mesmo padrão já usado no Extrato do
+    // Profissional (ver extrato-comissao.js). Consumo lançado manualmente no
+    // Estoque, sem vínculo com um atendimento, não aparece aqui linha a
+    // linha, só no total do subtítulo abaixo (consumoSectionHtml) e no KPI.
+    var consumoByAppt = {};
+    (row.consumoItems || []).forEach(function (c) {
+      if (!c.appointmentId) return;
+      consumoByAppt[c.appointmentId] = round2((consumoByAppt[c.appointmentId] || 0) + c.employeeShare);
+    });
+    var linkedConsumoTotal = 0;
     var mainLinesHtml = apptsMain.map(function (a) {
+      var s = servicesById[a.serviceId];
+      var c = clientsById[a.clientId];
       var split = Utils.apptCommissionSplit(a, e);
       var label = a.assistantId ? "com assistente — " + Utils.fmtMoney(split.salonShare) + " pagos pelo salão" : null;
-      return lineHtml(a, split.mainCommission, label);
+      var apptConsumo = consumoByAppt[a.id] || 0;
+      linkedConsumoTotal += apptConsumo;
+      return '<tr>' +
+        '<td>' + Utils.fmtDate(a.date) + ' · ' + a.time + '</td>' +
+        '<td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
+        '<td>' + Utils.escapeHtml(s ? s.name : "-") + (label ? ' <span class="small text-muted">(' + label + ')</span>' : '') + '</td>' +
+        '<td class="text-right text-num">' + Utils.fmtMoney(a.price) + '</td>' +
+        '<td class="text-right text-num' + (apptConsumo > 0 ? ' text-danger' : ' text-muted') + '">' + (apptConsumo > 0 ? "- " + Utils.fmtMoney(apptConsumo) : "-") + '</td>' +
+        '<td class="text-right text-num font-bold">' + Utils.fmtMoney(split.mainCommission) + '</td>' +
+        '</tr>';
     }).join("");
 
     var asstSectionHtml = "";
@@ -579,10 +602,11 @@
       '</div>' +
       '<h4 style="font-size:14px;margin-bottom:8px;">Atendimentos como Profissional Principal</h4>' +
       '<table class="data-table">' +
-      '<thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Comissão</th></tr></thead>' +
-      '<tbody>' + (mainLinesHtml || '<tr><td colspan="5" class="text-center text-muted">Nenhum atendimento concluído neste período</td></tr>') + '</tbody>' +
+      '<thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Produtos</th><th class="text-right">Comissão</th></tr></thead>' +
+      '<tbody>' + (mainLinesHtml || '<tr><td colspan="6" class="text-center text-muted">Nenhum atendimento concluído neste período</td></tr>') + '</tbody>' +
       '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="3">Total (' + apptsMain.length + ' atendimento' + (apptsMain.length === 1 ? "" : "s") + ')</td>' +
       '<td class="text-right text-num">' + Utils.fmtMoney(row.serviceRevenue) + '</td>' +
+      '<td class="text-right text-num' + (linkedConsumoTotal > 0 ? ' text-danger' : '') + '">' + (linkedConsumoTotal > 0 ? "- " + Utils.fmtMoney(round2(linkedConsumoTotal)) : "-") + '</td>' +
       '<td class="text-right text-num">' + Utils.fmtMoney(row.mainCommissionTotal) + '</td></tr></tfoot>' +
       '</table>' +
       asstSectionHtml +
