@@ -5,9 +5,8 @@
    para apurar comissão de profissionais pagos semanal/quinzenalmente,
    em vez de só por mês calendário inteiro.
 
-   Roda em Node via jsdom (script clássico, sem módulos — mesma
-   estratégia usada em test/ai-assistant.test.js): carrega utils.js,
-   consumo.js e comissoes.js de verdade (os arquivos publicados), com
+   Roda em Node via jsdom (script clássico, sem módulos): carrega
+   utils.js, consumo.js e comissoes.js de verdade (os arquivos publicados), com
    um `DB` FALSO em memória preenchido com um cenário conhecido, para
    poder conferir os números exatos que a tabela renderiza.
 
@@ -65,9 +64,8 @@ loadScriptInWindow("assets/js/utils.js");
 const Utils = window.Utils;
 
 // ----------------------------------------------------------------
-// Cenário fixo de dados, relativo à data real de execução do teste
-// (mesma técnica do teste do Assistente IA) — evita datas fixas que
-// quebrariam o teste dependendo de quando ele é rodado.
+// Cenário fixo de dados, relativo à data real de execução do teste —
+// evita datas fixas que quebrariam o teste dependendo de quando ele é rodado.
 // ----------------------------------------------------------------
 const today = Utils.todayISO();
 const currentMonthKey = Utils.monthKey(today);
