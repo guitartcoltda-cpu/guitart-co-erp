@@ -65,18 +65,22 @@
 
         <div class="filters-bar">
           <div class="form-field"><label>Mês de Referência</label><select id="cm-month"></select></div>
-          <div class="hint" style="align-self:center;color:var(--gray-500);font-size:12px;">A comissão é calculada sobre a receita de serviços concluídos no mês (não incide sobre venda de produtos), somada a eventuais lançamentos de comissionamento esporádico do mês</div>
+          <div class="pf-custom-range" id="cm-custom-range" style="display:none;">
+            <div class="form-field"><label>De</label><input type="date" id="cm-date-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="cm-date-end"></div>
+          </div>
+          <div class="hint" id="cm-hint" style="align-self:center;color:var(--gray-500);font-size:12px;">A comissão é calculada sobre a receita de serviços concluídos no período (não incide sobre venda de produtos), somada a eventuais lançamentos de comissionamento esporádico do(s) mês(es) do período</div>
         </div>
 
         <div class="kpi-grid" id="com-summary" style="margin-bottom:16px;"></div>
 
         <div class="card mb-16">
-          <div class="card-header"><div><h3>Comissão por Profissional</h3><div class="card-header-sub">Mês selecionado</div></div></div>
+          <div class="card-header"><div><h3>Comissão por Profissional</h3><div class="card-header-sub" id="com-chart-sub">Mês selecionado</div></div></div>
           <div class="card-body"><div id="chart-commission"></div></div>
         </div>
 
         <div class="card mb-16">
-          <div class="card-header"><div><h3>Ranking — Quem Mais Recebe</h3><div class="card-header-sub">Top profissionais por valor devido no mês</div></div></div>
+          <div class="card-header"><div><h3>Ranking — Quem Mais Recebe</h3><div class="card-header-sub" id="com-ranking-sub">Top profissionais por valor devido no mês</div></div></div>
           <div class="card-body"><div id="chart-commission-ranking"></div></div>
         </div>
 
