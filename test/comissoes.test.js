@@ -62,6 +62,7 @@ function loadScriptInWindow(relPath) {
 
 loadScriptInWindow("assets/js/utils.js");
 const Utils = window.Utils;
+const Modal = window.Modal;
 
 // ----------------------------------------------------------------
 // Cenário fixo de dados, relativo à data real de execução do teste —
@@ -103,7 +104,12 @@ const tables = {
     { id: "b3", employeeId: "emp1", month: currentMonthKey, date: d10, kind: "fixo", description: "Bônus pontual do dia 10", amount: 15, refValue: null, refPercent: null }
   ],
   productConsumptions: [
-    { id: "c1", employeeId: "emp1", productId: "p1", quantity: 10, unit: "ml", totalCost: 20, employeeShare: 10, companyShare: 10, date: d10, notes: "" }
+    // vinculado ao atendimento a2 (dia 10) — usado tanto para descontar o
+    // Devido (já coberto pelos cenários A-H) quanto para conferir a coluna
+    // "Produtos" no modal de detalhes (cenário I), que mostra esse desconto
+    // junto à linha do atendimento correspondente (mesmo padrão do Extrato
+    // do Profissional).
+    { id: "c1", employeeId: "emp1", productId: "p1", appointmentId: "a2", quantity: 10, unit: "ml", totalCost: 20, employeeShare: 10, companyShare: 10, date: d10, notes: "" }
   ],
   transactions: [
     // Pagamento pré-existente do mês inteiro (sem tag de intervalo — simula um pagamento feito antes desta funcionalidade existir, ou feito em modo mensal).
@@ -337,6 +343,48 @@ function setCustomRange(start, end) {
     // Comissão = 0; b1/b2 sem data ainda somam 30 (fallback); b3 (data=d10) corretamente excluído; consumo = 0
     // Devido = 0+30-0 = 30
     check("H2: Devido = 30 (só o fallback de b1/b2 sem data; b3, com data no dia 10, corretamente excluído do dia 09)", moneyIn(cellText(row, 6), 30), cellText(row, 6));
+  })();
+
+  // ---- I. Modal "Ver detalhes" — coluna "Produtos" mostra o desconto de
+  // consumo por atendimento (mesmo padrão do Extrato do Profissional),
+  // além da seção "Desconto por Consumo de Insumos" já existente abaixo. ----
+  Utils.qs("#cm-month").value = currentMonthKey;
+  Utils.qs("#cm-month").dispatchEvent(new window.Event("change", { bubbles: true }));
+  await flush();
+  (function () {
+    var row = anaRow();
+    check("I: linha da Ana existe para abrir detalhes", !!row);
+    if (!row) return;
+    var detailsBtn = row.querySelector("[data-details]");
+    check("I: botão 'Ver detalhes' existe", !!detailsBtn);
+    if (!detailsBtn) return;
+    detailsBtn.dispatchEvent(new window.Event("click", { bubbles: true }));
+    var modalBody = document.querySelector(".modal-body");
+    check("I: modal de detalhes abriu", !!modalBody);
+    if (!modalBody) return;
+    var mainTable = modalBody.querySelector("table");
+    var headerRow = mainTable && mainTable.querySelector("thead tr");
+    check("I: cabeçalho da tabela de atendimentos tem coluna 'Produtos'", !!headerRow && headerRow.textContent.indexOf("Produtos") !== -1, headerRow && headerRow.textContent);
+    var bodyRows = mainTable ? mainTable.querySelectorAll("tbody tr") : [];
+    check("I: tabela principal lista os 3 atendimentos do mês", bodyRows.length === 3, bodyRows.length);
+    var linkedOk = false, othersShowDash = true;
+    bodyRows.forEach(function (tr) {
+      var tds = tr.querySelectorAll("td");
+      if (tds.length < 5) return;
+      var dataHora = tds[0].textContent;
+      var produtos = tds[4].textContent.trim();
+      if (dataHora.indexOf(Utils.fmtDate(d10)) === 0) {
+        linkedOk = produtos.indexOf("-") === 0 && moneyIn(produtos, 10);
+      } else if (produtos !== "-") {
+        othersShowDash = false;
+      }
+    });
+    check("I: atendimento do dia 10 (vinculado ao consumo) mostra '- R$10,00' em Produtos", linkedOk);
+    check("I: atendimentos sem consumo vinculado mostram '-' em Produtos", othersShowDash);
+    var tfootProdutos = mainTable && mainTable.querySelector("tfoot td:nth-child(3)");
+    check("I: subtotal de Produtos no rodapé = 10 (só o vinculado a a2)", tfootProdutos && moneyIn(tfootProdutos.textContent, 10), tfootProdutos && tfootProdutos.textContent);
+    check("I: seção 'Desconto por Consumo de Insumos' continua exibida abaixo (detalhe por produto)", modalBody.textContent.indexOf("Desconto por Consumo de Insumos") !== -1);
+    Modal.close();
   })();
 
   console.log("");
