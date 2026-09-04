@@ -50,6 +50,7 @@
           <button class="tab-btn active" data-panel="p-cc">Centros de Custo</button>
           <button class="tab-btn" data-panel="p-cat">Categorias</button>
           <button class="tab-btn" data-panel="p-srv">Serviços</button>
+          <button class="tab-btn" data-panel="p-paymethods">Formas de Pagamento</button>
           <button class="tab-btn" data-panel="p-roles">Cargos</button>
           <button class="tab-btn" data-panel="p-acessos">Acessos</button>
           <button class="tab-btn" data-panel="p-groups">Grupos de Acesso</button>
@@ -80,6 +81,11 @@
           <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-roles"></table></div></div>
         </div>
 
+        <div class="tab-panel" id="p-paymethods">
+          <div class="toolbar"><div class="small text-muted">Formas de pagamento disponíveis ao concluir um atendimento (Agenda → Concluir/Fechar Conta). Uma forma marcada como "Parceria" não cobra nada do cliente — o valor do atendimento vira só a base para dividir o custo entre o profissional e o salão. Dica: crie também uma categoria "Parceria" (tipo Despesa) em Categorias para organizar esses lançamentos no Financeiro.</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-paymethod"><i class="fa-solid fa-plus"></i> Nova Forma de Pagamento</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-paymethods"></table></div></div>
+        </div>
+
         <div class="tab-panel" id="p-acessos">
           <div class="toolbar"><div class="small text-muted">Cadastro de usuários com acesso ao sistema. Necessário CPF, nome completo e senha (mínimo 6 dígitos, apenas números).</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-user"><i class="fa-solid fa-user-plus"></i> Novo Acesso</button></div></div>
           <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-users"></table></div></div>
@@ -91,7 +97,7 @@
         </div>
 
         <div class="tab-panel" id="p-approvals">
-          <div class="toolbar"><div class="small text-muted">Solicitações de alteração de comissão, desconto em consumo de insumos e parcelamento acima de 3x, feitas por qualquer usuário — só um Administrador ou alguém com a permissão "Pode aprovar solicitações" (aba Permissões) pode aprovar ou recusar.</div></div>
+          <div class="toolbar"><div class="small text-muted">Solicitações de alteração de comissão, divisão de custo em atendimentos de Parceria, desconto em consumo de insumos e parcelamento acima de 3x, feitas por qualquer usuário — só um Administrador ou alguém com a permissão "Pode aprovar solicitações" (aba Permissões) pode aprovar ou recusar.</div></div>
           <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-approvals"></table></div></div>
         </div>
 
