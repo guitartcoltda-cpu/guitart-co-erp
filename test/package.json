@@ -1,0 +1,12 @@
+{
+  "name": "salao-erp-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Testes automatizados do Salão ERP (motor do Assistente IA, etc.). Rodar com: npm install && npm test",
+  "scripts": {
+    "test": "node ai-assistant.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
