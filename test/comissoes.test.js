@@ -94,8 +94,15 @@ const tables = {
   categories: [{ id: "cat-comissao", name: "Comissões" }],
   costCenters: [{ id: "cc-rh", key: "rh" }],
   commissionBonuses: [
+    // b1/b2 simulam lançamentos ANTIGOS, de antes da apuração passar a usar
+    // a data exata (só têm `month`, sem `date`) — devem continuar entrando
+    // pela aproximação por mês tocado (fallback em bonusesFor/sporadicDiscountTotal).
     { id: "b1", employeeId: "emp1", month: currentMonthKey, kind: "fixo", description: "Bônus meta", amount: 50, refValue: null, refPercent: null },
-    { id: "b2", employeeId: "emp1", month: currentMonthKey, kind: "desconto", description: "Desconto material", amount: -20, refValue: null, refPercent: null }
+    { id: "b2", employeeId: "emp1", month: currentMonthKey, kind: "desconto", description: "Desconto material", amount: -20, refValue: null, refPercent: null },
+    // b3 é um lançamento NOVO, com data própria (dia 10) — deve entrar só em
+    // cortes personalizados que efetivamente tocam o dia 10, ao contrário de
+    // b1/b2 que entram em qualquer corte que toque o mês inteiro.
+    { id: "b3", employeeId: "emp1", month: currentMonthKey, date: d10, kind: "fixo", description: "Bônus pontual do dia 10", amount: 15, refValue: null, refPercent: null }
   ],
   productConsumptions: [
     { id: "c1", employeeId: "emp1", productId: "p1", quantity: 10, unit: "ml", totalCost: 20, employeeShare: 10, companyShare: 10, date: d10, notes: "" }
@@ -202,11 +209,11 @@ function setCustomRange(start, end) {
     check("A: linha da Ana existe", !!row);
     if (!row) return;
     check("A: Receita de Serviços = 450 (100+200+150, exclui mês anterior)", moneyIn(cellText(row, 4), 450), cellText(row, 4));
-    // Devido = comissão (20% de 450 = 90) + esporádico (50-20=30) - consumo (10) = 110
-    check("A: Devido = 110", moneyIn(cellText(row, 6), 110), cellText(row, 6));
+    // Devido = comissão (20% de 450 = 90) + esporádico (50-20+15=45, inclui b1/b2 sem data e b3 com data) - consumo (10) = 125
+    check("A: Devido = 125", moneyIn(cellText(row, 6), 125), cellText(row, 6));
     // Pago = 30 (t1, casa por relatedMonth em modo mensal)
     check("A: Pago = 30", moneyIn(cellText(row, 7), 30), cellText(row, 7));
-    check("A: Saldo = 80", moneyIn(cellText(row, 8), 80), cellText(row, 8));
+    check("A: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
   })();
 
   // ---- B. Personalizado: 05 a 10 (exclui atendimento do dia 20) ----
@@ -222,12 +229,13 @@ function setCustomRange(start, end) {
     if (!row) return;
     // Receita = 100+200 = 300 (exclui dia 20)
     check("B: Receita de Serviços = 300", moneyIn(cellText(row, 4), 300), cellText(row, 4));
-    // Comissão = 20+40=60; esporádico ainda entra (mesmo mês tocado) = 30; consumo do dia 10 entra = 10
-    // Devido = 60+30-10 = 80
-    check("B: Devido = 80 (esporádico do mês inteiro ainda soma; consumo do dia 10 desconta)", moneyIn(cellText(row, 6), 80), cellText(row, 6));
+    // Comissão = 20+40=60; b1/b2 (sem data, fallback por mês tocado) somam 30;
+    // b3 (data=dia 10) está DENTRO do corte 05-10, então também entra = +15;
+    // consumo do dia 10 entra = 10. Devido = 60+30+15-10 = 95
+    check("B: Devido = 95 (b1/b2 pelo fallback de mês + b3 pela data exata, dentro do corte; consumo do dia 10 desconta)", moneyIn(cellText(row, 6), 95), cellText(row, 6));
     // Pago = 0 — o pagamento t1 não tem relatedRangeStart/End, não conta num corte personalizado
     check("B: Pago = 0 (pagamento do mês inteiro não vaza para o corte semanal)", moneyIn(cellText(row, 7), 0), cellText(row, 7));
-    check("B: Saldo = 80", moneyIn(cellText(row, 8), 80), cellText(row, 8));
+    check("B: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
   })();
 
   // ---- C. Personalizado: 11 a 20 (exclui os atendimentos dos dias 05 e 10, e o consumo do dia 10) ----
@@ -239,9 +247,11 @@ function setCustomRange(start, end) {
     check("C: linha da Ana existe (custom 11-20)", !!row);
     if (!row) return;
     check("C: Receita de Serviços = 150 (só o atendimento do dia 20)", moneyIn(cellText(row, 4), 150), cellText(row, 4));
-    // Comissão = 30; esporádico do mês ainda soma = 30; consumo do dia 10 NÃO entra (fora do intervalo) = 0
-    // Devido = 30+30-0 = 60
-    check("C: Devido = 60 (consumo do dia 10 corretamente excluído deste corte)", moneyIn(cellText(row, 6), 60), cellText(row, 6));
+    // Comissão = 30; b1/b2 (sem data, fallback por mês tocado) ainda somam = 30;
+    // b3 (data=dia 10) fica FORA do corte 11-20 e é corretamente excluído (ao
+    // contrário de b1/b2, que continuam entrando por não terem data própria);
+    // consumo do dia 10 também não entra = 0. Devido = 30+30+0-0 = 60
+    check("C: Devido = 60 (b3, com data no dia 10, corretamente excluído deste corte; b1/b2 sem data continuam pelo fallback; consumo do dia 10 excluído)", moneyIn(cellText(row, 6), 60), cellText(row, 6));
     check("C: Pago = 0", moneyIn(cellText(row, 7), 0), cellText(row, 7));
     check("C: Saldo = 60", moneyIn(cellText(row, 8), 60), cellText(row, 8));
   })();
@@ -263,11 +273,11 @@ function setCustomRange(start, end) {
   var newTxn = tables.transactions[tables.transactions.length - 1];
   check("D: novo lançamento tem relatedRangeStart/End = 05/10", newTxn && newTxn.relatedRangeStart === d05 && newTxn.relatedRangeEnd === d10, newTxn);
   check("D: novo lançamento tem relatedMonth = mês corrente (mês em que o corte termina)", newTxn && newTxn.relatedMonth === currentMonthKey, newTxn && newTxn.relatedMonth);
-  check("D: valor pago = 80 (saldo do corte 05-10 antes do pagamento)", newTxn && Math.abs(newTxn.amount - 80) < 0.01, newTxn && newTxn.amount);
+  check("D: valor pago = 95 (saldo do corte 05-10 antes do pagamento)", newTxn && Math.abs(newTxn.amount - 95) < 0.01, newTxn && newTxn.amount);
 
   (function () {
     var row = anaRow();
-    check("D: após pagar, Pago = 80 e Saldo = 0 no corte 05-10", row && moneyIn(cellText(row, 7), 80) && moneyIn(cellText(row, 8), 0), row && [cellText(row, 7), cellText(row, 8)]);
+    check("D: após pagar, Pago = 95 e Saldo = 0 no corte 05-10", row && moneyIn(cellText(row, 7), 95) && moneyIn(cellText(row, 8), 0), row && [cellText(row, 7), cellText(row, 8)]);
   })();
 
   // ---- E. Volta ao modo mensal — o pagamento do corte semanal deve somar ao pago do mês inteiro ----
@@ -277,8 +287,8 @@ function setCustomRange(start, end) {
 
   (function () {
     var row = anaRow();
-    // Pago = 30 (t1) + 80 (pagamento do corte semanal, mesmo relatedMonth) = 110 = Devido inteiro do mês -> Saldo 0
-    check("E: modo mensal soma pagamento avulso + pagamento do corte semanal (Pago=110)", row && moneyIn(cellText(row, 7), 110), row && cellText(row, 7));
+    // Pago = 30 (t1) + 95 (pagamento do corte semanal, mesmo relatedMonth) = 125 = Devido inteiro do mês -> Saldo 0
+    check("E: modo mensal soma pagamento avulso + pagamento do corte semanal (Pago=125)", row && moneyIn(cellText(row, 7), 125), row && cellText(row, 7));
     check("E: Saldo do mês fecha em 0", row && moneyIn(cellText(row, 8), 0), row && cellText(row, 8));
   })();
 
@@ -299,6 +309,36 @@ function setCustomRange(start, end) {
   (function () {
     var sub = document.getElementById("com-chart-sub");
     check("G: card-header-sub mostra o período personalizado, não 'Mês selecionado'", sub && sub.textContent.indexOf("Período:") === 0, sub && sub.textContent);
+  })();
+
+  // ---- H. Precisão dia a dia do esporádico COM data (b3), isolada de atendimentos/consumo ----
+  // Corte de um único dia (d10): pega o atendimento a2 (200), o consumo c1
+  // (10) e o esporádico b3 (data=d10, +15) — todos datados exatamente nesse dia.
+  setCustomRange(d10, d10);
+  await flush();
+  (function () {
+    var row = anaRow();
+    check("H1: corte de um único dia (d10) existe", !!row);
+    if (!row) return;
+    check("H1: Receita = 200 (só o atendimento do dia 10)", moneyIn(cellText(row, 4), 200), cellText(row, 4));
+    // Comissão = 40; b1/b2 sem data somam 30 (fallback, mês inteiro tocado); b3 com data=d10 também entra = +15; consumo do dia 10 = 10
+    // Devido = 40+30+15-10 = 75
+    check("H1: Devido = 75 (b3 entra por bater exatamente com o dia do corte)", moneyIn(cellText(row, 6), 75), cellText(row, 6));
+  })();
+
+  // Corte de um único dia sem nenhum atendimento/consumo/b3 (d09) — só os
+  // esporádicos SEM data (b1/b2) ainda aparecem, pelo fallback de mês
+  // tocado; b3 (data=d10) fica corretamente de fora.
+  setCustomRange(currentMonthKey + "-09", currentMonthKey + "-09");
+  await flush();
+  (function () {
+    var row = anaRow();
+    check("H2: corte de um único dia (d09, sem nada datado) existe", !!row);
+    if (!row) return;
+    check("H2: Receita = 0 (nenhum atendimento no dia 09)", moneyIn(cellText(row, 4), 0), cellText(row, 4));
+    // Comissão = 0; b1/b2 sem data ainda somam 30 (fallback); b3 (data=d10) corretamente excluído; consumo = 0
+    // Devido = 0+30-0 = 30
+    check("H2: Devido = 30 (só o fallback de b1/b2 sem data; b3, com data no dia 10, corretamente excluído do dia 09)", moneyIn(cellText(row, 6), 30), cellText(row, 6));
   })();
 
   console.log("");
