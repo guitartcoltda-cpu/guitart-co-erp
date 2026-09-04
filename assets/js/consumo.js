@@ -174,6 +174,19 @@
       });
       var total = items.reduce(function (s, c) { return s + (Number(c.employeeShare) || 0); }, 0);
       return { total: round2(total), items: items };
+    },
+
+    // Mesma soma, mas por um intervalo de datas (início/fim ISO, ambos
+    // inclusive) em vez de um mês calendário inteiro — usado no
+    // comissionamento com corte de data personalizado (profissionais pagos
+    // semanal/quinzenal). Como productConsumptions já guarda uma data real
+    // por lançamento, o filtro é exato, sem aproximação por mês.
+    deductionForRange: function (employeeId, range) {
+      var items = DB.all("productConsumptions").filter(function (c) {
+        return c.employeeId === employeeId && c.date >= range.start && c.date <= range.end;
+      });
+      var total = items.reduce(function (s, c) { return s + (Number(c.employeeShare) || 0); }, 0);
+      return { total: round2(total), items: items };
     }
   };
 

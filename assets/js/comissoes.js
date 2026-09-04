@@ -2,6 +2,13 @@
   "use strict";
 
   var selectedMonth = "";
+  // Por padrão a apuração é por mês calendário (selectedMonth). Alguns
+  // profissionais recebem semanal/quinzenal, então a tela também permite
+  // "Personalizar data de corte": periodMode passa a "custom" e customRange
+  // ({start,end}, ambas ISO YYYY-MM-DD) vira a fonte da verdade do período —
+  // ver currentRange().
+  var periodMode = "month"; // "month" | "custom"
+  var customRange = null;
   var selectedIds = {};
   var commissionSortState = { field: null, dir: "asc" };
   var COMMISSION_SORT_GETTERS = {
@@ -24,9 +31,53 @@
       o.value = m; o.textContent = Utils.monthLabel(m + "-01") + (idx === 0 ? " (atual)" : idx === 1 ? " (fechado anteriormente)" : "");
       sel.appendChild(o);
     });
+    var customOpt = document.createElement("option");
+    customOpt.value = "custom";
+    customOpt.textContent = "Personalizar data de corte…";
+    sel.appendChild(customOpt);
+
     selectedMonth = months[0]; // default: mês atual (ainda em aberto para pagamento)
     sel.value = selectedMonth;
-    sel.addEventListener("change", function (e) { selectedMonth = e.target.value; selectedIds = {}; render(); });
+
+    var rangeWrap = Utils.qs("#cm-custom-range");
+    var startInput = Utils.qs("#cm-date-start");
+    var endInput = Utils.qs("#cm-date-end");
+
+    function showCustomRangeFields(show) {
+      if (rangeWrap) rangeWrap.style.display = show ? "" : "none";
+      if (show && startInput && endInput) { startInput.value = customRange.start; endInput.value = customRange.end; }
+    }
+
+    function applyCustomRangeInputs() {
+      if (!startInput.value || !endInput.value) return;
+      var s = startInput.value, en = endInput.value;
+      if (s > en) { var tmp = s; s = en; en = tmp; } // sempre mantém De <= Até, independente de qual campo foi editado
+      customRange = { start: s, end: en };
+      startInput.value = s; endInput.value = en;
+      selectedIds = {};
+      render();
+    }
+
+    sel.addEventListener("change", function (e) {
+      if (e.target.value === "custom") {
+        periodMode = "custom";
+        if (!customRange) {
+          // ponto de partida padrão: do início do mês corrente até hoje —
+          // o usuário ajusta De/Até para o corte semanal/quinzenal desejado
+          customRange = { start: today.slice(0, 8) + "01", end: today };
+        }
+        showCustomRangeFields(true);
+      } else {
+        periodMode = "month";
+        selectedMonth = e.target.value;
+        showCustomRangeFields(false);
+      }
+      selectedIds = {};
+      render();
+    });
+    if (startInput) startInput.addEventListener("change", applyCustomRangeInputs);
+    if (endInput) endInput.addEventListener("change", applyCustomRangeInputs);
+
     Utils.qs("#btn-new-bonus").addEventListener("click", function () { openBonusModal(null); });
     var bulkBtn = Utils.qs("#btn-com-bulk-pay");
     if (bulkBtn) bulkBtn.addEventListener("click", bulkRegisterPayment);
@@ -37,21 +88,67 @@
     render();
   }
 
-  // Último dia do mês de referência selecionado, exceto quando o mês
-  // selecionado é o mês corrente — nesse caso o "corte" é hoje, já que o
-  // mês ainda está em andamento e o valor devido pode continuar mudando.
-  function cutoffDateForSelectedMonth() {
-    var today = Utils.todayISO();
-    if (selectedMonth === Utils.monthKey(today)) return today;
-    var parts = selectedMonth.split("-").map(Number);
+  function monthLastDay(monthKey) {
+    var parts = monthKey.split("-").map(Number);
     var lastDay = new Date(parts[0], parts[1], 0).getDate();
-    return selectedMonth + "-" + String(lastDay).padStart(2, "0");
+    return monthKey + "-" + String(lastDay).padStart(2, "0");
+  }
+
+  // Intervalo de datas (início/fim, ambos inclusive) que efetivamente
+  // delimita o que entra no cálculo — o mês de referência inteiro, ou o
+  // intervalo personalizado quando "Personalizar data de corte" está ativo.
+  function currentRange() {
+    if (periodMode === "custom" && customRange) return customRange;
+    return { start: selectedMonth + "-01", end: monthLastDay(selectedMonth) };
+  }
+
+  // Conjunto de meses "tocados" pelo intervalo — usado para os lançamentos
+  // que só têm granularidade de mês de competência (comissionamento
+  // esporádico), já que eles não têm uma data específica dentro do mês.
+  // Um corte personalizado mais curto que o mês ainda assim traz para o
+  // cálculo os esporádicos lançados para aquele mês inteiro (ver hint na tela).
+  function touchedMonths(range) {
+    var months = {};
+    var cur = range.start.slice(0, 7);
+    var endMonth = range.end.slice(0, 7);
+    var guard = 0;
+    while (cur <= endMonth && guard < 240) {
+      months[cur] = true;
+      cur = Utils.monthKey(Utils.addMonths(cur + "-01", 1));
+      guard++;
+    }
+    return months;
+  }
+
+  // Texto do período exibido para o usuário (PDF, WhatsApp, modais).
+  function periodLabel() {
+    if (periodMode === "custom" && customRange) return Utils.fmtDate(customRange.start) + " a " + Utils.fmtDate(customRange.end);
+    return Utils.monthLabel(selectedMonth + "-01");
+  }
+
+  // Mês de competência a gravar em lançamentos que continuam sendo
+  // month-based (relatedMonth de pagamentos, mês padrão sugerido no modal de
+  // esporádico) mesmo quando o corte é personalizado — usa o mês em que o
+  // intervalo termina, já que é o mês em que o corte efetivamente fecha.
+  function referenceMonthKey() {
+    if (periodMode === "custom" && customRange) return Utils.monthKey(customRange.end);
+    return selectedMonth;
+  }
+
+  // Data de corte considerada para PDF/WhatsApp: fim do período, exceto
+  // quando esse fim ainda está no futuro (mês corrente em andamento, ou um
+  // intervalo personalizado que vai além de hoje) — nesse caso o corte é
+  // hoje, já que o valor devido pode continuar mudando até lá.
+  function cutoffDate() {
+    var today = Utils.todayISO();
+    var range = currentRange();
+    return range.end > today ? today : range.end;
   }
 
   function summaryLines() {
     var rows = computeRows().filter(function (r) { return r.devido > 0.009; });
-    var cutoff = cutoffDateForSelectedMonth();
-    return { rows: rows, cutoff: cutoff, monthLabel: Utils.monthLabel(selectedMonth + "-01") };
+    var cutoff = cutoffDate();
+    return { rows: rows, cutoff: cutoff, monthLabel: periodLabel() };
   }
 
   function generateCommissionPdf() {
@@ -70,7 +167,7 @@
     y += 22;
     doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
-    doc.text("Mês de referência: " + data.monthLabel, 40, y);
+    doc.text((periodMode === "custom" ? "Período de referência: " : "Mês de referência: ") + data.monthLabel, 40, y);
     y += 16;
     doc.text("Data de corte considerada: " + Utils.fmtDate(data.cutoff), 40, y);
     y += 16;
@@ -105,7 +202,7 @@
     doc.setFont("helvetica", "bold");
     doc.text("Total devido no período: " + Utils.fmtMoney(total), 40, y);
 
-    doc.save("comissoes_" + selectedMonth + ".pdf");
+    doc.save("comissoes_" + (periodMode === "custom" ? customRange.start + "_a_" + customRange.end : selectedMonth) + ".pdf");
     DB.log("Comissão", "Gerou PDF resumo de comissões (ref. " + data.monthLabel + ")");
     Toast.show("PDF de comissões gerado", "success");
   }
@@ -158,8 +255,15 @@
     DB.log("Comissão", "Abriu envio de resumo de comissões para administradores (ref. " + data.monthLabel + ")");
   }
 
-  function bonusesFor(employeeId, monthKey) {
-    return DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && b.month === monthKey; });
+  // Comissionamento esporádico não tem data própria, só mês de competência —
+  // em modo mensal, casa exatamente com o mês selecionado; em modo
+  // personalizado, entram os esporádicos de todo mês tocado pelo intervalo.
+  function bonusesFor(employeeId) {
+    if (periodMode === "custom") {
+      var touched = touchedMonths(currentRange());
+      return DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && touched[b.month]; });
+    }
+    return DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && b.month === selectedMonth; });
   }
 
   // Fonte da verdade: os agendamentos concluídos do mês (e não os
@@ -167,12 +271,13 @@
   // principal, o eventual assistente e as taxas de comissão específicas do
   // atendimento — Utils.apptCommissionSplit() faz a divisão entre os dois.
   function computeRows() {
-    var appointments = DB.all("appointments").filter(function (a) { return a.status === "concluido" && Utils.monthKey(a.date) === selectedMonth; });
+    var range = currentRange();
+    var appointments = DB.all("appointments").filter(function (a) { return a.status === "concluido" && a.date >= range.start && a.date <= range.end; });
     var employeesAll = DB.all("employees");
     // Índices montados uma única vez por chamada (em vez de um .find()/
     // .filter() varrendo o array inteiro para cada funcionário/agendamento
     // dentro dos loops abaixo) — mesmo resultado, custo O(n) em vez de
-    // O(n²) para o mês selecionado.
+    // O(n²) para o período selecionado.
     var employeesById = {};
     employeesAll.forEach(function (e) { employeesById[e.id] = e; });
     var apptsByMainId = {}, apptsByAssistantId = {};
@@ -183,10 +288,18 @@
     var allTransactions = DB.all("transactions");
     var catId = commissionCatId();
     var txnsByEmployeeId = {};
+    // Em modo mensal, "Pago" soma qualquer pagamento de comissão gravado
+    // para o mês (relatedMonth), inclusive os que vieram de cortes
+    // personalizados anteriores dentro do mesmo mês. Em modo personalizado,
+    // só conta o que foi pago exatamente para este mesmo intervalo
+    // (relatedRangeStart/End) — evita contar de novo, numa semana, um
+    // pagamento feito para outra semana do mesmo mês.
     allTransactions.forEach(function (t) {
-      if (t.type === "despesa" && t.categoryId === catId && t.relatedMonth === selectedMonth && t.employeeId) {
-        (txnsByEmployeeId[t.employeeId] || (txnsByEmployeeId[t.employeeId] = [])).push(t);
-      }
+      if (t.type !== "despesa" || t.categoryId !== catId || !t.employeeId) return;
+      var matches = periodMode === "custom"
+        ? (t.relatedRangeStart === range.start && t.relatedRangeEnd === range.end)
+        : (t.relatedMonth === selectedMonth);
+      if (matches) (txnsByEmployeeId[t.employeeId] || (txnsByEmployeeId[t.employeeId] = [])).push(t);
     });
     var assistantIds = apptsByAssistantId;
     var employees = employeesAll.filter(function (e) { return e.commissionRate > 0 || assistantIds[e.id]; });
@@ -205,9 +318,11 @@
       mainCommissionTotal = round2(mainCommissionTotal);
       assistantCommissionTotal = round2(assistantCommissionTotal);
       var baseComissao = round2(mainCommissionTotal + assistantCommissionTotal);
-      var bonuses = bonusesFor(e.id, selectedMonth);
+      var bonuses = bonusesFor(e.id);
       var bonusTotal = round2(sumBy(bonuses, "amount"));
-      var consumo = (window.Consumo ? Consumo.deductionFor(e.id, selectedMonth) : { total: 0, items: [] });
+      var consumo = window.Consumo
+        ? (periodMode === "custom" ? Consumo.deductionForRange(e.id, range) : Consumo.deductionFor(e.id, selectedMonth))
+        : { total: 0, items: [] };
       var devido = round2(baseComissao + bonusTotal - consumo.total);
       var pagoTxns = txnsByEmployeeId[e.id] || [];
       var pago = sumBy(pagoTxns, "amount");
@@ -238,6 +353,11 @@
     var totalDevido = rows.reduce(function (s, r) { return s + r.devido; }, 0);
     var totalPago = rows.reduce(function (s, r) { return s + r.pago; }, 0);
     var totalAberto = rows.reduce(function (s, r) { return s + Math.max(0, r.saldo); }, 0);
+
+    var chartSub = document.getElementById("com-chart-sub");
+    if (chartSub) chartSub.textContent = periodMode === "custom" ? "Período: " + periodLabel() : "Mês selecionado";
+    var rankingSub = document.getElementById("com-ranking-sub");
+    if (rankingSub) rankingSub.textContent = "Top profissionais por valor devido" + (periodMode === "custom" ? " — " + periodLabel() : " no mês");
 
     document.getElementById("com-summary").innerHTML = [
       kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#2a78d6", "#e3eefb"),
@@ -369,24 +489,28 @@
     if (!ids.length) return;
     var rows = computeRows();
     var today = Utils.todayISO();
+    var range = currentRange();
+    var refMonth = referenceMonthKey();
     var count = 0, total = 0;
     var ccRh = DB.findOne("costCenters", function (c) { return c.key === "rh"; });
     DB.batch(function () {
       ids.forEach(function (id) {
         var row = rows.find(function (r) { return r.employee.id === id; });
         if (!row || row.saldo <= 0.01) return;
-        DB.insert("transactions", {
-          type: "despesa", description: "Comissão - " + row.employee.name + " (ref. " + Utils.monthLabel(selectedMonth + "-01") + ")",
+        var txn = {
+          type: "despesa", description: "Comissão - " + row.employee.name + " (ref. " + periodLabel() + ")",
           amount: round2(row.saldo), date: today, categoryId: commissionCatId(),
           costCenterId: ccRh ? ccRh.id : null,
           paymentMethod: "Transferência", status: "pago", employeeId: row.employee.id,
-          relatedMonth: selectedMonth, reconciled: false
-        });
+          relatedMonth: refMonth, reconciled: false
+        };
+        if (periodMode === "custom") { txn.relatedRangeStart = range.start; txn.relatedRangeEnd = range.end; }
+        DB.insert("transactions", txn);
         total += row.saldo;
         count++;
       });
     });
-    DB.log("Comissão", "Registrou pagamento em lote de comissão para " + count + " profissional(is) — " + Utils.fmtMoney(total) + " (ref. " + Utils.monthLabel(selectedMonth + "-01") + ")");
+    DB.log("Comissão", "Registrou pagamento em lote de comissão para " + count + " profissional(is) — " + Utils.fmtMoney(total) + " (ref. " + periodLabel() + ")");
     Toast.show(count + " pagamento(s) de comissão registrado(s)", "success");
     selectedIds = {};
     render();
@@ -405,7 +529,8 @@
     var servicesById = {}; services.forEach(function (s) { servicesById[s.id] = s; });
     var clientsById = {}; clients.forEach(function (c) { clientsById[c.id] = c; });
     var employeesById = {}; employeesAll.forEach(function (x) { employeesById[x.id] = x; });
-    var apptsAll = DB.all("appointments").filter(function (a) { return a.status === "concluido" && Utils.monthKey(a.date) === selectedMonth; });
+    var range = currentRange();
+    var apptsAll = DB.all("appointments").filter(function (a) { return a.status === "concluido" && a.date >= range.start && a.date <= range.end; });
     var apptsMain = apptsAll.filter(function (a) { return a.employeeId === employeeId; }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
     var apptsAsst = apptsAll.filter(function (a) { return a.assistantId === employeeId; }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
 
@@ -444,13 +569,13 @@
     var body =
       '<div class="mb-16">' +
         '<div class="flex justify-between small"><span>Profissional</span><span class="font-bold">' + Utils.escapeHtml(e.name) + ' — ' + Utils.escapeHtml(e.role) + '</span></div>' +
-        '<div class="flex justify-between small mt-8"><span>Mês de referência</span><span class="font-bold">' + Utils.monthLabel(selectedMonth + "-01") + '</span></div>' +
+        '<div class="flex justify-between small mt-8"><span>' + (periodMode === "custom" ? "Período de referência" : "Mês de referência") + '</span><span class="font-bold">' + Utils.escapeHtml(periodLabel()) + '</span></div>' +
         '<div class="flex justify-between small mt-8"><span>Taxa de comissão padrão</span><span class="font-bold">' + e.commissionRate + '%</span></div>' +
       '</div>' +
       '<h4 style="font-size:14px;margin-bottom:8px;">Atendimentos como Profissional Principal</h4>' +
       '<table class="data-table">' +
       '<thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Comissão</th></tr></thead>' +
-      '<tbody>' + (mainLinesHtml || '<tr><td colspan="5" class="text-center text-muted">Nenhum atendimento concluído neste mês</td></tr>') + '</tbody>' +
+      '<tbody>' + (mainLinesHtml || '<tr><td colspan="5" class="text-center text-muted">Nenhum atendimento concluído neste período</td></tr>') + '</tbody>' +
       '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="3">Total (' + apptsMain.length + ' atendimento' + (apptsMain.length === 1 ? "" : "s") + ')</td>' +
       '<td class="text-right text-num">' + Utils.fmtMoney(row.serviceRevenue) + '</td>' +
       '<td class="text-right text-num">' + Utils.fmtMoney(row.mainCommissionTotal) + '</td></tr></tfoot>' +
@@ -469,10 +594,10 @@
     var box = Modal.open({ title: "Detalhes da Comissão — " + e.name, wide: true, bodyHtml: body });
 
     function renderBonusSection() {
-      var bonuses = bonusesFor(employeeId, selectedMonth);
+      var bonuses = bonusesFor(employeeId);
       var sec = box.querySelector("#dm-bonus-section");
       if (!bonuses.length) {
-        sec.innerHTML = '<div class="small text-muted">Nenhum comissionamento esporádico lançado para este mês.</div>';
+        sec.innerHTML = '<div class="small text-muted">Nenhum comissionamento esporádico lançado para ' + (periodMode === "custom" ? "o(s) mês(es) deste período" : "este mês") + '.</div>';
       } else {
         sec.innerHTML = '<table class="data-table">' +
           '<thead><tr><th>Descrição</th><th>Tipo</th><th class="text-right">Valor</th><th></th></tr></thead>' +
@@ -560,7 +685,7 @@
       '<div class="form-grid">' +
         '<div class="form-field full"><label>Profissional</label>' + NameCombo.html({ id: "bm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: presetEmployeeId || "", disabled: !!presetEmployeeId, placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
         '<div class="form-field"><label>Mês de Competência</label><select id="bm-month">' +
-          months.map(function (m) { return '<option value="' + m + '"' + (m === selectedMonth ? " selected" : "") + '>' + Utils.monthLabel(m + "-01") + '</option>'; }).join("") + '</select></div>' +
+          months.map(function (m) { return '<option value="' + m + '"' + (m === referenceMonthKey() ? " selected" : "") + '>' + Utils.monthLabel(m + "-01") + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Tipo</label><select id="bm-kind">' +
           '<option value="fixo">Valor fixo (bônus/prêmio)</option>' +
           '<option value="percentual">Percentual extra sobre uma venda/produto</option>' +
@@ -572,6 +697,7 @@
         '<div class="form-field" id="bm-pct-percent-wrap" style="display:none;"><label>Percentual Extra (%)</label><input type="number" step="0.1" min="0" id="bm-pct-percent"></div>' +
         '<div class="form-field" id="bm-desconto-wrap" style="display:none;"><label>Valor a Descontar (R$)</label><input type="text" id="bm-amount-desconto"></div>' +
       '</div>' +
+      (periodMode === "custom" ? '<div class="small text-muted mt-8">O comissionamento esporádico é lançado por mês de competência inteiro, mesmo com um corte de data personalizado ativo na tela — ele entrará no cálculo de qualquer intervalo que toque esse mês.</div>' : '') +
       '<div class="sale-total-bar" style="margin-top:12px;"><span id="bm-preview-label">Valor que será somado ao Devido</span><span id="bm-preview">R$ 0,00</span></div>';
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="bm-save">Salvar Lançamento</button>';
@@ -661,7 +787,7 @@
     if (!row) return;
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Profissional</label><input type="text" value="' + Utils.escapeHtml(row.employee.name) + '" disabled></div>' +
-      '<div class="form-field"><label>Mês de Referência</label><input type="text" value="' + Utils.monthLabel(selectedMonth + "-01") + '" disabled></div>' +
+      '<div class="form-field"><label>Período de Referência</label><input type="text" value="' + Utils.escapeHtml(periodLabel()) + '" disabled></div>' +
       '<div class="form-field"><label>Valor a Pagar (R$)</label><input type="text" id="pay-amount"></div>' +
       '<div class="form-field"><label>Data do Pagamento</label><input type="date" id="pay-date" value="' + Utils.todayISO() + '"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="pay-method"><option>Transferência</option><option>Pix</option><option>Dinheiro</option></select></div>' +
@@ -674,15 +800,18 @@
     box.querySelector("#pay-save").addEventListener("click", function () {
       var amount = Utils.moneyMaskToFloat(box.querySelector("#pay-amount"));
       if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
-      DB.insert("transactions", {
-        type: "despesa", description: "Comissão - " + row.employee.name + " (ref. " + Utils.monthLabel(selectedMonth + "-01") + ")",
+      var range = currentRange();
+      var txn = {
+        type: "despesa", description: "Comissão - " + row.employee.name + " (ref. " + periodLabel() + ")",
         amount: round2(amount), date: box.querySelector("#pay-date").value, categoryId: commissionCatId(),
         costCenterId: DB.findOne("costCenters", function (c) { return c.key === "rh"; }) ? DB.findOne("costCenters", function (c) { return c.key === "rh"; }).id : null,
         paymentMethod: box.querySelector("#pay-method").value, status: "pago", employeeId: row.employee.id,
-        relatedMonth: selectedMonth, reconciled: false,
+        relatedMonth: referenceMonthKey(), reconciled: false,
         attachment: payAttachment.get()
-      });
-      DB.log("Comissão", "Registrou pagamento de comissão de " + row.employee.name + " — " + Utils.fmtMoney(amount) + " (ref. " + Utils.monthLabel(selectedMonth + "-01") + ")");
+      };
+      if (periodMode === "custom") { txn.relatedRangeStart = range.start; txn.relatedRangeEnd = range.end; }
+      DB.insert("transactions", txn);
+      DB.log("Comissão", "Registrou pagamento de comissão de " + row.employee.name + " — " + Utils.fmtMoney(amount) + " (ref. " + periodLabel() + ")");
       Modal.close();
       Toast.show("Pagamento de comissão registrado", "success");
       render();
@@ -690,12 +819,13 @@
   }
 
   // Soma, em módulo, todos os lançamentos de "Desconto / dedução" (valor
-  // negativo em commissionBonuses) do mês selecionado, de todos os
+  // negativo em commissionBonuses) do período selecionado, de todos os
   // profissionais — separado do desconto automático de consumo interno
   // (esse é recorrente/operacional, não "esporádico"). Ver openBonusModal.
   function sporadicDiscountTotal() {
+    var touched = periodMode === "custom" ? touchedMonths(currentRange()) : null;
     var total = DB.all("commissionBonuses")
-      .filter(function (b) { return b.month === selectedMonth && b.amount < 0; })
+      .filter(function (b) { return (touched ? touched[b.month] : b.month === selectedMonth) && b.amount < 0; })
       .reduce(function (s, b) { return s + b.amount; }, 0);
     return round2(Math.abs(total));
   }
