@@ -1261,6 +1261,87 @@
 
   function round2(n) { return Math.round(n * 100) / 100; }
 
+  // Lança insumo/produto retroativamente num atendimento JÁ CONCLUÍDO — a
+  // pedido do usuário (ele reportou "não aparece nada" ao tentar lançar
+  // consumo num agendamento já concluído: até aqui, a seção de
+  // Insumos/Produtos só existia dentro do fluxo de "Concluir Atendimento",
+  // que só roda enquanto o status ainda é "agendado" — ver openApptModal/
+  // extraActions). Reaproveita a mesma UI/lógica de linhas de insumo
+  // (insumoRowHtml/wireInsumoRow) e o mesmo registro usado em
+  // openConcludeSingleModal/openConcludeGroupModal, mas sem reabrir o
+  // valor cobrado do serviço nem gerar de novo o lançamento financeiro do
+  // atendimento (que já existe desde a conclusão original) — só soma
+  // consumo/produto extra a partir de agora.
+  function openAddInsumoModal(appt) {
+    var service = DB.get("services", appt.serviceId);
+    var client = DB.get("clients", appt.clientId);
+    var employee = DB.get("employees", appt.employeeId);
+    var methods = paymentMethods();
+
+    var body = '<div class="small text-muted mb-16">Atendimento já concluído: ' + Utils.escapeHtml(service ? service.name : "Serviço") + ' — ' + Utils.escapeHtml(client ? client.name : "Cliente") + ' (' + Utils.fmtDate(appt.date) + ' ' + appt.time + ').</div>' +
+      '<div class="flex items-center justify-between mb-8">' +
+        '<label style="font-weight:600;">Insumos / Produtos</label>' +
+        '<button type="button" class="btn btn-sm btn-outline" id="ai-add-insumo"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
+      '</div>' +
+      '<div id="ai-insumo-rows"></div>' +
+      '<div class="small text-muted mb-16">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
+      '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ai-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ai-save">Salvar</button>';
+    var box = Modal.open({ title: "Lançar Insumo/Produto", wide: true, bodyHtml: body, footHtml: foot });
+
+    var rowsEl = box.querySelector("#ai-insumo-rows");
+    function addRow() {
+      rowsEl.insertAdjacentHTML("beforeend", insumoRowHtml());
+      wireInsumoRow(rowsEl.lastElementChild);
+    }
+    addRow();
+    box.querySelector("#ai-add-insumo").addEventListener("click", addRow);
+
+    box.querySelector("#ai-save").addEventListener("click", function () {
+      var rows = Utils.qsa(".insumo-item-row", rowsEl);
+      var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
+      var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
+      var payMethod = box.querySelector("#ai-pay").value;
+      var registeredCount = 0;
+
+      DB.batch(function () {
+        rows.forEach(function (row) {
+          var tipo = row.querySelector(".ir-tipo").value;
+          var productId = row.querySelector(".ir-produto").value;
+          var qtd = parseFloat(row.querySelector(".ir-qtd").value) || 0;
+          if (!productId || qtd <= 0) return;
+          registeredCount++;
+          if (tipo === "consumo") {
+            if (window.Consumo) {
+              try {
+                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "" });
+              } catch (err) { Toast.show(String(err), "danger"); }
+            }
+          } else {
+            var product = DB.get("products", productId);
+            if (!product) return;
+            var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
+            DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+            DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + (client ? client.name : "cliente") + " (atendimento)" });
+            DB.insert("transactions", {
+              type: "receita", description: "Produto - " + product.name + " (" + (client ? client.name : "cliente") + ")", amount: saleAmount, date: appt.date,
+              categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
+              paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+              productId: productId, appointmentId: appt.id, reconciled: false
+            });
+          }
+        });
+      });
+
+      if (registeredCount === 0) { Toast.show("Selecione um produto e informe a quantidade", "danger"); return; }
+
+      DB.log("Agenda", "Lançou insumo/produto retroativo no atendimento já concluído de " + appt.date + " " + appt.time + " (" + registeredCount + " item(ns))");
+      Modal.close();
+      Toast.show(registeredCount > 1 ? registeredCount + " itens lançados com sucesso" : "Item lançado com sucesso", "success");
+      render();
+    });
+  }
+
   // Cargos que sempre contaram como "realiza serviços" antes desse campo
   // existir no funcionário (ver employeePerformsServices) — usado só como
   // valor padrão para quem já estava cadastrado antes desse recurso, para
@@ -1359,6 +1440,11 @@
     if (a && a.status === "agendado") {
       extraActions = '<button class="btn btn-outline" id="am-conclude" type="button">Concluir</button>' +
         '<button class="btn btn-ghost" id="am-noshow" type="button">Marcar Falta</button>';
+    } else if (a && a.status === "concluido") {
+      // A pedido do usuário: antes não havia nenhuma forma de lançar
+      // insumo/produto num atendimento já concluído por aqui (só existia
+      // dentro do fluxo de "Concluir" em si) — ver openAddInsumoModal acima.
+      extraActions = '<button class="btn btn-outline" id="am-add-insumo" type="button"><i class="fa-solid fa-box"></i> Lançar Insumo/Produto</button>';
     }
     var delBtn = a ? '<button class="btn btn-ghost" id="am-delete" type="button" style="color:var(--color-danger);">Excluir</button>' : "";
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
@@ -1523,6 +1609,11 @@
         Modal.close();
         Toast.show("Falta registrada", "info");
         render();
+      });
+    } else if (a && a.status === "concluido") {
+      box.querySelector("#am-add-insumo").addEventListener("click", function () {
+        Modal.close();
+        openAddInsumoModal(a);
       });
     }
     if (a) {
