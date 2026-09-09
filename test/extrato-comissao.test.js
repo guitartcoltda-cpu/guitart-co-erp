@@ -249,6 +249,31 @@ function setCustomRange(start, end) {
   check("E: Comissão do Período volta a 125 ao ver o mês inteiro de novo", kpiValue("Comissão do Período") === money(125), kpiValue("Comissão do Período"));
   check("E: rótulo 'Corte do Período' continua presente", !!payoutItem("Corte do Período"));
 
+  // ---- F. Pagamento que cruza a virada do mês (começa no mês anterior,
+  // termina já no mês corrente, mas com relatedMonth = mês corrente) —
+  // reproduz o caso real de produção que expôs o bug do critério de
+  // contenção pura em computeForEmployeeCurrent(). Visto o mês corrente
+  // inteiro (ou "em andamento", Até = hoje), deve contar por inteiro pelo
+  // relatedMonth, igual ao antigo modo mensal; visto um corte personalizado
+  // mais estreito, não deve vazar para lá. ----
+  tables.transactions.push({
+    id: "tCross", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1",
+    relatedMonth: currentMonthKey, relatedRangeStart: monthLastDayStr(previousMonthKey), relatedRangeEnd: currentMonthKey + "-02",
+    amount: 77, status: "pago", date: currentMonthKey + "-02"
+  });
+
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  check("F1: Já Recebido = 107 no mês inteiro (30 do t1 + 77 do pagamento que cruza a virada do mês, pelo relatedMonth)", kpiValue("Já Recebido") === money(107), kpiValue("Já Recebido"));
+
+  setCustomRange(fullMonthStart, today);
+  await flush();
+  check("F2: Já Recebido = 107 com Até = hoje (mês corrente em andamento continua valendo como 'o mês')", kpiValue("Já Recebido") === money(107), kpiValue("Já Recebido"));
+
+  setCustomRange(d05, d10);
+  await flush();
+  check("F3: Já Recebido = 0 no corte 05-10 (pagamento que cruza a virada do mês não vaza para um corte mais estreito)", kpiValue("Já Recebido") === money(0), kpiValue("Já Recebido"));
+
   console.log("");
   console.log("=== Resultado: " + pass + " passaram, " + fail + " falharam (" + (pass + fail) + " no total) ===");
   if (fail > 0) {

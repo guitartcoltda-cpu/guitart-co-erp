@@ -132,7 +132,17 @@ const tables = {
     // próprio — simula um pagamento feito antes de a tela ter um período
     // personalizado). Deve contar sempre que o período em exibição contiver
     // o mês inteiro (ex.: o mês inteiro), e nunca num corte mais estreito.
-    { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, amount: 30, status: "pago", date: today }
+    { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, amount: 30, status: "pago", date: today },
+    // Pagamento do Bruno para um corte SEMANAL que cruza a virada do mês
+    // (começa no último dia do mês anterior, termina já no mês corrente),
+    // com relatedMonth gravado como o mês corrente — reproduz o caso real
+    // de produção que expôs o bug do critério de contenção pura: visto o
+    // mês corrente inteiro, esse pagamento deve contar por inteiro (mesmo
+    // critério do antigo "modo mensal": bate o relatedMonth, não importa se
+    // o intervalo do próprio pagamento sai do mês); visto um corte
+    // personalizado mais estreito (que não seja o mês inteiro), não deve
+    // aparecer, pois seu intervalo não está contido nele.
+    { id: "tCross", type: "despesa", categoryId: "cat-comissao", employeeId: "emp2", relatedMonth: currentMonthKey, relatedRangeStart: monthLastDayStr(previousMonthKey), relatedRangeEnd: currentMonthKey + "-02", amount: 77, status: "pago", date: currentMonthKey + "-02" }
   ]
 };
 let _nextId = 100;
@@ -196,6 +206,13 @@ function anaRow() {
   var rows = Utils.qsa("#tbl-commission tbody tr");
   for (var i = 0; i < rows.length; i++) {
     if (rows[i].textContent.indexOf("Ana") !== -1) return rows[i];
+  }
+  return null;
+}
+function brunoRow() {
+  var rows = Utils.qsa("#tbl-commission tbody tr");
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].textContent.indexOf("Bruno") !== -1) return rows[i];
   }
   return null;
 }
@@ -398,6 +415,41 @@ function setCustomRange(start, end) {
     check("I: subtotal de Produtos no rodapé = 10 (só o vinculado a a2)", tfootProdutos && moneyIn(tfootProdutos.textContent, 10), tfootProdutos && tfootProdutos.textContent);
     check("I: seção 'Desconto por Consumo de Insumos' continua exibida abaixo (detalhe por produto)", modalBody.textContent.indexOf("Desconto por Consumo de Insumos") !== -1);
     Modal.close();
+  })();
+
+  // ---- J. Pagamento que cruza a virada do mês (Bruno, tCross): conta
+  // inteiro quando o período em exibição é "o mês" (mesmo critério do
+  // antigo modo mensal — bate o relatedMonth, mesmo com o intervalo do
+  // próprio pagamento começando no mês anterior), mas não vaza para um
+  // corte personalizado mais estreito, onde passa a valer a contenção. ----
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  (function () {
+    var row = brunoRow();
+    check("J1: linha do Bruno existe (mês inteiro)", !!row);
+    if (!row) return;
+    check("J1: Pago do Bruno = 77 no mês inteiro (pagamento que cruza a virada do mês conta pelo relatedMonth)", moneyIn(cellText(row, 7), 77), cellText(row, 7));
+  })();
+
+  // Mesmo caso, mas com o mês corrente "em andamento" (Até = hoje, não o
+  // último dia do mês) — é exatamente o período padrão que a tela abre —
+  // continua contando como "o mês" para esse critério.
+  setCustomRange(fullMonthStart, today);
+  await flush();
+  (function () {
+    var row = brunoRow();
+    check("J2: linha do Bruno existe (mês corrente em andamento, Até = hoje)", !!row);
+    if (!row) return;
+    check("J2: Pago do Bruno = 77 com Até = hoje (mês em andamento continua valendo como 'o mês')", moneyIn(cellText(row, 7), 77), cellText(row, 7));
+  })();
+
+  setCustomRange(d05, d10);
+  await flush();
+  (function () {
+    var row = brunoRow();
+    check("J3: linha do Bruno existe (corte 05-10)", !!row);
+    if (!row) return;
+    check("J3: Pago do Bruno = 0 no corte 05-10 (pagamento que cruza a virada do mês não vaza para um corte mais estreito)", moneyIn(cellText(row, 7), 0), cellText(row, 7));
   })();
 
   console.log("");
