@@ -50,6 +50,7 @@
           <button class="tab-btn active" data-panel="p-cc">Centros de Custo</button>
           <button class="tab-btn" data-panel="p-cat">Categorias</button>
           <button class="tab-btn" data-panel="p-srv">Serviços</button>
+          <button class="tab-btn" data-panel="p-pacotes">Pacotes</button>
           <button class="tab-btn" data-panel="p-paymethods">Formas de Pagamento</button>
           <button class="tab-btn" data-panel="p-roles">Cargos</button>
           <button class="tab-btn" data-panel="p-acessos">Acessos</button>
@@ -79,6 +80,11 @@
         <div class="tab-panel" id="p-roles">
           <div class="toolbar"><div class="small text-muted">Cargos dos funcionários (Funcionários → Cargo).</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-role"><i class="fa-solid fa-plus"></i> Novo Cargo</button></div></div>
           <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-roles"></table></div></div>
+        </div>
+
+        <div class="tab-panel" id="p-pacotes">
+          <div class="toolbar"><div class="small text-muted">Pacotes de tratamento vendidos em sessões semanais (ex.: 4 sessões), com um valor fixo por tamanho de cabelo. O cliente paga o valor cheio na primeira sessão (a venda); em cada sessão seguinte, o profissional que atender ganha comissão sobre o valor diluído (valor total ÷ nº de sessões), conforme os atendimentos forem acontecendo.</div><div class="toolbar-actions"><button class="btn btn-primary btn-sm" id="btn-new-pacote"><i class="fa-solid fa-plus"></i> Novo Pacote</button></div></div>
+          <div class="card"><div class="table-wrap"><table class="data-table" id="tbl-pacotes"></table></div></div>
         </div>
 
         <div class="tab-panel" id="p-paymethods">
