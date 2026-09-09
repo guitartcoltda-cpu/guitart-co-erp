@@ -1908,7 +1908,7 @@
       : (isPackageLinked ?
         '<div class="form-field full"><div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;background:var(--gray-50);font-size:13px;">' +
           'Sessão ' + a.packageSessionIndex + ' de ' + (linkedPackagePurchase ? linkedPackagePurchase.sessionsTotal : "?") + ' do pacote "' + (linkedPackagePurchase ? Utils.escapeHtml(linkedPackagePurchase.packageName) + " (" + Utils.escapeHtml(linkedPackagePurchase.sizeLabel) + ")" : "") + '". ' +
-          'O profissional que concluir esta sessão recebe comissão sobre o valor diluído (R$ ' + Utils.fmtMoney(a.price) + ').' +
+          'O profissional que concluir esta sessão recebe comissão sobre o valor diluído (' + Utils.fmtMoney(a.price) + ').' +
         '</div></div>'
       : "")) +
       '<div class="form-field full" id="am-service-wrap"' + (isPackageLinked ? ' style="display:none;"' : "") + '><label>Serviço</label>' + NameCombo.html({ id: "am-service", items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }), value: a ? a.serviceId : (services[0] ? services[0].id : ""), placeholder: "Nome do serviço" }) + '</div>' +
