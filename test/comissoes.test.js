@@ -1,9 +1,15 @@
 /* ============================================================
    Teste automatizado da tela de Comissionamento
-   (assets/js/comissoes.js + assets/js/consumo.js), focado na nova
-   opção "Personalizar data de corte" — filtro de período arbitrário
-   para apurar comissão de profissionais pagos semanal/quinzenalmente,
-   em vez de só por mês calendário inteiro.
+   (assets/js/comissoes.js + assets/js/consumo.js).
+
+   A pedido do usuário (09/09/2026), a tela deixou de ter um seletor de
+   "Mês de Referência" com uma lista fixa de meses (histórico) — agora só
+   existe um período personalizado (De/Até), que o usuário ajusta
+   livremente para apurar o mês inteiro, uma semana, ou qualquer corte que
+   precisar. Este teste cobre esse único modo, incluindo o caso "período =
+   mês calendário inteiro" (equivalente ao antigo "modo mensal") para
+   confirmar que ver o mês inteiro continua somando corretamente pagamentos
+   feitos em cortes mais estreitos dentro dele.
 
    Roda em Node via jsdom (script clássico, sem módulos): carrega
    utils.js, consumo.js e comissoes.js de verdade (os arquivos publicados), com
@@ -28,8 +34,7 @@ const ROOT = path.join(__dirname, "..");
 
 const HTML =
   '<!doctype html><html><body>' +
-  '<select id="cm-month"></select>' +
-  '<div class="pf-custom-range" id="cm-custom-range" style="display:none;">' +
+  '<div class="pf-custom-range" id="cm-custom-range">' +
   '  <input type="date" id="cm-date-start">' +
   '  <input type="date" id="cm-date-end">' +
   '</div>' +
@@ -77,6 +82,17 @@ const d10 = currentMonthKey + "-10";
 const d20 = currentMonthKey + "-20";
 const dPrevMonth = previousMonthKey + "-15";
 
+function monthLastDayStr(monthKey) {
+  var parts = monthKey.split("-").map(Number);
+  var lastDay = new Date(parts[0], parts[1], 0).getDate();
+  return monthKey + "-" + String(lastDay).padStart(2, "0");
+}
+// Período que representa "o mês corrente inteiro" — usado nos cenários que
+// antes dependiam do antigo "modo mensal" (agora é só mais um período
+// personalizado possível, com De = dia 1 e Até = último dia do mês).
+const fullMonthStart = currentMonthKey + "-01";
+const fullMonthEnd = monthLastDayStr(currentMonthKey);
+
 const tables = {
   employees: [
     { id: "emp1", name: "Ana", role: "Cabeleireira", status: "ativo", commissionRate: 20 },
@@ -112,7 +128,10 @@ const tables = {
     { id: "c1", employeeId: "emp1", productId: "p1", appointmentId: "a2", quantity: 10, unit: "ml", totalCost: 20, employeeShare: 10, companyShare: 10, date: d10, notes: "" }
   ],
   transactions: [
-    // Pagamento pré-existente do mês inteiro (sem tag de intervalo — simula um pagamento feito antes desta funcionalidade existir, ou feito em modo mensal).
+    // Pagamento pré-existente do mês inteiro (só relatedMonth, sem intervalo
+    // próprio — simula um pagamento feito antes de a tela ter um período
+    // personalizado). Deve contar sempre que o período em exibição contiver
+    // o mês inteiro (ex.: o mês inteiro), e nunca num corte mais estreito.
     { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, amount: 30, status: "pago", date: today }
   ]
 };
@@ -207,7 +226,9 @@ function setCustomRange(start, end) {
   document.dispatchEvent(new window.Event("DOMContentLoaded"));
   await flush();
 
-  // ---- A. Modo mensal (padrão) — mês corrente inteiro ----
+  // ---- A. Período = mês corrente inteiro ----
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
   (function () {
     var row = anaRow();
     check("A: linha da Ana existe", !!row);
@@ -215,15 +236,12 @@ function setCustomRange(start, end) {
     check("A: Receita de Serviços = 450 (100+200+150, exclui mês anterior)", moneyIn(cellText(row, 4), 450), cellText(row, 4));
     // Devido = comissão (20% de 450 = 90) + esporádico (50-20+15=45, inclui b1/b2 sem data e b3 com data) - consumo (10) = 125
     check("A: Devido = 125", moneyIn(cellText(row, 6), 125), cellText(row, 6));
-    // Pago = 30 (t1, casa por relatedMonth em modo mensal)
+    // Pago = 30 (t1, contido no mês inteiro — implícito pelo relatedMonth)
     check("A: Pago = 30", moneyIn(cellText(row, 7), 30), cellText(row, 7));
     check("A: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
   })();
 
   // ---- B. Personalizado: 05 a 10 (exclui atendimento do dia 20) ----
-  Utils.qs("#cm-month").value = "custom";
-  Utils.qs("#cm-month").dispatchEvent(new window.Event("change", { bubbles: true }));
-  await flush();
   setCustomRange(d05, d10);
   await flush();
 
@@ -237,7 +255,7 @@ function setCustomRange(start, end) {
     // b3 (data=dia 10) está DENTRO do corte 05-10, então também entra = +15;
     // consumo do dia 10 entra = 10. Devido = 60+30+15-10 = 95
     check("B: Devido = 95 (b1/b2 pelo fallback de mês + b3 pela data exata, dentro do corte; consumo do dia 10 desconta)", moneyIn(cellText(row, 6), 95), cellText(row, 6));
-    // Pago = 0 — o pagamento t1 não tem relatedRangeStart/End, não conta num corte personalizado
+    // Pago = 0 — o pagamento t1 (implícito = mês inteiro) não está contido no corte 05-10
     check("B: Pago = 0 (pagamento do mês inteiro não vaza para o corte semanal)", moneyIn(cellText(row, 7), 0), cellText(row, 7));
     check("B: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
   })();
@@ -284,22 +302,18 @@ function setCustomRange(start, end) {
     check("D: após pagar, Pago = 95 e Saldo = 0 no corte 05-10", row && moneyIn(cellText(row, 7), 95) && moneyIn(cellText(row, 8), 0), row && [cellText(row, 7), cellText(row, 8)]);
   })();
 
-  // ---- E. Volta ao modo mensal — o pagamento do corte semanal deve somar ao pago do mês inteiro ----
-  Utils.qs("#cm-month").value = currentMonthKey;
-  Utils.qs("#cm-month").dispatchEvent(new window.Event("change", { bubbles: true }));
+  // ---- E. Vendo o mês inteiro de novo — o pagamento do corte semanal deve somar ao pago do mês inteiro (contido nele) ----
+  setCustomRange(fullMonthStart, fullMonthEnd);
   await flush();
 
   (function () {
     var row = anaRow();
-    // Pago = 30 (t1) + 95 (pagamento do corte semanal, mesmo relatedMonth) = 125 = Devido inteiro do mês -> Saldo 0
-    check("E: modo mensal soma pagamento avulso + pagamento do corte semanal (Pago=125)", row && moneyIn(cellText(row, 7), 125), row && cellText(row, 7));
+    // Pago = 30 (t1) + 95 (pagamento do corte semanal, contido no mês inteiro) = 125 = Devido inteiro do mês -> Saldo 0
+    check("E: ver o mês inteiro soma pagamento avulso + pagamento do corte semanal, ambos contidos nele (Pago=125)", row && moneyIn(cellText(row, 7), 125), row && cellText(row, 7));
     check("E: Saldo do mês fecha em 0", row && moneyIn(cellText(row, 8), 0), row && cellText(row, 8));
   })();
 
   // ---- F. Volta ao corte personalizado 11-20 — o pagamento do corte 05-10 NÃO deve vazar para cá ----
-  Utils.qs("#cm-month").value = "custom";
-  Utils.qs("#cm-month").dispatchEvent(new window.Event("change", { bubbles: true }));
-  await flush();
   setCustomRange(currentMonthKey + "-11", d20);
   await flush();
 
@@ -312,7 +326,7 @@ function setCustomRange(start, end) {
   // ---- G. Rótulo de período no cabeçalho do gráfico reflete o corte personalizado ----
   (function () {
     var sub = document.getElementById("com-chart-sub");
-    check("G: card-header-sub mostra o período personalizado, não 'Mês selecionado'", sub && sub.textContent.indexOf("Período:") === 0, sub && sub.textContent);
+    check("G: card-header-sub mostra o rótulo de período", sub && sub.textContent.indexOf("Período:") === 0, sub && sub.textContent);
   })();
 
   // ---- H. Precisão dia a dia do esporádico COM data (b3), isolada de atendimentos/consumo ----
@@ -348,8 +362,7 @@ function setCustomRange(start, end) {
   // ---- I. Modal "Ver detalhes" — coluna "Produtos" mostra o desconto de
   // consumo por atendimento (mesmo padrão do Extrato do Profissional),
   // além da seção "Desconto por Consumo de Insumos" já existente abaixo. ----
-  Utils.qs("#cm-month").value = currentMonthKey;
-  Utils.qs("#cm-month").dispatchEvent(new window.Event("change", { bubbles: true }));
+  setCustomRange(fullMonthStart, fullMonthEnd);
   await flush();
   (function () {
     var row = anaRow();

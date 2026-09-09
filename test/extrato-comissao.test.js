@@ -1,11 +1,13 @@
 /* ============================================================
    Teste automatizado da tela "Extrato do Profissional"
-   (assets/js/extrato-comissao.js + assets/js/consumo.js), focado na
-   nova opção "Personalizar período…" — mesmo recurso de corte de data
-   arbitrário já existente em Comissionamento (ver
-   test/comissoes.test.js), agora replicado aqui para o profissional
-   conferir seu próprio extrato num período livre, não só por mês
-   calendário inteiro.
+   (assets/js/extrato-comissao.js + assets/js/consumo.js).
+
+   A pedido do usuário (09/09/2026), igual ao Comissionamento (ver
+   test/comissoes.test.js), a tela deixou de ter um seletor de "Mês de
+   Referência" com lista fixa de meses — agora só existe um período
+   personalizado (De/Até), que o profissional ajusta livremente. Este
+   teste cobre esse único modo, incluindo o caso "período = mês calendário
+   inteiro" (equivalente ao antigo "modo mensal").
 
    Roda em Node via jsdom (script clássico, sem módulos): carrega
    utils.js, consumo.js e extrato-comissao.js de verdade (os arquivos
@@ -28,8 +30,7 @@ const ROOT = path.join(__dirname, "..");
 const HTML =
   '<!doctype html><html><body>' +
   '<select id="ec-employee"></select>' +
-  '<select id="ec-month"></select>' +
-  '<div class="pf-custom-range" id="ec-custom-range" style="display:none;">' +
+  '<div class="pf-custom-range" id="ec-custom-range">' +
   '  <input type="date" id="ec-date-start">' +
   '  <input type="date" id="ec-date-end">' +
   '</div>' +
@@ -73,6 +74,16 @@ const d10 = currentMonthKey + "-10";
 const d20 = currentMonthKey + "-20";
 const dPrevMonth = previousMonthKey + "-15";
 
+function monthLastDayStr(monthKey) {
+  var parts = monthKey.split("-").map(Number);
+  var lastDay = new Date(parts[0], parts[1], 0).getDate();
+  return monthKey + "-" + String(lastDay).padStart(2, "0");
+}
+// Período que representa "o mês corrente inteiro" — equivalente ao antigo
+// "modo mensal" (De = dia 1, Até = último dia do mês).
+const fullMonthStart = currentMonthKey + "-01";
+const fullMonthEnd = monthLastDayStr(currentMonthKey);
+
 const tables = {
   employees: [
     { id: "emp1", name: "Ana", role: "Cabeleireira", status: "ativo", commissionRate: 20 }
@@ -96,6 +107,10 @@ const tables = {
     { id: "c1", employeeId: "emp1", productId: "p1", appointmentId: "a2", quantity: 10, unit: "ml", totalCost: 20, employeeShare: 10, companyShare: 10, date: d10, notes: "" }
   ],
   transactions: [
+    // Só relatedMonth, sem intervalo próprio — simula um pagamento feito
+    // antes de a tela ter um período personalizado. Deve contar sempre que
+    // o período em exibição contiver o mês inteiro, e nunca num corte mais
+    // estreito (ver "Já Recebido" nos cenários abaixo).
     { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, amount: 30, status: "pago", date: today }
   ]
 };
@@ -173,19 +188,18 @@ function setCustomRange(start, end) {
   document.dispatchEvent(new window.Event("DOMContentLoaded"));
   await flush();
 
-  // ---- A. Modo mensal (padrão) — mês corrente inteiro ----
-  check("A: Comissão do Mês = 125 (90 comissão + 45 esporádico - 10 consumo)", kpiValue("Comissão do Mês") === money(125), kpiValue("Comissão do Mês"));
-  check("A: Já Recebido = 30", kpiValue("Já Recebido") === money(30), kpiValue("Já Recebido"));
+  // ---- A. Período = mês corrente inteiro ----
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  check("A: Comissão do Período = 125 (90 comissão + 45 esporádico - 10 consumo)", kpiValue("Comissão do Período") === money(125), kpiValue("Comissão do Período"));
+  check("A: Já Recebido = 30 (t1, contido no mês inteiro)", kpiValue("Já Recebido") === money(30), kpiValue("Já Recebido"));
   check("A: Saldo em Aberto = 95", kpiValue("Saldo em Aberto") === money(95), kpiValue("Saldo em Aberto"));
-  check("A: Atendimentos no Mês = 3", kpiValue("Atendimentos no Mês") === "3", kpiValue("Atendimentos no Mês"));
-  var payoutA = payoutItem("Corte do Mês");
-  check("A: rótulo 'Corte do Mês' presente em modo mensal", !!payoutA, payoutA);
-  if (payoutA) check("A: Corte do Mês = último dia do mês corrente", payoutA.value === Utils.fmtDate(Utils.qs("#ec-month") && (function(){var y=+currentMonthKey.slice(0,4),m=+currentMonthKey.slice(5,7);return Utils.toISODate(new window.Date(y,m,0));})()), payoutA.value);
+  check("A: Atendimentos no Período = 3", kpiValue("Atendimentos no Período") === "3", kpiValue("Atendimentos no Período"));
+  var payoutA = payoutItem("Corte do Período");
+  check("A: rótulo 'Corte do Período' presente", !!payoutA, payoutA);
+  if (payoutA) check("A: Corte do Período = último dia do mês corrente", payoutA.value === Utils.fmtDate(fullMonthEnd), payoutA.value);
 
   // ---- B. Personalizado: 05 a 10 (exclui atendimento do dia 20) ----
-  Utils.qs("#ec-month").value = "custom";
-  Utils.qs("#ec-month").dispatchEvent(new window.Event("change", { bubbles: true }));
-  await flush();
   setCustomRange(d05, d10);
   await flush();
 
@@ -194,8 +208,7 @@ function setCustomRange(start, end) {
   check("B: Saldo em Aberto = 95", kpiValue("Saldo em Aberto") === money(95), kpiValue("Saldo em Aberto"));
   check("B: Atendimentos no Período = 2 (dias 05 e 10, exclui dia 20)", kpiValue("Atendimentos no Período") === "2", kpiValue("Atendimentos no Período"));
   var payoutB = payoutItem("Corte do Período");
-  check("B: rótulo muda para 'Corte do Período' em modo personalizado", !!payoutB, payoutB);
-  if (payoutB) check("B: Corte do Período = fim do intervalo (dia 10)", payoutB.value === Utils.fmtDate(d10), payoutB.value);
+  check("B: Corte do Período = fim do intervalo (dia 10)", payoutB && payoutB.value === Utils.fmtDate(d10), payoutB && payoutB.value);
   var repasseB = payoutItem("Próximo Repasse");
   var expectedPayoutMonth = currentMonthKey; // corte 05-10 termina no mês corrente
   var expectedPayoutDate = Utils.addMonths(expectedPayoutMonth + "-01", 1).slice(0, 8) + "05";
@@ -209,8 +222,7 @@ function setCustomRange(start, end) {
 
   // ---- D. Personalizado: período inteiro no MÊS ANTERIOR — verifica que o
   // corte, o repasse e o gráfico de histórico ancoram no mês em que o
-  // período termina (referenceMonthKey()), não no mês selecionado antes de
-  // entrar em modo personalizado. ----
+  // período termina (referenceMonthKey()), não no mês corrente. ----
   setCustomRange(dPrevMonth, dPrevMonth);
   await flush();
 
@@ -228,12 +240,14 @@ function setCustomRange(start, end) {
     check("D: último mês do histórico é o mês ANTERIOR (ancorado por referenceMonthKey, não o mês corrente)", lastLabel === Utils.monthLabel(previousMonthKey + "-01"), lastLabel);
   }
 
-  // ---- E. Volta ao modo mensal — confere que sair do personalizado restaura o comportamento original ----
-  Utils.qs("#ec-month").value = currentMonthKey;
-  Utils.qs("#ec-month").dispatchEvent(new window.Event("change", { bubbles: true }));
+  // ---- E. Volta a ver o mês inteiro — pagamento avulso + pagamento do
+  // corte semanal (cenário do Comissionamento não se aplica aqui, pois
+  // esta tela não registra pagamento; o teste confere que o resultado é
+  // idêntico ao cenário A, sem depender de qual período foi visto antes). ----
+  setCustomRange(fullMonthStart, fullMonthEnd);
   await flush();
-  check("E: Comissão do Mês volta a 125 ao sair do modo personalizado", kpiValue("Comissão do Mês") === money(125), kpiValue("Comissão do Mês"));
-  check("E: rótulo volta a 'Corte do Mês'", !!payoutItem("Corte do Mês"));
+  check("E: Comissão do Período volta a 125 ao ver o mês inteiro de novo", kpiValue("Comissão do Período") === money(125), kpiValue("Comissão do Período"));
+  check("E: rótulo 'Corte do Período' continua presente", !!payoutItem("Corte do Período"));
 
   console.log("");
   console.log("=== Resultado: " + pass + " passaram, " + fail + " falharam (" + (pass + fail) + " no total) ===");
