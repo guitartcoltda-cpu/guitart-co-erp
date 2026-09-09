@@ -4,7 +4,7 @@
   "private": true,
   "description": "Testes automatizados do Salão ERP (comissionamento, etc.). Rodar com: npm install && npm test",
   "scripts": {
-    "test": "node comissoes.test.js"
+    "test": "node comissoes.test.js && node extrato-comissao.test.js"
   },
   "devDependencies": {
     "jsdom": "^30.0.1"
