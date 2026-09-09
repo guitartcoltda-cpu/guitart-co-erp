@@ -14,7 +14,12 @@
 
   var BUCKET_RANK = { vencida: 0, hoje: 1, "7d": 2, "30d": 3, futuro: 4 };
 
-  var state = { bucket: "", cc: "", cat: "", search: "" };
+  // dateStart/dateEnd (ISO YYYY-MM-DD) filtram por data de vencimento
+  // exata, escolhida livremente pelo usuário — complementam (não
+  // substituem) os chips de situação acima, que são sempre relativos a
+  // hoje. Ex.: dá pra ver "só vencidas" (chip) OU "vencimentos de um mês
+  // específico do ano passado" (De/Até) OU os dois combinados.
+  var state = { bucket: "", cc: "", cat: "", search: "", dateStart: "", dateEnd: "" };
   var selectedIds = {}; // id -> true, only for currently pending/visible rows
   var sortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
@@ -38,11 +43,22 @@
     });
     ccSel.addEventListener("change", function (e) { state.cc = e.target.value; selectedIds = {}; render(); });
     catSel.addEventListener("change", function (e) { state.cat = e.target.value; selectedIds = {}; render(); });
+    var dateStartInput = Utils.qs("#cp-date-start"), dateEndInput = Utils.qs("#cp-date-end");
+    function applyDateFilter() {
+      var s = dateStartInput.value, en = dateEndInput.value;
+      if (s && en && s > en) { var tmp = s; s = en; en = tmp; dateStartInput.value = s; dateEndInput.value = en; } // sempre De <= Até
+      state.dateStart = s; state.dateEnd = en;
+      selectedIds = {};
+      render();
+    }
+    dateStartInput.addEventListener("change", applyDateFilter);
+    dateEndInput.addEventListener("change", applyDateFilter);
     Utils.qs("#cp-search").addEventListener("input", Utils.debounce(function (e) { state.search = e.target.value.toLowerCase(); selectedIds = {}; render(); }, 250));
     Utils.qs("#btn-cp-clear").addEventListener("click", function () {
-      state = { bucket: "", cc: "", cat: "", search: "" };
+      state = { bucket: "", cc: "", cat: "", search: "", dateStart: "", dateEnd: "" };
       selectedIds = {};
       ccSel.value = ""; catSel.value = ""; Utils.qs("#cp-search").value = "";
+      dateStartInput.value = ""; dateEndInput.value = "";
       Utils.qsa("[data-bucket]", Utils.qs("#cp-buckets")).forEach(function (b, i) { b.classList.toggle("active", i === 0); });
       render();
     });
@@ -73,6 +89,8 @@
       if (state.bucket && t._bucket !== state.bucket) return false;
       if (state.cc && t.costCenterId !== state.cc) return false;
       if (state.cat && t.categoryId !== state.cat) return false;
+      if (state.dateStart && t.date < state.dateStart) return false;
+      if (state.dateEnd && t.date > state.dateEnd) return false;
       if (state.search && t.description.toLowerCase().indexOf(state.search) === -1) return false;
       return true;
     }).sort(function (a, b) { return a.date.localeCompare(b.date); });
@@ -102,6 +120,8 @@
     var scoped = all.filter(function (t) {
       if (state.cc && t.costCenterId !== state.cc) return false;
       if (state.cat && t.categoryId !== state.cat) return false;
+      if (state.dateStart && t.date < state.dateStart) return false;
+      if (state.dateEnd && t.date > state.dateEnd) return false;
       if (state.search && t.description.toLowerCase().indexOf(state.search) === -1) return false;
       return true;
     });

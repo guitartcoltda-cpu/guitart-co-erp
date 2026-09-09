@@ -14,6 +14,14 @@
 
   var selectedEmployeeId = "";
   var selectedMonth = "";
+  // Por padrão o extrato é por mês calendário (selectedMonth), igual ao
+  // Comissionamento (ver comissoes.js) — mesma necessidade aqui: o
+  // profissional também pode querer conferir um corte personalizado
+  // (semanal/quinzenal), então a tela permite "Personalizar período":
+  // periodMode passa a "custom" e customRange ({start,end}, ISO
+  // YYYY-MM-DD) vira a fonte da verdade — ver currentRange().
+  var periodMode = "month"; // "month" | "custom"
+  var customRange = null;
   var ecSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
@@ -69,9 +77,50 @@
       o.value = m; o.textContent = Utils.monthLabel(m + "-01") + (idx === 0 ? " (atual)" : "");
       monthSel.appendChild(o);
     });
+    var customOpt = document.createElement("option");
+    customOpt.value = "custom";
+    customOpt.textContent = "Personalizar período…";
+    monthSel.appendChild(customOpt);
+
     selectedMonth = months[0];
     monthSel.value = selectedMonth;
-    monthSel.addEventListener("change", function (e) { selectedMonth = e.target.value; render(); });
+
+    var rangeWrap = Utils.qs("#ec-custom-range");
+    var startInput = Utils.qs("#ec-date-start");
+    var endInput = Utils.qs("#ec-date-end");
+
+    function showCustomRangeFields(show) {
+      if (rangeWrap) rangeWrap.style.display = show ? "" : "none";
+      if (show && startInput && endInput) { startInput.value = customRange.start; endInput.value = customRange.end; }
+    }
+
+    function applyCustomRangeInputs() {
+      if (!startInput.value || !endInput.value) return;
+      var s = startInput.value, en = endInput.value;
+      if (s > en) { var tmp = s; s = en; en = tmp; } // sempre mantém De <= Até, independente de qual campo foi editado
+      customRange = { start: s, end: en };
+      startInput.value = s; endInput.value = en;
+      render();
+    }
+
+    monthSel.addEventListener("change", function (e) {
+      if (e.target.value === "custom") {
+        periodMode = "custom";
+        if (!customRange) {
+          // ponto de partida padrão: do início do mês corrente até hoje —
+          // o profissional ajusta De/Até para o período que quiser conferir
+          customRange = { start: today.slice(0, 8) + "01", end: today };
+        }
+        showCustomRangeFields(true);
+      } else {
+        periodMode = "month";
+        selectedMonth = e.target.value;
+        showCustomRangeFields(false);
+      }
+      render();
+    });
+    if (startInput) startInput.addEventListener("change", applyCustomRangeInputs);
+    if (endInput) endInput.addEventListener("change", applyCustomRangeInputs);
 
     if (!restricted && !employees.length) {
       Utils.qs("#ec-summary").innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-face-frown"></i></div><h4>Nenhum profissional comissionado cadastrado</h4></div>';
@@ -97,6 +146,105 @@
   function payoutDateFor(monthKey) {
     var nextMonthFirst = Utils.addMonths(monthKey + "-01", 1);
     return nextMonthFirst.slice(0, 8) + String(PAYOUT_DAY).padStart(2, "0");
+  }
+
+  // Intervalo de datas (início/fim, ambos inclusive) que efetivamente
+  // delimita o que entra no cálculo — o mês de referência inteiro, ou o
+  // período personalizado quando "Personalizar período" está ativo. Mesmo
+  // padrão de comissoes.js.
+  function currentRange() {
+    if (periodMode === "custom" && customRange) return customRange;
+    return { start: selectedMonth + "-01", end: lastDayOfMonth(selectedMonth) };
+  }
+
+  // Conjunto de meses "tocados" pelo intervalo — fallback usado só para
+  // lançamentos de comissionamento esporádico antigos (sem data própria,
+  // só mês de competência). Mesma lógica de comissoes.js.
+  function touchedMonths(range) {
+    var months = {};
+    var cur = range.start.slice(0, 7);
+    var endMonth = range.end.slice(0, 7);
+    var guard = 0;
+    while (cur <= endMonth && guard < 240) {
+      months[cur] = true;
+      cur = Utils.monthKey(Utils.addMonths(cur + "-01", 1));
+      guard++;
+    }
+    return months;
+  }
+
+  // Mês usado só para ancorar o gráfico de histórico e o cálculo de
+  // "Próximo Repasse" (sempre pensados em ciclo mensal) mesmo quando o
+  // período em exibição é personalizado — usa o mês em que o período
+  // termina, já que é o mês em que o corte efetivamente fecha.
+  function referenceMonthKey() {
+    if (periodMode === "custom" && customRange) return Utils.monthKey(customRange.end);
+    return selectedMonth;
+  }
+
+  // Mesmo filtro de comissionamento esporádico usado em comissoes.js
+  // (bonusesFor): por data exata quando o lançamento tem uma (novos),
+  // por mês de competência tocado pelo intervalo quando não tem (antigos).
+  function bonusesFor(employeeId, range) {
+    var touched = periodMode === "custom" ? touchedMonths(range) : null;
+    return DB.all("commissionBonuses").filter(function (b) {
+      if (b.employeeId !== employeeId) return false;
+      if (b.date) return b.date >= range.start && b.date <= range.end;
+      return touched ? touched[b.month] : b.month === selectedMonth;
+    });
+  }
+
+  // Igual a computeForEmployee(), mas sobre o período atualmente selecionado
+  // na tela (mês inteiro ou corte personalizado) — usada pelo KPI/tabela
+  // principais. computeForEmployee() continua existindo, sem alteração,
+  // só para o gráfico de histórico (sempre por mês calendário).
+  function computeForEmployeeCurrent(employeeId) {
+    var e = DB.get("employees", employeeId);
+    if (!e) return null;
+    var range = currentRange();
+    var employeesAll = DB.all("employees");
+    var appointments = DB.all("appointments").filter(function (a) {
+      return a.employeeId === employeeId && a.status === "concluido" && a.date >= range.start && a.date <= range.end;
+    }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
+    var appointmentsAsAssistant = DB.all("appointments").filter(function (a) {
+      return a.assistantId === employeeId && a.status === "concluido" && a.date >= range.start && a.date <= range.end;
+    }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
+    var services = DB.all("services"), clients = DB.all("clients");
+    var serviceRevenue = sum(appointments.map(function (a) { return a.price; }));
+    var mainCommissionTotal = 0;
+    appointments.forEach(function (a) { mainCommissionTotal += Utils.apptCommissionSplit(a, e).mainCommission; });
+    mainCommissionTotal = round2(mainCommissionTotal);
+    var assistantCommissionTotal = 0;
+    appointmentsAsAssistant.forEach(function (a) {
+      var mainEmp = employeesAll.find(function (x) { return x.id === a.employeeId; });
+      assistantCommissionTotal += Utils.apptCommissionSplit(a, mainEmp).assistantCommission;
+    });
+    assistantCommissionTotal = round2(assistantCommissionTotal);
+    var baseComissao = round2(mainCommissionTotal + assistantCommissionTotal);
+    var bonuses = bonusesFor(employeeId, range);
+    var bonusTotal = round2(sum(bonuses.map(function (b) { return b.amount; })));
+    var consumo = window.Consumo
+      ? (periodMode === "custom" ? Consumo.deductionForRange(employeeId, range) : Consumo.deductionFor(employeeId, selectedMonth))
+      : { total: 0, items: [] };
+    var devido = round2(baseComissao + bonusTotal - consumo.total);
+    var pago = sum(DB.all("transactions").filter(function (t) {
+      if (t.type !== "despesa" || t.employeeId !== employeeId || t.categoryId !== commissionCatId()) return false;
+      return periodMode === "custom"
+        ? (t.relatedRangeStart === range.start && t.relatedRangeEnd === range.end)
+        : (t.relatedMonth === selectedMonth);
+    }).map(function (t) { return t.amount; }));
+    var byService = {};
+    appointments.forEach(function (a) {
+      var s = services.find(function (x) { return x.id === a.serviceId; });
+      var key = s ? s.name : "Outro";
+      byService[key] = (byService[key] || 0) + Utils.apptCommissionSplit(a, e).mainCommission;
+    });
+    return {
+      employee: e, appointments: appointments, appointmentsAsAssistant: appointmentsAsAssistant, services: services, clients: clients, employeesAll: employeesAll,
+      serviceRevenue: serviceRevenue, baseComissao: baseComissao, mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
+      bonuses: bonuses, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
+      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService
+    };
   }
 
   function computeForEmployee(employeeId, monthKey) {
@@ -143,29 +291,32 @@
   }
 
   function render() {
-    var data = computeForEmployee(selectedEmployeeId, selectedMonth);
+    var data = computeForEmployeeCurrent(selectedEmployeeId);
     if (!data) return;
     var e = data.employee;
 
     var kpis = [
-      kpi("Comissão do Mês", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#2a78d6", "#e3eefb"),
+      kpi(periodMode === "custom" ? "Comissão do Período" : "Comissão do Mês", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#2a78d6", "#e3eefb"),
       kpi("Já Recebido", Utils.fmtMoney(data.pago), "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Saldo em Aberto", Utils.fmtMoney(Math.max(0, data.saldo)), "fa-hourglass-half", "#b7791f", "#fdf2df"),
-      kpi("Atendimentos no Mês", String(data.appointments.length), "fa-scissors", "#4a3aa7", "#ece8f8")
+      kpi(periodMode === "custom" ? "Atendimentos no Período" : "Atendimentos no Mês", String(data.appointments.length), "fa-scissors", "#4a3aa7", "#ece8f8")
     ];
     if (data.consumoTotal > 0) {
       kpis.push(kpi("Desconto por Consumo", "- " + Utils.fmtMoney(data.consumoTotal), "fa-flask", "#c23b3b", "#fbe6e6"));
     }
     document.getElementById("ec-summary").innerHTML = kpis.join("");
 
-    // corte / repasse
-    var cutoffDate = lastDayOfMonth(selectedMonth);
-    var payoutDate = payoutDateFor(selectedMonth);
+    // corte / repasse — em período personalizado o "corte" é o fim do
+    // intervalo escolhido, mas o repasse continua ancorado no ciclo mensal
+    // (dia 5 do mês seguinte ao mês em que o período termina), já que é
+    // assim que o salão paga na prática — ver referenceMonthKey().
+    var cutoffDate = periodMode === "custom" ? customRange.end : lastDayOfMonth(selectedMonth);
+    var payoutDate = payoutDateFor(referenceMonthKey());
     var today = Utils.todayISO();
     var daysToCutoff = Utils.daysBetween(today, cutoffDate);
     var daysToPayout = Utils.daysBetween(today, payoutDate);
     document.getElementById("ec-payout").innerHTML =
-      payoutItem("Corte do Mês", Utils.fmtDate(cutoffDate), cutoffLabel(daysToCutoff)) +
+      payoutItem(periodMode === "custom" ? "Corte do Período" : "Corte do Mês", Utils.fmtDate(cutoffDate), cutoffLabel(daysToCutoff)) +
       payoutItem("Próximo Repasse", Utils.fmtDate(payoutDate), payoutLabel(daysToPayout, data.saldo)) +
       payoutItem("Taxa de Comissão", e.commissionRate + "%", "sobre receita de serviços concluídos");
 
@@ -177,12 +328,14 @@
       series: [{ name: "Comissão", color: Charts.palette[0], data: svcEntries.map(function (s) { return round2(s.value); }) }],
       height: 240,
       valueFormatter: function (v) { return Utils.fmtMoney(v); },
-      emptyMessage: "Sem atendimentos concluídos neste mês"
+      emptyMessage: "Sem atendimentos concluídos no período"
     });
 
-    // history chart (last 6 months incl. selected reference)
+    // history chart (last 6 months incl. reference month) — sempre por mês
+    // calendário, mesmo em período personalizado: referenceMonthKey() ancora
+    // no mês em que o corte personalizado termina (ver comentário acima).
     var histMonths = [];
-    for (var i = 5; i >= 0; i--) histMonths.push(Utils.monthKey(Utils.addMonths(selectedMonth + "-01", -i)));
+    for (var i = 5; i >= 0; i--) histMonths.push(Utils.monthKey(Utils.addMonths(referenceMonthKey() + "-01", -i)));
     var histDevido = [], histPago = [];
     histMonths.forEach(function (m) {
       var d = computeForEmployee(selectedEmployeeId, m);
@@ -214,7 +367,7 @@
     });
     var tbl = document.getElementById("tbl-ec");
     if (!data.appointments.length) {
-      Utils.emptyTable(tbl, "fa-calendar", "Nenhum atendimento concluído neste mês");
+      Utils.emptyTable(tbl, "fa-calendar", "Nenhum atendimento concluído no período");
     } else {
       var ecSortGetters = {
         dataHora: function (a) { return a.date + " " + a.time; },
