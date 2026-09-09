@@ -1417,7 +1417,7 @@
         '</div>' +
         (window.ClientesQuick ? '<div id="am-new-client-panel" style="display:none;border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-top:8px;background:var(--gray-50);">' + ClientesQuick.inlinePanelHtml("am-nc") + '</div>' : "") +
       '</div>' +
-      '<div class="form-field full"><label>Serviço</label><select id="am-service">' + services.map(function (s) { return '<option value="' + s.id + '" data-price="' + s.price + '" data-group="' + s.group + '" data-duration="' + (s.durationMin || 30) + '"' + (a && a.serviceId === s.id ? " selected" : "") + '>' + s.name + " (" + s.group + ")" + '</option>'; }).join("") + '</select></div>' +
+      '<div class="form-field full"><label>Serviço</label>' + NameCombo.html({ id: "am-service", items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }), value: a ? a.serviceId : (services[0] ? services[0].id : ""), placeholder: "Nome do serviço" }) + '</div>' +
       '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: "am-employee", items: [], value: "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
       '<div class="form-field"><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="am-date" value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
@@ -1487,23 +1487,29 @@
       if (presetEmployeeId) amEmployeeCombo.setValue(presetEmployeeId);
       updateDefaultCommission();
     }
-    var serviceSel = box.querySelector("#am-service");
-    var initialOpt = serviceSel.options[serviceSel.selectedIndex];
+    var servicesById = {};
+    services.forEach(function (s) { servicesById[s.id] = s; });
+
+    // Preenche Valor (R$)/Duração a partir do serviço escolhido — só em
+    // "Novo Agendamento" (nunca sobrescreve os valores já salvos de um
+    // agendamento em edição, mesmo que o serviço mude).
+    function fillFromService(svc) {
+      Utils.setMoneyMaskValue(box.querySelector("#am-price"), svc ? svc.price : 0);
+      var durInput = box.querySelector("#am-duration");
+      if (durInput) durInput.value = svc ? (svc.durationMin || 30) : 30;
+    }
+    var amServiceCombo = NameCombo.wire(box, {
+      id: "am-service",
+      items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }),
+      onChange: function (item) { if (!a) fillFromService(item ? servicesById[item.id] : null); }
+    });
     fillEmployeesFor();
-    // Sem nenhum serviço cadastrado (Configurações → Serviços) o <select> de
-    // Serviço fica vazio e não há opção selecionada — nada para preencher.
-    if (!a && initialOpt) Utils.setMoneyMaskValue(box.querySelector("#am-price"), initialOpt.getAttribute("data-price"));
+    // Sem nenhum serviço cadastrado (Configurações → Serviços) o campo de
+    // Serviço fica vazio — nada para preencher.
+    if (!a && amServiceCombo.getValue()) fillFromService(servicesById[amServiceCombo.getValue()]);
     if (!a && !services.length) {
       Toast.show("Nenhum serviço cadastrado ainda. Cadastre serviços em Configurações antes de criar agendamentos.", "danger");
     }
-
-    serviceSel.addEventListener("change", function () {
-      var opt = serviceSel.options[serviceSel.selectedIndex];
-      if (!opt) return;
-      Utils.setMoneyMaskValue(box.querySelector("#am-price"), opt.getAttribute("data-price"));
-      var durInput = box.querySelector("#am-duration");
-      if (durInput) durInput.value = opt.getAttribute("data-duration") || 30;
-    });
 
     box.querySelector("#am-employee").addEventListener("change", updateDefaultCommission);
 
