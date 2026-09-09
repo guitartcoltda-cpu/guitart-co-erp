@@ -35,7 +35,7 @@
   .ag-general-date { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: var(--gray-500); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color); }
 
   /* Visão do Dia — calendário em grade (colunas = profissionais, linhas = horário) */
-  .cal-scroll { overflow: auto; overscroll-behavior: contain; max-height: 680px; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; }
+  .cal-scroll { overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; }
   .cal-grid-inner { display: grid; min-width: 100%; width: max-content; }
   .cal-corner { position: sticky; top: 0; left: 0; z-index: 3; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
   .cal-col-header { position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); padding: 10px 6px; text-align: center; }
@@ -112,14 +112,6 @@
   }
   @media (max-width: 900px) {
     .mini-cal { max-width: 100%; }
-    /* Corrige o "double scroll" no celular: a grade da Visão do Dia (colunas
-       por profissional) ganhava uma barra de rolagem vertical própria,
-       limitada a 680px, dentro da rolagem normal da página — em telas
-       sensíveis ao toque isso trava/engasga o gesto de subir e descer,
-       porque o toque às vezes é capturado pela grade em vez da página.
-       No celular a grade some do eixo vertical (a página inteira rola
-       normalmente) e mantém só a rolagem horizontal entre profissionais. */
-    .cal-scroll { max-height: none; }
   }
 </style>
 </head>
