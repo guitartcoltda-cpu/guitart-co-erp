@@ -108,6 +108,15 @@
     return Utils.toISODate(d);
   }
 
+  // Verdadeiro quando o período em exibição começa no dia 1 de um mês e
+  // termina dentro desse mesmo mês (seja no fim do mês, seja hoje, no caso
+  // do mês corrente ainda em andamento) — ou seja, quando o usuário está
+  // vendo "o mês", mesmo sem existir mais um seletor de mês dedicado.
+  function isWholeMonthPrefix(range) {
+    var mk = range.start.slice(0, 7);
+    return range.start === (mk + "-01") && range.end.slice(0, 7) === mk;
+  }
+
   function payoutDateFor(monthKey) {
     var nextMonthFirst = Utils.addMonths(monthKey + "-01", 1);
     return nextMonthFirst.slice(0, 8) + String(PAYOUT_DAY).padStart(2, "0");
@@ -187,18 +196,28 @@
     var bonusTotal = round2(sum(bonuses.map(function (b) { return b.amount; })));
     var consumo = window.Consumo ? Consumo.deductionForRange(employeeId, range) : { total: 0, items: [] };
     var devido = round2(baseComissao + bonusTotal - consumo.total);
-    // "Já Recebido" soma todo pagamento cujo próprio intervalo esteja
-    // CONTIDO no período em exibição — mesmo critério de comissoes.js
-    // (computeRows): ver o mês inteiro mostra tanto um pagamento único do
-    // mês quanto vários pagamentos semanais somados; ver só uma semana
-    // mostra apenas o que foi pago exatamente para ela. Pagamentos antigos
-    // (só relatedMonth, sem intervalo próprio) usam o mês inteiro como
-    // intervalo implícito.
+    // "Já Recebido" soma todo pagamento de comissão que pertence ao período
+    // em exibição — mesmo critério de comissoes.js (computeRows): quando o
+    // período visto é "o mês" (De = dia 1, Até = fim do mês ou hoje, se o
+    // mês ainda está em andamento), o critério é o mês de competência
+    // gravado no pagamento (relatedMonth) bater com o mês em exibição —
+    // isso garante que um corte semanal cujos dias cruzam a virada do mês
+    // (ex.: pago 29/08 a 04/09, mas registrado como competência de
+    // setembro) continue contando inteiro em setembro. Quando o período
+    // visto é um corte personalizado mais estreito, o critério passa a ser
+    // o intervalo do próprio pagamento estar CONTIDO no período em
+    // exibição, para não vazar o pagamento de outra semana do mesmo mês.
+    // Pagamentos antigos (só relatedMonth, sem intervalo próprio) usam o
+    // mês inteiro como intervalo implícito nesse segundo caso.
+    var wholeMonth = isWholeMonthPrefix(range);
+    var wholeMonthKey = range.start.slice(0, 7);
     var pago = sum(DB.all("transactions").filter(function (t) {
       if (t.type !== "despesa" || t.employeeId !== employeeId || t.categoryId !== commissionCatId()) return false;
-      return t.relatedRangeStart
-        ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
-        : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && lastDayOfMonth(t.relatedMonth) <= range.end);
+      return wholeMonth
+        ? (t.relatedMonth === wholeMonthKey)
+        : (t.relatedRangeStart
+          ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
+          : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && lastDayOfMonth(t.relatedMonth) <= range.end));
     }).map(function (t) { return t.amount; }));
     var byService = {};
     appointments.forEach(function (a) {

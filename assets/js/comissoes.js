@@ -59,6 +59,15 @@
     return monthKey + "-" + String(lastDay).padStart(2, "0");
   }
 
+  // Verdadeiro quando o período em exibição começa no dia 1 de um mês e
+  // termina dentro desse mesmo mês (seja no fim do mês, seja hoje, no caso
+  // do mês corrente ainda em andamento) — ou seja, quando o usuário está
+  // vendo "o mês", mesmo sem existir mais um seletor de mês dedicado.
+  function isWholeMonthPrefix(range) {
+    var mk = range.start.slice(0, 7);
+    return range.start === (mk + "-01") && range.end.slice(0, 7) === mk;
+  }
+
   // Intervalo de datas (início/fim, ambos inclusive) que efetivamente
   // delimita o que entra no cálculo — o período (De/Até) escolhido pelo
   // usuário no filtro.
@@ -255,20 +264,30 @@
     var allTransactions = DB.all("transactions");
     var catId = commissionCatId();
     var txnsByEmployeeId = {};
-    // "Pago" soma todo pagamento de comissão cujo próprio intervalo esteja
-    // CONTIDO no período em exibição — isso unifica os dois casos: ver o mês
-    // inteiro mostra tanto um pagamento único do mês quanto vários
-    // pagamentos semanais somados (todos contidos no mês inteiro); ver só
-    // uma semana mostra apenas o que foi pago exatamente para ela (o
-    // pagamento de outra semana do mesmo mês não está contido nela, então
-    // não "vaza"). Pagamentos antigos, de antes de o corte ter um intervalo
-    // próprio (só têm relatedMonth), usam o mês inteiro como intervalo
-    // implícito para essa mesma verificação de contenção.
+    // "Pago" soma todo pagamento de comissão que pertence ao período em
+    // exibição. Quando o período visto é "o mês" (De = dia 1, Até = fim do
+    // mês ou hoje, se o mês ainda está em andamento), o critério é o mesmo
+    // de sempre: o mês de competência gravado no pagamento (relatedMonth)
+    // bate com o mês em exibição — isso é o que garante que um corte
+    // semanal cujos dias cruzam a virada do mês (ex.: pago 29/08 a 04/09,
+    // mas registrado como competência de setembro) continue contando
+    // inteiro em setembro, mesmo sem estar contido dia-a-dia no mês. Quando
+    // o período visto é um corte personalizado mais estreito (não é um mês
+    // inteiro), o critério passa a ser o intervalo do próprio pagamento
+    // estar CONTIDO no período em exibição — assim ver só uma semana
+    // mostra apenas o que foi pago exatamente para ela, sem vazar o
+    // pagamento de outra semana do mesmo mês. Pagamentos antigos, de antes
+    // de o corte ter um intervalo próprio (só têm relatedMonth), usam o mês
+    // inteiro como intervalo implícito nesse segundo caso.
+    var wholeMonth = isWholeMonthPrefix(range);
+    var wholeMonthKey = range.start.slice(0, 7);
     allTransactions.forEach(function (t) {
       if (t.type !== "despesa" || t.categoryId !== catId || !t.employeeId) return;
-      var matches = t.relatedRangeStart
-        ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
-        : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && monthLastDay(t.relatedMonth) <= range.end);
+      var matches = wholeMonth
+        ? (t.relatedMonth === wholeMonthKey)
+        : (t.relatedRangeStart
+          ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
+          : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && monthLastDay(t.relatedMonth) <= range.end));
       if (matches) (txnsByEmployeeId[t.employeeId] || (txnsByEmployeeId[t.employeeId] = [])).push(t);
     });
     var assistantIds = apptsByAssistantId;
