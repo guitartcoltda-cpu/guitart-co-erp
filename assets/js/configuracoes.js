@@ -27,6 +27,7 @@
     Utils.qs("#btn-new-srv").addEventListener("click", function () { openSrvModal(null); });
     Utils.qs("#btn-new-role").addEventListener("click", function () { openRoleModal(null); });
     Utils.qs("#btn-new-paymethod").addEventListener("click", function () { openPaymentMethodModal(null); });
+    Utils.qs("#btn-new-pacote").addEventListener("click", function () { openPacoteModal(null); });
     Utils.qs("#btn-new-group").addEventListener("click", function () { openGroupModal(null); });
 
     Utils.qs("#cfg-company").value = (DB.getSettings() || {}).companyName || "";
@@ -109,7 +110,7 @@
       else Utils.qs("#perm-card").style.display = "none";
     });
 
-    renderCC(); renderCat(); renderSrv(); renderRoles(); renderPaymentMethods(); renderGroups(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
+    renderCC(); renderCat(); renderSrv(); renderRoles(); renderPaymentMethods(); renderPacotes(); renderGroups(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
 
     // Deep-link vindo do sininho de aprovações no topbar (?tab=aprovacoes).
     if (/tab=aprovacoes/.test(location.search)) {
@@ -945,6 +946,95 @@
         DB.log("Configurações", "Criou a forma de pagamento " + name);
       }
       Modal.close(); Toast.show("Forma de pagamento salva", "success"); renderPaymentMethods();
+    });
+  }
+
+  // ---------------- Pacotes de Tratamento ----------------
+  // Mesmo padrão de Cargos/Formas de Pagamento: não é tabela própria no
+  // Supabase, fica guardado em settings.treatmentPackages (ver
+  // DB.getTreatmentPackages/saveTreatmentPackages em db.js). Cada pacote
+  // tem um nome, um número de sessões (padrão 4) e um preço fixo por
+  // tamanho de cabelo. Usado na Agenda (Novo Agendamento → "Vender novo
+  // pacote de tratamento"), que gera um serviço sintético vinculado
+  // (isPackageService:true) na primeira vez que o pacote é vendido — ver
+  // packageServiceFor() em agenda.js.
+  var PACKAGE_SIZES = [
+    { key: "curto", label: "Curto" },
+    { key: "medio", label: "Médio" },
+    { key: "longo", label: "Longo" },
+    { key: "megalongo", label: "Mega Longo" }
+  ];
+  var pacotesSortState = { field: null, dir: "asc" };
+  function renderPacotes() {
+    var list = DB.getTreatmentPackages();
+    var clients = DB.all("clients");
+    var pkGetters = {
+      count: function (pk) { return clients.filter(function (c) { return (c.packages || []).some(function (pp) { return pp.packageId === pk.id; }); }).length; }
+    };
+    list = Utils.sortBy(list, pacotesSortState, pkGetters);
+    var tbl = Utils.qs("#tbl-pacotes");
+    tbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Pacote", "name", pacotesSortState) +
+      '<th>Sessões</th>' +
+      PACKAGE_SIZES.map(function (sz) { return '<th class="text-right">' + sz.label + '</th>'; }).join("") +
+      Utils.thSort("Clientes", "count", pacotesSortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
+      list.map(function (pk) {
+        var count = pkGetters.count(pk);
+        return '<tr><td class="font-bold">' + Utils.escapeHtml(pk.name) + '</td>' +
+          '<td>' + (pk.sessionsTotal || 4) + '</td>' +
+          PACKAGE_SIZES.map(function (sz) { return '<td class="text-right">' + Utils.fmtMoney((pk.prices || {})[sz.key] || 0) + '</td>'; }).join("") +
+          '<td class="text-right">' + count + '</td>' +
+          '<td><div class="flex gap-6"><button class="btn btn-icon btn-ghost" data-edit-pacote="' + pk.id + '"><i class="fa-solid fa-pen"></i></button>' +
+          '<button class="btn btn-icon btn-ghost" data-del-pacote="' + pk.id + '"><i class="fa-solid fa-trash"></i></button></div></td></tr>';
+      }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, pacotesSortState, renderPacotes);
+    Utils.qsa("[data-edit-pacote]", tbl).forEach(function (b) { b.addEventListener("click", function () { openPacoteModal(b.getAttribute("data-edit-pacote")); }); });
+    Utils.qsa("[data-del-pacote]", tbl).forEach(function (b) {
+      b.addEventListener("click", function () {
+        var id = b.getAttribute("data-del-pacote");
+        var pk = list.find(function (x) { return x.id === id; });
+        if (pk && pkGetters.count(pk) > 0) { Toast.show("Existem clientes com este pacote comprado", "danger"); return; }
+        Modal.confirm({ title: "Excluir pacote", message: "Confirma a exclusão?", danger: true, onConfirm: function () {
+          DB.saveTreatmentPackages(DB.getTreatmentPackages().filter(function (x) { return x.id !== id; }));
+          if (pk) DB.log("Configurações", "Excluiu o pacote de tratamento " + pk.name);
+          Toast.show("Excluído", "success"); renderPacotes();
+        } });
+      });
+    });
+  }
+  function openPacoteModal(id) {
+    var list = DB.getTreatmentPackages();
+    var pk = id ? list.find(function (x) { return x.id === id; }) : null;
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><label>Nome do Pacote</label><input type="text" id="pacote-name" value="' + (pk ? Utils.escapeHtml(pk.name) : "") + '"></div>' +
+      '<div class="form-field"><label>Nº de Sessões</label><input type="number" id="pacote-sessions" min="1" value="' + (pk ? pk.sessionsTotal : 4) + '"></div>' +
+      '<div class="form-field full"><div class="hint">Valor total do pacote por tamanho de cabelo (o profissional recebe comissão sobre o valor diluído — valor total ÷ nº de sessões — a cada sessão concluída).</div></div>' +
+      PACKAGE_SIZES.map(function (sz) {
+        return '<div class="form-field"><label>' + sz.label + ' (R$)</label><input type="text" id="pacote-price-' + sz.key + '"></div>';
+      }).join("") +
+      '</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="pacote-save">Salvar</button>';
+    var box = Modal.open({ title: pk ? "Editar Pacote" : "Novo Pacote", bodyHtml: body, footHtml: foot });
+    PACKAGE_SIZES.forEach(function (sz) {
+      Utils.wireMoneyMask(box.querySelector("#pacote-price-" + sz.key), pk ? (pk.prices || {})[sz.key] : 0);
+    });
+    box.querySelector("#pacote-save").addEventListener("click", function () {
+      var name = box.querySelector("#pacote-name").value.trim();
+      if (!name) { Toast.show("Informe o nome do pacote", "danger"); return; }
+      var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!pk || x.id !== pk.id); });
+      if (dup) { Toast.show("Já existe um pacote com este nome", "danger"); return; }
+      var sessionsTotal = parseInt(box.querySelector("#pacote-sessions").value, 10) || 4;
+      var prices = {};
+      PACKAGE_SIZES.forEach(function (sz) { prices[sz.key] = Utils.moneyMaskToFloat(box.querySelector("#pacote-price-" + sz.key)); });
+      if (pk) {
+        DB.saveTreatmentPackages(list.map(function (x) { return x.id === pk.id ? Object.assign({}, x, { name: name, sessionsTotal: sessionsTotal, prices: prices }) : x; }));
+        DB.log("Configurações", "Atualizou o pacote de tratamento " + name);
+      } else {
+        DB.saveTreatmentPackages(list.concat([{ id: DB.uid("pkg"), name: name, sessionsTotal: sessionsTotal, prices: prices }]));
+        DB.log("Configurações", "Criou o pacote de tratamento " + name);
+      }
+      Modal.close(); Toast.show("Pacote salvo", "success"); renderPacotes();
     });
   }
 

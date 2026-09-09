@@ -844,6 +844,12 @@
   function concludeAppointment(apptId) {
     var appt = DB.get("appointments", apptId);
     if (!appt) return;
+    // Sessão de pacote (2ª em diante — a 1ª é a venda, com cobrança normal
+    // e pelo fluxo de conclusão comum) vai sempre pelo fluxo simplificado
+    // dedicado, independente de haver outros atendimentos do mesmo cliente
+    // no mesmo dia — o dinheiro já foi todo cobrado na venda, então não há
+    // escolha "só este × fechar conta" nem reconciliação a fazer aqui.
+    if (appt.packagePurchaseId && appt.packageSessionIndex > 1) { openConcludePackageSessionModal(appt); return; }
     var group = DB.all("appointments").filter(function (x) {
       return x.status === "agendado" && x.clientId === appt.clientId && x.date === appt.date;
     }).sort(function (a, b) { return a.time.localeCompare(b.time); });
@@ -968,6 +974,50 @@
     var c = DB.findOne("categories", function (x) { return x.name === "Parceria" && x.type === "despesa"; });
     _parceriaCatId = c ? c.id : null;
     return _parceriaCatId;
+  }
+
+  // ---------------- Pacotes de Tratamento ----------------
+  // Cadastro em Configurações → Pacotes (DB.getTreatmentPackages, guardado
+  // em settings.treatmentPackages). Ao vender um pacote (1ª sessão), o
+  // cliente paga o valor cheio de uma vez; nas sessões seguintes (criadas
+  // uma a uma, conforme o cliente retorna), o profissional que atender
+  // ganha comissão sobre o valor diluído (valor total ÷ nº de sessões) —
+  // ver a seção "Concluir Atendimento" mais abaixo. Cada definição de
+  // pacote (settings.treatmentPackages) tem um serviço sintético vinculado
+  // (isPackageService:true) para que Comissionamento/Extrato/Relatório de
+  // Vendas, que assumem appt.serviceId resolvendo para um "services" real,
+  // continuem funcionando sem nenhuma alteração.
+  var PACKAGE_SIZES = [
+    { key: "curto", label: "Curto" },
+    { key: "medio", label: "Médio" },
+    { key: "longo", label: "Longo" },
+    { key: "megalongo", label: "Mega Longo" }
+  ];
+  var _packageCatId;
+  function packageCategoryId() {
+    if (_packageCatId !== undefined) return _packageCatId;
+    var c = DB.findOne("categories", function (x) { return x.name === "Serviços - Pacotes de Tratamento" && x.type === "receita"; });
+    if (!c) {
+      var cc = DB.findOne("costCenters", function (x) { return x.key === "operacional"; });
+      c = DB.insert("categories", { name: "Serviços - Pacotes de Tratamento", type: "receita", costCenterId: cc ? cc.id : null, color: "#7a4fb5" });
+    }
+    _packageCatId = c.id;
+    return _packageCatId;
+  }
+  // Cria (na primeira venda) ou mantém sincronizado (se o nome do pacote
+  // mudar em Configurações) o serviço sintético vinculado a uma definição
+  // de pacote. Esse serviço é filtrado da lista normal do combo Serviço em
+  // Novo Agendamento (ver openApptModal) — reception nunca o seleciona
+  // manualmente, só através do fluxo dedicado de pacotes.
+  function packageServiceFor(pkgDef) {
+    var name = pkgDef.name + " (Pacote)";
+    var svc = DB.findOne("services", function (s) { return s.packageDefId === pkgDef.id; });
+    if (!svc) {
+      svc = DB.insert("services", { name: name, group: "Pacotes", categoryId: packageCategoryId(), durationMin: 60, price: 0, isPackageService: true, packageDefId: pkgDef.id });
+    } else if (svc.name !== name) {
+      svc = DB.update("services", svc.id, { name: name });
+    }
+    return svc;
   }
 
   // ---------------- Gorjeta (profissional/assistente) ----------------
@@ -1162,6 +1212,100 @@
     };
   }
 
+  // ---------------- Conclusão de sessão de pacote (2ª sessão em diante) ----------------
+  // O dinheiro do pacote inteiro já foi cobrado do cliente na venda (1ª
+  // sessão — ver isPackageSale dentro de openConcludeSingleModal). Aqui não
+  // há nada para cobrar nem reconciliar: só gorjeta (opcional) e
+  // insumos/produtos (opcional, mesmo padrão de openAddInsumoModal).
+  // appt.price já é o valor diluído certo, gravado desde a criação da
+  // sessão (ver openApptModal) — a comissão desta sessão é calculada
+  // automaticamente pelo motor padrão (Utils.apptCommissionSplit /
+  // comissoes.js), sem nenhum cálculo de comissão extra aqui.
+  function openConcludePackageSessionModal(appt) {
+    var service = DB.get("services", appt.serviceId);
+    var client = DB.get("clients", appt.clientId);
+    var employee = DB.get("employees", appt.employeeId);
+    var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
+    var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
+    var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
+    var methods = paymentMethods();
+    var hasAssistant = !!appt.assistantId;
+    var assistant = hasAssistant ? DB.get("employees", appt.assistantId) : null;
+    var packagePurchase = (client && client.packages || []).find(function (pp) { return pp.id === appt.packagePurchaseId; });
+
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;background:var(--gray-50);font-size:13px;">' +
+        'Sessão ' + appt.packageSessionIndex + ' de ' + (packagePurchase ? packagePurchase.sessionsTotal : "?") + ' do pacote "' + (packagePurchase ? Utils.escapeHtml(packagePurchase.packageName) + " (" + Utils.escapeHtml(packagePurchase.sizeLabel) + ")" : "") + '". ' +
+        'O valor já foi cobrado do cliente na venda do pacote — nada a cobrar nesta sessão. ' + Utils.escapeHtml(employee ? employee.name : "O profissional") + ' recebe comissão sobre o valor diluído desta sessão (' + Utils.fmtMoney(appt.price) + ').' +
+      '</div></div>' +
+      '</div>' +
+      tipFieldsHtml("ps", hasAssistant) +
+      '<div class="divider" style="margin:14px 0;"></div>' +
+      '<div class="flex items-center justify-between mb-8">' +
+        '<label style="font-weight:600;">Insumos / Produtos (opcional)</label>' +
+        '<button type="button" class="btn btn-sm btn-outline" id="ps-add-insumo"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
+      '</div>' +
+      '<div id="ps-insumo-rows"></div>' +
+      '<div class="small text-muted mb-16">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
+      '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ps-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ps-save">Confirmar Conclusão</button>';
+    var box = Modal.open({ title: "Concluir Sessão de Pacote", wide: true, bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#ps-tip-emp"), 0);
+    if (hasAssistant) Utils.wireMoneyMask(box.querySelector("#ps-tip-asst"), 0);
+
+    var rowsEl = box.querySelector("#ps-insumo-rows");
+    box.querySelector("#ps-add-insumo").addEventListener("click", function () {
+      rowsEl.insertAdjacentHTML("beforeend", insumoRowHtml());
+      wireInsumoRow(rowsEl.lastElementChild);
+    });
+
+    box.querySelector("#ps-save").addEventListener("click", function () {
+      var rows = Utils.qsa(".insumo-item-row", rowsEl);
+      var payMethod = box.querySelector("#ps-pay").value;
+      var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#ps-tip-emp")) || 0;
+      var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#ps-tip-asst")) || 0) : 0;
+
+      DB.batch(function () {
+        DB.update("appointments", appt.id, { status: "concluido" });
+        registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: employee ? employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
+        registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: assistant ? assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
+
+        rows.forEach(function (row) {
+          var tipo = row.querySelector(".ir-tipo").value;
+          var productId = row.querySelector(".ir-produto").value;
+          var qtd = parseFloat(row.querySelector(".ir-qtd").value) || 0;
+          if (!productId || qtd <= 0) return;
+          if (tipo === "consumo") {
+            if (window.Consumo) {
+              try {
+                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "" });
+              } catch (err) { Toast.show(String(err), "danger"); }
+            }
+          } else {
+            var product = DB.get("products", productId);
+            if (!product) return;
+            var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
+            DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+            DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
+            DB.insert("transactions", {
+              type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
+              categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
+              paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+              productId: productId, appointmentId: appt.id, reconciled: false
+            });
+          }
+        });
+      });
+
+      DB.log("Agenda", "Concluiu a sessão " + appt.packageSessionIndex + " do pacote \"" + (packagePurchase ? packagePurchase.packageName : "") + "\" - " + client.name + " (comissão sobre " + Utils.fmtMoney(appt.price) + ")" +
+        (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
+      if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", appt.id));
+      Modal.close();
+      Toast.show("Sessão de pacote concluída", "success");
+      render();
+    });
+  }
+
   function openConcludeSingleModal(appt) {
     var service = DB.get("services", appt.serviceId);
     var client = DB.get("clients", appt.clientId);
@@ -1173,7 +1317,22 @@
     var hasAssistant = !!appt.assistantId;
     var assistant = hasAssistant ? DB.get("employees", appt.assistantId) : null;
 
+    // Venda de pacote de tratamento (1ª sessão — ver openApptModal, modo
+    // "Vender novo pacote"): o cliente paga o valor CHEIO do pacote aqui,
+    // de uma vez só, mas appt.price já foi gravado DILUÍDO (valor total ÷
+    // nº de sessões) desde a criação — é sobre esse valor diluído que a
+    // comissão desta e de cada sessão seguinte é calculada. Por isso "Valor
+    // Cobrado" é pré-preenchido com o valor cheio do pacote (não com
+    // appt.price), e o save handler abaixo tem o cuidado de NUNCA
+    // sobrescrever appt.price com o valor cobrado nesta tela.
+    var isPackageSale = !!(appt.packagePurchaseId && appt.packageSessionIndex === 1);
+    var packagePurchase = isPackageSale ? (client.packages || []).find(function (pp) { return pp.id === appt.packagePurchaseId; }) : null;
+
     var body = '<div class="form-grid">' +
+      (isPackageSale && packagePurchase ? '<div class="form-field full"><div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;background:var(--gray-50);font-size:13px;">' +
+        'Venda do pacote "' + Utils.escapeHtml(packagePurchase.packageName) + '" (' + Utils.escapeHtml(packagePurchase.sizeLabel) + ', ' + packagePurchase.sessionsTotal + ' sessões). ' +
+        'O valor abaixo é o valor CHEIO do pacote, cobrado uma única vez, agora. Em cada uma das próximas sessões, o profissional que atender recebe comissão sobre o valor diluído (' + Utils.fmtMoney(appt.price) + ' por sessão), conforme os atendimentos forem acontecendo.' +
+      '</div></div>' : "") +
       '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
       '</div>' +
@@ -1192,7 +1351,7 @@
       '<div class="small text-muted">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal.</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cc-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Atendimento", wide: true, bodyHtml: body, footHtml: foot });
-    Utils.wireMoneyMask(box.querySelector("#cc-amount"), appt.price);
+    Utils.wireMoneyMask(box.querySelector("#cc-amount"), isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price);
     Utils.wireMoneyMask(box.querySelector("#cc-tip-emp"), 0);
     if (hasAssistant) Utils.wireMoneyMask(box.querySelector("#cc-tip-asst"), 0);
     wireParceriaSplitRequest(box, { id: "cc-parceria-pct", appt: appt, employee: employee });
@@ -1220,7 +1379,7 @@
     });
 
     box.querySelector("#cc-save").addEventListener("click", function () {
-      var amount = Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || appt.price;
+      var amount = Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || (isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price);
       var rows = Utils.qsa(".insumo-item-row", rowsEl);
       var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
       var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
@@ -1232,7 +1391,13 @@
       var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#cc-tip-asst")) || 0) : 0;
 
       DB.batch(function () {
-        var apptPatch = { status: "concluido", price: amount };
+        // CRÍTICO: numa venda de pacote (1ª sessão), "amount" é o valor
+        // CHEIO cobrado do cliente — appt.price precisa continuar sendo o
+        // valor DILUÍDO já gravado na criação (é a base da comissão desta
+        // sessão). Por isso price só entra no patch quando NÃO é venda de
+        // pacote; numa venda de pacote o campo simplesmente não é tocado.
+        var apptPatch = { status: "concluido" };
+        if (!isPackageSale) apptPatch.price = amount;
         if (isParceria && canEditParceriaSplit) apptPatch.commissionPercent = splitPct;
         DB.update("appointments", appt.id, apptPatch);
         if (isParceria) {
@@ -1313,6 +1478,7 @@
 
       DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name +
         (isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + ")") +
+        (isPackageSale && packagePurchase ? " — venda do pacote \"" + packagePurchase.packageName + "\" (comissão desta sessão sobre " + Utils.fmtMoney(appt.price) + ")" : "") +
         (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
       // Enfileira o pedido de avaliação por WhatsApp (envio manual, mesmo
       // fluxo da confirmação de agendamento) — a pedido do cliente, toda
@@ -1651,10 +1817,21 @@
   function openApptModal(id, presets) {
     presets = presets || {};
     var a = id ? DB.get("appointments", id) : null;
-    var services = DB.all("services").sort(function (x, y) { return x.group.localeCompare(y.group) || x.name.localeCompare(y.name); });
+    // Serviços sintéticos de pacote (isPackageService:true — ver
+    // packageServiceFor) ficam fora do combo normal de Serviço: reception
+    // nunca os seleciona à mão, só através do fluxo dedicado de pacotes
+    // abaixo (modo "Sessão de um pacote já comprado"/"Vender novo pacote").
+    var services = DB.all("services").filter(function (s) { return !s.isPackageService; }).sort(function (x, y) { return x.group.localeCompare(y.group) || x.name.localeCompare(y.name); });
     var employees = DB.all("employees").filter(function (e) { return e.status === "ativo" && employeePerformsServices(e); }).sort(function (x, y) { return x.name.localeCompare(y.name); });
     var allActiveEmployees = DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (x, y) { return x.name.localeCompare(y.name); });
     var clients = DB.all("clients").sort(function (x, y) { return x.name.localeCompare(y.name); });
+    var treatmentPackages = DB.getTreatmentPackages();
+    var isPackageLinked = !!(a && a.packagePurchaseId);
+    var linkedPackagePurchase = null;
+    if (isPackageLinked) {
+      var linkedClient = DB.get("clients", a.clientId);
+      linkedPackagePurchase = linkedClient ? (linkedClient.packages || []).find(function (pp) { return pp.id === a.packagePurchaseId; }) : null;
+    }
 
     var hasAssistant = !!(a && a.assistantId);
     var canEditCommission = !window.Approvals || Approvals.isAdmin();
@@ -1693,8 +1870,13 @@
     // seleciona por padrão quando não há nenhum "selected" explícito).
     var apptModalInitialDuration = (function () {
       if (a && a.durationMin != null) return a.durationMin;
+      // Em edição, o serviço do agendamento pode ser um serviço sintético de
+      // pacote (isPackageService:true) — esses ficam de propósito fora da
+      // lista `services` (filtrada, ver acima), então busca-se direto no
+      // banco em vez de procurar na lista filtrada, senão a duração cairia
+      // no fallback de 30min em vez dos 60min fixos do pacote.
       var svcId = a ? a.serviceId : (services[0] ? services[0].id : null);
-      var svc = svcId ? services.find(function (s) { return s.id === svcId; }) : null;
+      var svc = svcId ? DB.get("services", svcId) : null;
       return (svc && svc.durationMin) ? svc.durationMin : 30;
     })();
 
@@ -1706,9 +1888,32 @@
         '</div>' +
         (window.ClientesQuick ? '<div id="am-new-client-panel" style="display:none;border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-top:8px;background:var(--gray-50);">' + ClientesQuick.inlinePanelHtml("am-nc") + '</div>' : "") +
       '</div>' +
-      '<div class="form-field full"><label>Serviço</label>' + NameCombo.html({ id: "am-service", items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }), value: a ? a.serviceId : (services[0] ? services[0].id : ""), placeholder: "Nome do serviço" }) + '</div>' +
+      (!a ?
+        '<div class="form-field full"><label>Tipo de Atendimento</label><select id="am-appt-mode">' +
+          '<option value="avulso">Atendimento avulso</option>' +
+          '<option value="session">Sessão de um pacote já comprado</option>' +
+          '<option value="sell">Vender novo pacote de tratamento</option>' +
+        '</select></div>' +
+        '<div class="form-field full" id="am-package-session-block" style="display:none;">' +
+          '<label>Pacote do Cliente</label><select id="am-package-purchase"></select>' +
+          '<div class="hint" id="am-package-session-info" style="margin-top:6px;"></div>' +
+        '</div>' +
+        '<div class="form-field full" id="am-package-sell-block" style="display:none;">' +
+          '<div class="form-grid">' +
+            '<div class="form-field"><label>Pacote</label><select id="am-package-def">' + treatmentPackages.map(function (pk) { return '<option value="' + pk.id + '">' + Utils.escapeHtml(pk.name) + '</option>'; }).join("") + '</select></div>' +
+            '<div class="form-field"><label>Tamanho do Cabelo</label><select id="am-package-size">' + PACKAGE_SIZES.map(function (sz) { return '<option value="' + sz.key + '">' + sz.label + '</option>'; }).join("") + '</select></div>' +
+          '</div>' +
+          '<div class="hint" id="am-package-sell-info" style="margin-top:6px;"></div>' +
+        '</div>'
+      : (isPackageLinked ?
+        '<div class="form-field full"><div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;background:var(--gray-50);font-size:13px;">' +
+          'Sessão ' + a.packageSessionIndex + ' de ' + (linkedPackagePurchase ? linkedPackagePurchase.sessionsTotal : "?") + ' do pacote "' + (linkedPackagePurchase ? Utils.escapeHtml(linkedPackagePurchase.packageName) + " (" + Utils.escapeHtml(linkedPackagePurchase.sizeLabel) + ")" : "") + '". ' +
+          'O profissional que concluir esta sessão recebe comissão sobre o valor diluído (R$ ' + Utils.fmtMoney(a.price) + ').' +
+        '</div></div>'
+      : "")) +
+      '<div class="form-field full" id="am-service-wrap"' + (isPackageLinked ? ' style="display:none;"' : "") + '><label>Serviço</label>' + NameCombo.html({ id: "am-service", items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }), value: a ? a.serviceId : (services[0] ? services[0].id : ""), placeholder: "Nome do serviço" }) + '</div>' +
       '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: "am-employee", items: [], value: "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
-      '<div class="form-field"><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
+      '<div class="form-field" id="am-price-wrap"' + (isPackageLinked ? ' style="display:none;"' : "") + '><label>Valor (R$)</label><input type="text" id="am-price"></div>' +
       '<div class="form-field"><label>Data</label><input type="date" id="am-date" value="' + (a ? a.date : (presets.date || selectedDate)) + '"></div>' +
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
       '<div class="form-field"><label>Duração (min)</label><input type="number" id="am-duration" min="5" step="5" value="' + apptModalInitialDuration + '"></div>' +
@@ -1798,6 +2003,75 @@
     if (!a && amServiceCombo.getValue()) fillFromService(servicesById[amServiceCombo.getValue()]);
     if (!a && !services.length) {
       Toast.show("Nenhum serviço cadastrado ainda. Cadastre serviços em Configurações antes de criar agendamentos.", "danger");
+    }
+
+    // ---------------- Pacote de Tratamento (só em Novo Agendamento) ----------------
+    // "am-appt-mode" só existe no HTML quando !a — ver body acima. Alterna a
+    // visibilidade de Serviço/Valor (normal) × os blocos de pacote, e ajusta
+    // a Duração automaticamente para 60min nos modos de pacote (fixo, ver
+    // packageServiceFor). A validação/gravação de verdade acontece só no
+    // clique de "Salvar Agendamento" (#am-save).
+    var apptModeSelEl = box.querySelector("#am-appt-mode");
+    if (apptModeSelEl) {
+      var serviceWrapEl = box.querySelector("#am-service-wrap");
+      var priceWrapEl = box.querySelector("#am-price-wrap");
+      var sessionBlockEl = box.querySelector("#am-package-session-block");
+      var sellBlockEl = box.querySelector("#am-package-sell-block");
+      var pkgPurchaseSelEl = box.querySelector("#am-package-purchase");
+      var pkgSessionInfoEl = box.querySelector("#am-package-session-info");
+      var pkgDefSelEl = box.querySelector("#am-package-def");
+      var pkgSizeSelEl = box.querySelector("#am-package-size");
+      var pkgSellInfoEl = box.querySelector("#am-package-sell-info");
+
+      function refreshPackageSessionOptions() {
+        var clientId = box.querySelector("#am-client").value;
+        var client = clientId ? DB.get("clients", clientId) : null;
+        var opts = (client && client.packages || []).filter(function (pp) { return (pp.sessionsTotal - (pp.appointmentIds || []).length) > 0; });
+        if (!opts.length) {
+          pkgPurchaseSelEl.innerHTML = '<option value="">' + (clientId ? "Nenhum pacote com sessão disponível para este cliente" : "Selecione o cliente primeiro") + '</option>';
+          pkgSessionInfoEl.textContent = "";
+          return;
+        }
+        pkgPurchaseSelEl.innerHTML = opts.map(function (pp) {
+          var used = (pp.appointmentIds || []).length;
+          return '<option value="' + pp.id + '">' + Utils.escapeHtml(pp.packageName) + " - " + Utils.escapeHtml(pp.sizeLabel) + " (sessão " + (used + 1) + " de " + pp.sessionsTotal + ")</option>";
+        }).join("");
+        updateSessionInfo();
+      }
+      function updateSessionInfo() {
+        var clientId = box.querySelector("#am-client").value;
+        var client = clientId ? DB.get("clients", clientId) : null;
+        var pp = client && pkgPurchaseSelEl.value ? (client.packages || []).find(function (x) { return x.id === pkgPurchaseSelEl.value; }) : null;
+        pkgSessionInfoEl.textContent = pp ? ("Valor diluído desta sessão: " + Utils.fmtMoney(pp.totalPrice / pp.sessionsTotal) + " — é sobre esse valor que a comissão do profissional é calculada.") : "";
+      }
+      function refreshPackageSellInfo() {
+        if (!treatmentPackages.length) { pkgSellInfoEl.textContent = "Nenhum pacote cadastrado ainda. Cadastre em Configurações → Pacotes."; return; }
+        var pkDef = treatmentPackages.find(function (pk) { return pk.id === pkgDefSelEl.value; });
+        if (!pkDef) { pkgSellInfoEl.textContent = ""; return; }
+        var sessionsTotal = pkDef.sessionsTotal || 4;
+        var total = (pkDef.prices || {})[pkgSizeSelEl.value] || 0;
+        pkgSellInfoEl.textContent = "Valor total (cobrado do cliente nesta 1ª sessão): " + Utils.fmtMoney(total) + " em " + sessionsTotal + " sessões — valor diluído por sessão: " + Utils.fmtMoney(total / sessionsTotal) + " (base da comissão do profissional em cada sessão).";
+      }
+      function applyModeVisibility() {
+        var mode = apptModeSelEl.value;
+        serviceWrapEl.style.display = mode === "avulso" ? "" : "none";
+        priceWrapEl.style.display = mode === "avulso" ? "" : "none";
+        sessionBlockEl.style.display = mode === "session" ? "" : "none";
+        sellBlockEl.style.display = mode === "sell" ? "" : "none";
+        if (mode === "avulso") {
+          if (amServiceCombo.getValue()) fillFromService(servicesById[amServiceCombo.getValue()]);
+        } else {
+          var durInput = box.querySelector("#am-duration");
+          if (durInput) durInput.value = 60;
+          if (mode === "session") refreshPackageSessionOptions(); else refreshPackageSellInfo();
+        }
+      }
+      apptModeSelEl.addEventListener("change", applyModeVisibility);
+      pkgPurchaseSelEl.addEventListener("change", updateSessionInfo);
+      pkgDefSelEl.addEventListener("change", refreshPackageSellInfo);
+      pkgSizeSelEl.addEventListener("change", refreshPackageSellInfo);
+      box.querySelector("#am-client").addEventListener("change", function () { if (apptModeSelEl.value === "session") refreshPackageSessionOptions(); });
+      refreshPackageSellInfo();
     }
 
     box.querySelector("#am-employee").addEventListener("change", updateDefaultCommission);
@@ -1918,9 +2192,25 @@
     }
     if (a) {
       box.querySelector("#am-delete").addEventListener("click", function () {
+        var delMsg = "Deseja excluir este agendamento?";
+        if (isPackageLinked) delMsg += " A sessão do pacote voltará a ficar disponível para ser reagendada.";
         Modal.confirm({
-          title: "Excluir agendamento", message: "Deseja excluir este agendamento?", danger: true,
+          title: "Excluir agendamento", message: delMsg, danger: true,
           onConfirm: function () {
+            // Se este agendamento é uma sessão de pacote, libera a vaga
+            // (remove o id de client.packages[].appointmentIds) antes de
+            // excluir — a sessão volta a contar como "disponível" (ver
+            // openApptModal → refreshPackageSessionOptions).
+            if (isPackageLinked) {
+              var delClient = DB.get("clients", a.clientId);
+              if (delClient) {
+                var newPackages = (delClient.packages || []).map(function (pp) {
+                  if (pp.id !== a.packagePurchaseId) return pp;
+                  return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).filter(function (aid) { return aid !== a.id; }) });
+                });
+                DB.update("clients", a.clientId, { packages: newPackages });
+              }
+            }
             DB.remove("appointments", a.id);
             DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time);
             Toast.show("Agendamento excluído", "success");
@@ -1951,13 +2241,48 @@
       // serviço selecionado — assim um agendamento nunca ajustado continua
       // "seguindo" a duração cadastrada no serviço (Configurações →
       // Serviços), mesmo que ela mude no futuro. Ver apptDurationMin.
-      var selectedServiceObj = DB.get("services", box.querySelector("#am-service").value);
-      var defaultDurationMin = (selectedServiceObj && selectedServiceObj.durationMin) ? selectedServiceObj.durationMin : 30;
+      // Modo do atendimento (só existe o seletor em Novo Agendamento — ver
+      // "am-appt-mode" acima; em edição, ou quando é um atendimento avulso,
+      // segue tudo pelo caminho normal abaixo, lendo Serviço/Valor do DOM).
+      var apptModeSel = box.querySelector("#am-appt-mode");
+      var apptMode = apptModeSel ? apptModeSel.value : "avulso";
+      var packageServiceIdToUse = null, packagePriceToUse = null, packageDurationToUse = null;
+      var pendingPackageSell = null, pendingPackageSession = null;
+      if (!a && apptMode === "session") {
+        var sessClientId = box.querySelector("#am-client").value;
+        var sessClient = sessClientId ? DB.get("clients", sessClientId) : null;
+        var sessPurchaseId = box.querySelector("#am-package-purchase") ? box.querySelector("#am-package-purchase").value : "";
+        var sessPurchase = sessClient ? (sessClient.packages || []).find(function (pp) { return pp.id === sessPurchaseId; }) : null;
+        if (!sessClient || !sessPurchase) { Toast.show("Selecione o cliente e o pacote com sessão disponível", "danger"); return; }
+        packageServiceIdToUse = sessPurchase.linkedServiceId;
+        packagePriceToUse = round2(sessPurchase.totalPrice / sessPurchase.sessionsTotal);
+        packageDurationToUse = 60;
+        pendingPackageSession = { client: sessClient, purchase: sessPurchase };
+      } else if (!a && apptMode === "sell") {
+        var pkDefId = box.querySelector("#am-package-def") ? box.querySelector("#am-package-def").value : "";
+        var pkDef = treatmentPackages.find(function (pk) { return pk.id === pkDefId; });
+        var pkSizeKey = box.querySelector("#am-package-size") ? box.querySelector("#am-package-size").value : "";
+        var pkSize = PACKAGE_SIZES.filter(function (sz) { return sz.key === pkSizeKey; })[0];
+        var sellClientId = box.querySelector("#am-client").value;
+        if (!pkDef || !pkSize) { Toast.show("Selecione o pacote e o tamanho de cabelo", "danger"); return; }
+        if (!sellClientId) { Toast.show("Selecione o cliente", "danger"); return; }
+        var pkTotal = (pkDef.prices || {})[pkSizeKey] || 0;
+        if (pkTotal <= 0) { Toast.show("Este pacote não tem um valor cadastrado para o tamanho \"" + pkSize.label + "\"", "danger"); return; }
+        var pkSessions = pkDef.sessionsTotal || 4;
+        var pkSvc = packageServiceFor(pkDef);
+        packageServiceIdToUse = pkSvc.id;
+        packagePriceToUse = round2(pkTotal / pkSessions);
+        packageDurationToUse = 60;
+        pendingPackageSell = { clientId: sellClientId, pkDef: pkDef, sizeKey: pkSizeKey, sizeLabel: pkSize.label, totalPrice: pkTotal, sessionsTotal: pkSessions };
+      }
+      var serviceIdForDuration = packageServiceIdToUse || box.querySelector("#am-service").value;
+      var selectedServiceObj = DB.get("services", serviceIdForDuration);
+      var defaultDurationMin = packageDurationToUse || ((selectedServiceObj && selectedServiceObj.durationMin) ? selectedServiceObj.durationMin : 30);
       var durRaw = parseInt(box.querySelector("#am-duration").value, 10);
       if (isNaN(durRaw) || durRaw <= 0) durRaw = defaultDurationMin;
       var patch = {
-        clientId: box.querySelector("#am-client").value, serviceId: box.querySelector("#am-service").value,
-        employeeId: box.querySelector("#am-employee").value, price: round2(Utils.moneyMaskToFloat(box.querySelector("#am-price"))),
+        clientId: box.querySelector("#am-client").value, serviceId: packageServiceIdToUse || box.querySelector("#am-service").value,
+        employeeId: box.querySelector("#am-employee").value, price: packagePriceToUse != null ? packagePriceToUse : round2(Utils.moneyMaskToFloat(box.querySelector("#am-price"))),
         date: box.querySelector("#am-date").value, time: box.querySelector("#am-time").value,
         durationMin: (durRaw !== defaultDurationMin) ? durRaw : null,
         status: box.querySelector("#am-status").value,
@@ -1975,6 +2300,43 @@
       // já passado.
       var savedAppt;
       if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time); Toast.show("Agendamento atualizado", "success"); }
+      else if (pendingPackageSession) {
+        // Sessão de um pacote já vendido: cria o agendamento e vincula ao
+        // registro de compra existente do cliente (client.packages),
+        // ocupando mais uma "vaga" de sessão (appointmentIds).
+        DB.batch(function () {
+          savedAppt = DB.insert("appointments", patch);
+          var usedBefore = (pendingPackageSession.purchase.appointmentIds || []).length;
+          var updatedPurchase = Object.assign({}, pendingPackageSession.purchase, {
+            appointmentIds: (pendingPackageSession.purchase.appointmentIds || []).concat([savedAppt.id])
+          });
+          var newPackages = (pendingPackageSession.client.packages || []).map(function (pp) { return pp.id === updatedPurchase.id ? updatedPurchase : pp; });
+          DB.update("clients", pendingPackageSession.client.id, { packages: newPackages });
+          DB.update("appointments", savedAppt.id, { packagePurchaseId: updatedPurchase.id, packageSessionIndex: usedBefore + 1 });
+        });
+        savedAppt = DB.get("appointments", savedAppt.id);
+        DB.log("Agenda", "Criou a sessão " + savedAppt.packageSessionIndex + " do pacote \"" + pendingPackageSession.purchase.packageName + "\" para " + patch.date + " " + patch.time);
+        Toast.show("Sessão de pacote criada", "success");
+      } else if (pendingPackageSell) {
+        // Venda de um novo pacote (1ª sessão): cria o agendamento e um novo
+        // registro de compra em client.packages, já com esta sessão ocupada.
+        DB.batch(function () {
+          savedAppt = DB.insert("appointments", patch);
+          var newPurchase = {
+            id: DB.uid("cpkg"), packageId: pendingPackageSell.pkDef.id, packageName: pendingPackageSell.pkDef.name,
+            sizeKey: pendingPackageSell.sizeKey, sizeLabel: pendingPackageSell.sizeLabel,
+            totalPrice: pendingPackageSell.totalPrice, sessionsTotal: pendingPackageSell.sessionsTotal,
+            purchaseDate: patch.date, soldByEmployeeId: patch.employeeId,
+            linkedServiceId: patch.serviceId, appointmentIds: [savedAppt.id]
+          };
+          var sellClient = DB.get("clients", pendingPackageSell.clientId);
+          DB.update("clients", pendingPackageSell.clientId, { packages: (sellClient.packages || []).concat([newPurchase]) });
+          DB.update("appointments", savedAppt.id, { packagePurchaseId: newPurchase.id, packageSessionIndex: 1 });
+        });
+        savedAppt = DB.get("appointments", savedAppt.id);
+        DB.log("Agenda", "Vendeu o pacote \"" + pendingPackageSell.pkDef.name + "\" (" + pendingPackageSell.sizeLabel + ") para " + patch.date + " " + patch.time);
+        Toast.show("Pacote vendido — lembre-se de cobrar o valor cheio ao concluir esta sessão", "success");
+      }
       else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
       // A agenda permite salvar agendamentos no mesmo horário/sobrepostos
       // sem mexer em mais nada — o sistema não reorganiza automaticamente

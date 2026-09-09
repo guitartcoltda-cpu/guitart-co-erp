@@ -166,6 +166,7 @@
     var totalGasto = clientSpend(clientId);
     var credit = clientCredit(c);
     var creditHistory = (c.creditHistory || []).slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+    var pkgPurchases = (c.packages || []).slice().sort(function (a, b) { return (b.purchaseDate || "").localeCompare(a.purchaseDate || ""); });
 
     var body = '<div class="grid-2" style="grid-template-columns:1fr 1fr;margin-bottom:16px;">' +
       '<div><div class="small text-muted">Telefone</div><div class="font-bold">' + Utils.escapeHtml(c.phone) + '</div></div>' +
@@ -182,6 +183,16 @@
             (h.delta > 0 ? '<span style="color:#1baf7a;">+' + Utils.fmtMoney(h.delta) + '</span>' : '<span style="color:#d64545;">' + Utils.fmtMoney(h.delta) + '</span>') +
             ' — ' + Utils.escapeHtml(h.note || '') + '</div>';
         }).join("") + '</div></div>' : '') +
+      (pkgPurchases.length ? '<div class="divider"></div><h4 class="mb-16">Pacotes de Tratamento (' + pkgPurchases.length + ')</h4>' +
+        '<div class="table-wrap mb-16"><table class="data-table"><thead><tr><th>Pacote</th><th>Tamanho</th><th>Sessões</th><th class="text-right">Valor Total</th><th>Comprado em</th></tr></thead><tbody>' +
+        pkgPurchases.map(function (pp) {
+          var used = (pp.appointmentIds || []).length;
+          var remaining = pp.sessionsTotal - used;
+          return '<tr><td class="font-bold">' + Utils.escapeHtml(pp.packageName) + '</td><td>' + Utils.escapeHtml(pp.sizeLabel) + '</td>' +
+            '<td>' + used + ' de ' + pp.sessionsTotal + (remaining > 0 ? ' <span class="badge badge-info">restam ' + remaining + '</span>' : ' <span class="badge badge-success">concluído</span>') + '</td>' +
+            '<td class="text-right text-num">' + Utils.fmtMoney(pp.totalPrice) + '</td>' +
+            '<td>' + (pp.purchaseDate ? Utils.fmtDate(pp.purchaseDate) : "-") + '</td></tr>';
+        }).join("") + '</tbody></table></div>' : '') +
       '<div class="divider"></div>' +
       '<h4 class="mb-16">Histórico de Atendimentos (' + appts.length + ')</h4>' +
       (appts.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Data</th><th>Serviço</th><th>Profissional</th><th>Status</th><th class="text-right">Valor</th></tr></thead><tbody>' +

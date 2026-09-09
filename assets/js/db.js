@@ -710,6 +710,21 @@
       return db.settings.paymentMethods;
     },
 
+    // Pacotes de tratamento (4 sessões, valor por tamanho de cabelo).
+    // Mesma ideia de getPaymentMethods, mas sem lista padrão/seed — é um
+    // cadastro novo, começa vazio até o usuário criar o primeiro pacote.
+    getTreatmentPackages: function () {
+      var db = load();
+      return (db.settings && db.settings.treatmentPackages) || [];
+    },
+    saveTreatmentPackages: function (list) {
+      var db = load();
+      db.settings = Object.assign({}, db.settings, { treatmentPackages: list });
+      persist("settings");
+      remoteReplaceSettings(db.settings);
+      return db.settings.treatmentPackages;
+    },
+
     // Async (devolve uma Promise<string>) — diferente das outras funções
     // do DB, que são todas síncronas (lêem do cache em memória). Precisa
     // ser assim porque o cache em memória guarda, de propósito, uma versão
