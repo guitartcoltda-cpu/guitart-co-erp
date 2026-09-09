@@ -28,10 +28,15 @@
   function paymentMethods() { return DB.getPaymentMethods(); }
   var OCC_TYPES = ["Ausência Médica", "Falta Justificada", "Compromisso Pessoal", "Bloqueio / Manutenção", "Outro"];
 
-  // Grade da Visão do Dia: das 08:00 às 21:00, 1.1px por minuto.
+  // Grade da Visão do Dia: das 08:00 às 21:00, 0.8px por minuto — compacto o
+  // bastante para as 13 horas (780min × 0.8 = 624px) caberem sem precisar da
+  // barra de rolagem vertical própria que a caixa (.cal-scroll) tinha antes
+  // (removida do CSS): agora, se a grade não couber inteira na tela, é a
+  // própria página que rola, em vez de um scroll "preso" dentro da caixa do
+  // calendário escondendo parte do dia.
   var GRID_START_MIN = 8 * 60;
   var GRID_END_MIN = 21 * 60;
-  var PX_PER_MIN = 1.1;
+  var PX_PER_MIN = 0.8;
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
