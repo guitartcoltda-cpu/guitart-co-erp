@@ -85,7 +85,10 @@
       currentMatches = matches;
       activeIndex = -1;
       if (!matches.length) { listEl.style.display = "none"; listEl.innerHTML = ""; return; }
-      listEl.innerHTML = matches.slice(0, 8).map(function (it, i) {
+      // Lista completa (sem corte de 8 itens) — a caixa já é rolável
+      // (overflow:auto no html() acima), então digitar filtra a lista, mas
+      // dá pra rolar e ver todas as opções, mesmo que sejam muitas.
+      listEl.innerHTML = matches.map(function (it, i) {
         return '<div class="name-combo-item" data-idx="' + i + '" style="padding:8px 10px;cursor:pointer;">' + escapeHtml(it.label) + "</div>";
       }).join("");
       listEl.style.display = "";
@@ -117,7 +120,9 @@
 
     function search(term) {
       var n = normName(term);
-      if (!n) return items.slice(0, 8);
+      // Sem termo digitado (campo vazio, ex.: ao focar): devolve a lista
+      // inteira, não só os 8 primeiros — dá pra rolar e ver todas as opções.
+      if (!n) return items;
       return items.filter(function (it) { return normName(it.label).indexOf(n) !== -1; });
     }
 

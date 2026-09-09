@@ -103,8 +103,10 @@
         '<th>Tags</th><th></th></tr></thead><tbody>' +
         pageItems.map(function (c) {
           var lv = lastVisitByClient[c.id] || null;
+          var credit = clientCredit(c);
+          var creditBadge = credit > 0 ? ' <span class="badge badge-success" title="Crédito disponível">' + Utils.fmtMoney(credit) + '</span>' : (credit < 0 ? ' <span class="badge badge-danger" title="Pendência">' + Utils.fmtMoney(Math.abs(credit)) + '</span>' : '');
           return '<tr>' +
-            '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(c.name) + '</div><span class="font-bold pointer" data-view="' + c.id + '">' + Utils.escapeHtml(c.name) + '</span></div></td>' +
+            '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(c.name) + '</div><span class="font-bold pointer" data-view="' + c.id + '">' + Utils.escapeHtml(c.name) + '</span>' + creditBadge + '</div></td>' +
             '<td class="small">' + Utils.escapeHtml(c.phone) + '<br><span class="text-muted">' + Utils.escapeHtml(c.email) + '</span></td>' +
             '<td class="text-num">' + Utils.fmtDate(c.firstVisit) + '</td>' +
             '<td class="text-num">' + (lv ? Utils.fmtDate(lv) : '<span class="text-muted">-</span>') + '</td>' +
@@ -151,19 +153,36 @@
       '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
   }
 
+  // Crédito/pendência do cliente (ver Agenda → Fechar Conta, 09/09/2026):
+  // saldo positivo = crédito a favor do cliente, gerado quando ele paga a
+  // mais que o devido; saldo negativo = pendência (cliente ficou devendo).
+  function clientCredit(c) { return (c && c.creditBalance) || 0; }
+
   function openHistoryModal(clientId) {
     var c = DB.get("clients", clientId);
     if (!c) return;
     var services = DB.all("services"), employees = DB.all("employees");
     var appts = DB.all("appointments").filter(function (a) { return a.clientId === clientId; }).sort(function (a, b) { return b.date.localeCompare(a.date); });
     var totalGasto = clientSpend(clientId);
+    var credit = clientCredit(c);
+    var creditHistory = (c.creditHistory || []).slice().sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
 
     var body = '<div class="grid-2" style="grid-template-columns:1fr 1fr;margin-bottom:16px;">' +
       '<div><div class="small text-muted">Telefone</div><div class="font-bold">' + Utils.escapeHtml(c.phone) + '</div></div>' +
       '<div><div class="small text-muted">E-mail</div><div class="font-bold">' + Utils.escapeHtml(c.email) + '</div></div>' +
       '<div><div class="small text-muted">Aniversário</div><div class="font-bold">' + (c.birthday ? Utils.fmtDate(c.birthday) : "-") + '</div></div>' +
       '<div><div class="small text-muted">Total Gasto</div><div class="font-bold">' + Utils.fmtMoney(totalGasto) + '</div></div>' +
-      '</div><div class="divider"></div>' +
+      '<div><div class="small text-muted">Crédito / Saldo</div><div class="font-bold" style="color:' + (credit > 0 ? '#1baf7a' : (credit < 0 ? '#d64545' : 'inherit')) + ';">' +
+        (credit > 0 ? Utils.fmtMoney(credit) + ' de crédito' : (credit < 0 ? Utils.fmtMoney(Math.abs(credit)) + ' em aberto (pendência)' : Utils.fmtMoney(0))) +
+      '</div></div>' +
+      '</div>' +
+      (creditHistory.length ? '<div class="small text-muted mb-16"><a href="#" id="ch-toggle-credit-history">Ver histórico de crédito (' + creditHistory.length + ')</a><div id="ch-credit-history" style="display:none;margin-top:8px;">' +
+        creditHistory.map(function (h) {
+          return '<div class="small" style="padding:3px 0;border-bottom:1px solid var(--border-color);">' + Utils.fmtDate(h.date) + ' — ' +
+            (h.delta > 0 ? '<span style="color:#1baf7a;">+' + Utils.fmtMoney(h.delta) + '</span>' : '<span style="color:#d64545;">' + Utils.fmtMoney(h.delta) + '</span>') +
+            ' — ' + Utils.escapeHtml(h.note || '') + '</div>';
+        }).join("") + '</div></div>' : '') +
+      '<div class="divider"></div>' +
       '<h4 class="mb-16">Histórico de Atendimentos (' + appts.length + ')</h4>' +
       (appts.length ? '<div class="table-wrap"><table class="data-table"><thead><tr><th>Data</th><th>Serviço</th><th>Profissional</th><th>Status</th><th class="text-right">Valor</th></tr></thead><tbody>' +
         appts.map(function (a) {
@@ -175,7 +194,15 @@
           return '<tr><td class="text-num">' + Utils.fmtDate(a.date) + ' ' + a.time + '</td><td>' + Utils.escapeHtml(s ? s.name : "-") + '</td><td>' + profCell + '</td><td>' + statusBadge + '</td><td class="text-right text-num">' + Utils.fmtMoney(a.price) + '</td></tr>';
         }).join("") + '</tbody></table></div>' : '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-calendar"></i></div><h4>Sem atendimentos registrados</h4></div>');
 
-    Modal.open({ title: "Histórico — " + c.name, bodyHtml: body, wide: true, footHtml: '<button class="btn btn-secondary" data-close-modal>Fechar</button>' });
+    var box = Modal.open({ title: "Histórico — " + c.name, bodyHtml: body, wide: true, footHtml: '<button class="btn btn-secondary" data-close-modal>Fechar</button>' });
+    var toggle = box.querySelector("#ch-toggle-credit-history");
+    if (toggle) {
+      toggle.addEventListener("click", function (e) {
+        e.preventDefault();
+        var hist = box.querySelector("#ch-credit-history");
+        hist.style.display = hist.style.display === "none" ? "" : "none";
+      });
+    }
   }
 
   function openClientModal(id) {

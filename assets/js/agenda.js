@@ -970,6 +970,198 @@
     return _parceriaCatId;
   }
 
+  // ---------------- Gorjeta (profissional/assistente) ----------------
+  // A pedido do usuário (09/09/2026): campo para registrar gorjeta no
+  // Fechar Conta, separado da comissão (não entra no valor do serviço nem
+  // na % de comissão — Utils.apptCommissionSplit nunca é tocado aqui) e
+  // dividido em dois campos manuais (profissional/assistente), a critério
+  // de quem está fechando a conta. Ao contrário de "Parceria"/"Comissões"
+  // (categorias que já precisavam existir de antemão), a categoria
+  // "Gorjetas" é criada automaticamente aqui no primeiro uso, para não
+  // depender de um passo manual em Configurações antes de a funcionalidade
+  // funcionar de ponta a ponta.
+  var _gorjetaCatId;
+  function gorjetaCatId() {
+    if (_gorjetaCatId !== undefined) return _gorjetaCatId;
+    var c = DB.findOne("categories", function (x) { return x.name === "Gorjetas" && x.type === "despesa"; });
+    if (!c) {
+      var cc = DB.findOne("costCenters", function (x) { return x.key === "operacional"; });
+      c = DB.insert("categories", { name: "Gorjetas", type: "despesa", costCenterId: cc ? cc.id : null, color: "#b8923f" });
+    }
+    _gorjetaCatId = c.id;
+    return _gorjetaCatId;
+  }
+
+  // Lança a gorjeta (se houver valor > 0) como uma despesa 100% do
+  // funcionário indicado — não passa por Utils.apptCommissionSplit nem por
+  // nenhum cálculo de comissão, é só um registro histórico/financeiro do
+  // valor que o cliente deixou de gorjeta.
+  function registerTip(opts) {
+    // opts: { amount, employeeId, employeeLabel, appt, service, client, payMethod, costCenter }
+    if (!opts.amount || opts.amount <= 0 || !opts.employeeId) return;
+    DB.insert("transactions", {
+      type: "despesa",
+      description: "Gorjeta - " + opts.employeeLabel + " - " + (opts.service ? opts.service.name : "Atendimento") + " - " + opts.client.name,
+      amount: round2(opts.amount), date: opts.appt.date, categoryId: gorjetaCatId(),
+      costCenterId: opts.costCenter ? opts.costCenter.id : null, paymentMethod: opts.payMethod, status: "pago",
+      employeeId: opts.employeeId, clientId: opts.client.id, appointmentId: opts.appt.id, reconciled: false, isTip: true
+    });
+  }
+
+  function tipFieldsHtml(prefix, hasAssistant) {
+    return '<div class="form-grid" style="margin-top:8px;">' +
+      '<div class="form-field"><label>Gorjeta do Profissional (R$)</label><input type="text" id="' + prefix + '-tip-emp" placeholder="0,00"></div>' +
+      (hasAssistant ? '<div class="form-field"><label>Gorjeta do Assistente (R$)</label><input type="text" id="' + prefix + '-tip-asst" placeholder="0,00"></div>' : '') +
+      '</div>';
+  }
+
+  // ---------------- Crédito do cliente ----------------
+  // A pedido do usuário (09/09/2026): quando o cliente paga a mais que o
+  // devido no Fechar Conta, a diferença vira crédito (client.creditBalance)
+  // para usar num próximo atendimento; quando o valor recebido é menor que
+  // o devido, quem está fechando a conta escolhe entre completar com outra
+  // forma de pagamento ou gerar uma pendência (o cliente fica com saldo
+  // negativo). client.creditBalance positivo = crédito a favor do cliente;
+  // negativo = pendência (cliente deve para o salão). client.creditHistory
+  // guarda um log simples de cada movimentação, para dar transparência
+  // (ver Clientes → Histórico).
+  function clientCredit(client) { return (client && client.creditBalance) || 0; }
+
+  // Sempre relê o cliente do banco antes de gravar — dentro de um mesmo
+  // Fechar Conta pode haver mais de uma chamada (ex.: usa crédito E ainda
+  // assim paga a mais), e cada uma precisa enxergar o saldo já atualizado
+  // pela chamada anterior, não o valor "congelado" de quando o modal abriu.
+  function applyCreditChange(client, delta, note, appt) {
+    if (!delta) return;
+    var fresh = DB.get("clients", client.id) || client;
+    var history = (fresh.creditHistory || []).slice();
+    history.push({ date: appt ? appt.date : Utils.todayISO(), delta: round2(delta), note: note, appointmentId: appt ? appt.id : null });
+    DB.update("clients", client.id, { creditBalance: round2(clientCredit(fresh) + delta), creditHistory: history });
+  }
+
+  // Bloco de "Valor Recebido"/crédito, reaproveitado pelos dois modais de
+  // Fechar Conta (único e consolidado). `prefix` distingue os ids de cada
+  // instância (ex.: "cc" no modal único, "ccg" no consolidado).
+  function reconciliationHtml(prefix, client) {
+    var credit = clientCredit(client);
+    var banner = "";
+    if (credit > 0) {
+      banner = '<div id="' + prefix + '-credit-box" style="background:#eef7f0;border:1px solid #bfe3c8;border-radius:8px;padding:10px 12px;margin:12px 0;">' +
+        '<label class="flex items-center gap-8" style="cursor:pointer;font-weight:600;"><input type="checkbox" id="' + prefix + '-use-credit"> <span>Cliente tem ' + Utils.fmtMoney(credit) + ' em crédito. Usar neste atendimento?</span></label>' +
+        '<div id="' + prefix + '-credit-amt-wrap" style="display:none;margin-top:8px;max-width:200px;"><label class="small">Valor de crédito a usar (R$)</label><input type="text" id="' + prefix + '-credit-amt"></div>' +
+        '</div>';
+    } else if (credit < 0) {
+      banner = '<div class="small text-muted" style="margin:10px 0;"><i class="fa-solid fa-circle-info"></i> Cliente está com pendência de ' + Utils.fmtMoney(Math.abs(credit)) + ' de atendimento(s) anterior(es).</div>';
+    }
+    return '<div id="' + prefix + '-recon-wrap">' + banner +
+      '<div class="form-grid">' +
+        '<div class="form-field"><label>A Receber (R$)</label><input type="text" id="' + prefix + '-toreceive" disabled></div>' +
+        '<div class="form-field"><label>Valor Recebido (R$)</label><input type="text" id="' + prefix + '-received"></div>' +
+      '</div>' +
+      '<div id="' + prefix + '-recon-note" class="small" style="margin:2px 0 8px;min-height:18px;"></div>' +
+      '<div id="' + prefix + '-shortfall-block" style="display:none;background:#fdf3ea;border:1px solid #f0d4b0;border-radius:8px;padding:10px 12px;margin-bottom:10px;">' +
+        '<div class="small" style="margin-bottom:8px;font-weight:600;">Faltaram <span id="' + prefix + '-shortfall-amt"></span> — como resolver?</div>' +
+        '<label class="flex items-center gap-8" style="cursor:pointer;margin-bottom:6px;"><input type="radio" name="' + prefix + '-shortfall-choice" value="outra_forma" checked> <span>Cliente paga a diferença agora, em outra forma de pagamento</span></label>' +
+        '<div style="margin:4px 0 10px 26px;max-width:240px;"><select id="' + prefix + '-shortfall-pay"></select></div>' +
+        '<label class="flex items-center gap-8" style="cursor:pointer;"><input type="radio" name="' + prefix + '-shortfall-choice" value="pendencia"> <span>Gerar pendência (cliente fica devendo a diferença)</span></label>' +
+        (credit > 0 ? '<div class="small text-muted" style="margin-top:8px;">Dica: para descontar do crédito do cliente, marque "Usar crédito" acima em vez de escolher aqui.</div>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  // Liga os eventos do bloco acima. `methods` = paymentMethods() (para
+  // popular o select da forma de pagamento alternativa). `getTotal` = função
+  // que devolve o total (R$) devido agora, já considerando Parceria (nesse
+  // caso deve devolver 0). `isActive` = função que diz se a reconciliação
+  // vale para o modo de pagamento atual (false quando Parceria, que não
+  // cobra do cliente e portanto não gera nem consome crédito).
+  function wireReconciliation(box, prefix, client, methods, getTotal, isActive) {
+    var creditAvail = clientCredit(client);
+    var wrap = box.querySelector("#" + prefix + "-recon-wrap");
+    var useCreditChk = box.querySelector("#" + prefix + "-use-credit");
+    var creditAmtWrap = box.querySelector("#" + prefix + "-credit-amt-wrap");
+    var creditAmtInput = box.querySelector("#" + prefix + "-credit-amt");
+    var toReceiveInput = box.querySelector("#" + prefix + "-toreceive");
+    var receivedInput = box.querySelector("#" + prefix + "-received");
+    var noteEl = box.querySelector("#" + prefix + "-recon-note");
+    var shortfallBlock = box.querySelector("#" + prefix + "-shortfall-block");
+    var shortfallAmtEl = box.querySelector("#" + prefix + "-shortfall-amt");
+    var shortfallPaySelect = box.querySelector("#" + prefix + "-shortfall-pay");
+    var receivedTouched = false;
+
+    if (shortfallPaySelect) {
+      shortfallPaySelect.innerHTML = methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("");
+    }
+    if (creditAmtInput) Utils.wireMoneyMask(creditAmtInput, 0);
+    Utils.wireMoneyMask(receivedInput, 0);
+
+    function creditToUse() {
+      if (!useCreditChk || !useCreditChk.checked) return 0;
+      var v = Utils.moneyMaskToFloat(creditAmtInput) || 0;
+      return round2(Math.max(0, Math.min(v, creditAvail, getTotal())));
+    }
+
+    function toReceive() { return round2(Math.max(0, getTotal() - creditToUse())); }
+
+    function evalDiff() {
+      var a = toReceive();
+      // Sem fallback "|| a" aqui de propósito: o campo já foi preenchido com
+      // o valor padrão por recompute() antes de o usuário digitar qualquer
+      // coisa, então ler direto reflete tanto o padrão quanto um "0,00"
+      // digitado de propósito (cliente que não pagou nada na hora).
+      var r = Utils.moneyMaskToFloat(receivedInput);
+      var diff = round2(r - a);
+      if (diff > 0.004) {
+        noteEl.innerHTML = '<span style="color:#1baf7a;"><i class="fa-solid fa-circle-info"></i> Cliente está pagando ' + Utils.fmtMoney(diff) + ' a mais — vai virar crédito para o próximo atendimento.</span>';
+        shortfallBlock.style.display = "none";
+      } else if (diff < -0.004) {
+        noteEl.innerHTML = "";
+        shortfallBlock.style.display = "";
+        shortfallAmtEl.textContent = Utils.fmtMoney(Math.abs(diff));
+      } else {
+        noteEl.innerHTML = "";
+        shortfallBlock.style.display = "none";
+      }
+    }
+
+    function recompute() {
+      var a = toReceive();
+      Utils.setMoneyMaskValue(toReceiveInput, a);
+      if (!receivedTouched) Utils.setMoneyMaskValue(receivedInput, a);
+      evalDiff();
+    }
+
+    if (useCreditChk) {
+      useCreditChk.addEventListener("change", function () {
+        creditAmtWrap.style.display = useCreditChk.checked ? "" : "none";
+        if (useCreditChk.checked) Utils.setMoneyMaskValue(creditAmtInput, round2(Math.min(creditAvail, getTotal())));
+        recompute();
+      });
+    }
+    if (creditAmtInput) creditAmtInput.addEventListener("input", recompute);
+    receivedInput.addEventListener("input", function () { receivedTouched = true; evalDiff(); });
+
+    recompute();
+
+    return {
+      refresh: recompute,
+      resolve: function () {
+        if (!isActive()) return { creditToUse: 0, received: 0, toReceive: 0, diff: 0 };
+        var a = toReceive();
+        var r = Utils.moneyMaskToFloat(receivedInput);
+        var diff = round2(r - a);
+        var result = { creditToUse: creditToUse(), received: r, toReceive: a, diff: diff };
+        if (diff < -0.004) {
+          var checked = box.querySelector('input[name="' + prefix + '-shortfall-choice"]:checked');
+          result.shortfallChoice = checked ? checked.value : "outra_forma";
+          if (result.shortfallChoice === "outra_forma") result.shortfallPayMethod = shortfallPaySelect.value;
+        }
+        return result;
+      },
+      setVisible: function (visible) { if (wrap) wrap.style.display = visible ? "" : "none"; }
+    };
+  }
+
   function openConcludeSingleModal(appt) {
     var service = DB.get("services", appt.serviceId);
     var client = DB.get("clients", appt.clientId);
@@ -977,6 +1169,9 @@
     var category = DB.findOne("categories", function (c) { return c.id === service.categoryId; });
     var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
     var methods = paymentMethods();
+
+    var hasAssistant = !!appt.assistantId;
+    var assistant = hasAssistant ? DB.get("employees", appt.assistantId) : null;
 
     var body = '<div class="form-grid">' +
       '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
@@ -986,6 +1181,8 @@
         '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este atendimento. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
         parceriaSplitFieldHtml({ id: "cc-parceria-pct", appt: appt, employee: employee }) +
       '</div>' +
+      tipFieldsHtml("cc", hasAssistant) +
+      reconciliationHtml("cc", client) +
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div class="flex items-center justify-between mb-8">' +
         '<label style="font-weight:600;">Insumos / Produtos (opcional)</label>' +
@@ -996,14 +1193,24 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cc-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Atendimento", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#cc-amount"), appt.price);
+    Utils.wireMoneyMask(box.querySelector("#cc-tip-emp"), 0);
+    if (hasAssistant) Utils.wireMoneyMask(box.querySelector("#cc-tip-asst"), 0);
     wireParceriaSplitRequest(box, { id: "cc-parceria-pct", appt: appt, employee: employee });
 
     var paySelect = box.querySelector("#cc-pay");
     var parceriaBlock = box.querySelector("#cc-parceria-block");
+    var amountInput = box.querySelector("#cc-amount");
+    var recon = wireReconciliation(box, "cc", client, methods,
+      function () { return isParceriaMethod(paySelect.value, methods) ? 0 : (Utils.moneyMaskToFloat(amountInput) || 0); },
+      function () { return !isParceriaMethod(paySelect.value, methods); });
     function syncParceriaVisibility() {
-      parceriaBlock.style.display = isParceriaMethod(paySelect.value, methods) ? "" : "none";
+      var isParc = isParceriaMethod(paySelect.value, methods);
+      parceriaBlock.style.display = isParc ? "" : "none";
+      recon.setVisible(!isParc);
+      recon.refresh();
     }
     paySelect.addEventListener("change", syncParceriaVisibility);
+    amountInput.addEventListener("input", function () { recon.refresh(); });
     syncParceriaVisibility();
 
     var rowsEl = box.querySelector("#cc-insumo-rows");
@@ -1020,6 +1227,9 @@
       var payMethod = box.querySelector("#cc-pay").value;
       var isParceria = isParceriaMethod(payMethod, methods);
       var splitPct = isParceria ? resolvedParceriaSplitPercent(box, "cc-parceria-pct", appt, employee) : null;
+      var recRes = recon.resolve();
+      var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#cc-tip-emp")) || 0;
+      var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#cc-tip-asst")) || 0) : 0;
 
       DB.batch(function () {
         var apptPatch = { status: "concluido", price: amount };
@@ -1041,13 +1251,38 @@
             employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
           });
         } else {
+          // Se faltou pagamento e a resolução escolhida foi "outra forma de
+          // pagamento", o valor deste lançamento (na forma principal) é
+          // reduzido pela diferença, e um segundo lançamento cobre o
+          // restante na forma alternativa — o total registrado continua
+          // batendo exatamente com o Valor Cobrado, só a forma de
+          // pagamento de uma fração dele é que fica dividida em duas.
+          var mainRevenue = round2(amount);
+          if (recRes.diff < -0.004 && recRes.shortfallChoice === "outra_forma") {
+            var shortfall = round2(Math.abs(recRes.diff));
+            mainRevenue = round2(Math.max(0, mainRevenue - shortfall));
+            DB.insert("transactions", {
+              type: "receita", description: "Complemento de pagamento - " + service.name + " - " + client.name,
+              amount: shortfall, date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+              paymentMethod: recRes.shortfallPayMethod, status: "pago",
+              employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+            });
+          }
           DB.insert("transactions", {
-            type: "receita", description: service.name + " - " + client.name, amount: round2(amount),
+            type: "receita", description: service.name + " - " + client.name, amount: mainRevenue,
             date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
             paymentMethod: payMethod, status: "pago",
             employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
           });
+          // Crédito do cliente: usado agora (desconta), gerado agora
+          // (pagou a mais) e/ou pendência (se optou por deixar em aberto).
+          if (recRes.creditToUse > 0) applyCreditChange(client, -recRes.creditToUse, "Crédito utilizado no atendimento (" + service.name + ")", appt);
+          if (recRes.diff > 0.004) applyCreditChange(client, recRes.diff, "Pagamento a maior — crédito gerado (" + service.name + ")", appt);
+          else if (recRes.diff < -0.004 && recRes.shortfallChoice === "pendencia") applyCreditChange(client, recRes.diff, "Pagamento a menor — pendência gerada (" + service.name + ")", appt);
         }
+
+        registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: employee ? employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
+        registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: assistant ? assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
 
         rows.forEach(function (row) {
           var tipo = row.querySelector(".ir-tipo").value;
@@ -1126,6 +1361,7 @@
             '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este item. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
             parceriaSplitFieldHtml({ id: l.rowPrefix + "-parceria-pct", appt: l.appt, employee: l.employee }) +
           '</div>' +
+          tipFieldsHtml(l.rowPrefix, !!l.assistant) +
           '<div class="flex items-center justify-between mb-8" style="margin-top:8px;">' +
             '<label class="small" style="font-weight:600;">Insumos / Produtos (opcional)</label>' +
             '<button type="button" class="btn btn-sm btn-outline ccg-add-insumo" data-target="' + l.rowPrefix + '-rows"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
@@ -1137,7 +1373,8 @@
       '<div class="form-grid">' +
         '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
         '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
-      '</div>';
+      '</div>' +
+      reconciliationHtml("ccg", client);
 
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ccg-save">Fechar Conta</button>';
     var box = Modal.open({ title: "Fechar Conta — " + client.name, wide: true, bodyHtml: body, footHtml: foot });
@@ -1155,6 +1392,15 @@
       Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), total);
     }
 
+    var recon = wireReconciliation(box, "ccg", client, methods,
+      function () {
+        if (isGroupParceria()) return 0;
+        var total = 0;
+        lines.forEach(function (l) { total += Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || 0; });
+        return total;
+      },
+      function () { return !isGroupParceria(); });
+
     function syncGroupParceriaVisibility() {
       var isParc = isGroupParceria();
       lines.forEach(function (l) {
@@ -1162,14 +1408,18 @@
         if (blk) blk.style.display = isParc ? "" : "none";
       });
       updateTotal();
+      recon.setVisible(!isParc);
+      recon.refresh();
     }
     paySelectG.addEventListener("change", syncGroupParceriaVisibility);
 
     lines.forEach(function (l) {
       var amountInput = box.querySelector("#" + l.rowPrefix + "-amount");
       Utils.wireMoneyMask(amountInput, l.appt.price);
-      amountInput.addEventListener("input", updateTotal);
+      amountInput.addEventListener("input", function () { updateTotal(); recon.refresh(); });
       wireParceriaSplitRequest(box, { id: l.rowPrefix + "-parceria-pct", appt: l.appt, employee: l.employee });
+      Utils.wireMoneyMask(box.querySelector("#" + l.rowPrefix + "-tip-emp"), 0);
+      if (l.assistant) Utils.wireMoneyMask(box.querySelector("#" + l.rowPrefix + "-tip-asst"), 0);
       var rowsEl = box.querySelector("#" + l.rowPrefix + "-rows");
       box.querySelector('.ccg-add-insumo[data-target="' + l.rowPrefix + '-rows"]').addEventListener("click", function () {
         rowsEl.insertAdjacentHTML("beforeend", insumoRowHtml());
@@ -1184,6 +1434,15 @@
       var totalAmount = 0;
       var summaryParts = [];
       var insumoCount = 0;
+      var recRes = recon.resolve();
+      // Se faltou pagamento e a resolução escolhida foi "outra forma de
+      // pagamento", a diferença é descontada dos lançamentos de receita das
+      // linhas (na ordem em que aparecem) e um único lançamento à parte
+      // cobre o restante na forma alternativa — o total registrado continua
+      // batendo exatamente com a soma dos "Valor Cobrado", só que uma
+      // fração dele fica dividida em duas formas de pagamento. O Valor
+      // Cobrado de cada linha (usado na comissão) não é alterado por isso.
+      var pendingShortfall = (!isParceria && recRes.diff < -0.004 && recRes.shortfallChoice === "outra_forma") ? round2(Math.abs(recRes.diff)) : 0;
 
       DB.batch(function () {
         lines.forEach(function (l) {
@@ -1213,13 +1472,24 @@
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           } else {
+            var lineRevenue = round2(amount);
+            if (pendingShortfall > 0) {
+              var take = Math.min(pendingShortfall, lineRevenue);
+              lineRevenue = round2(lineRevenue - take);
+              pendingShortfall = round2(pendingShortfall - take);
+            }
             DB.insert("transactions", {
-              type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: round2(amount),
+              type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: lineRevenue,
               date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
               paymentMethod: payMethod, status: "pago",
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           }
+
+          var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-tip-emp")) || 0;
+          var tipAsst = l.assistant ? (Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-tip-asst")) || 0) : 0;
+          registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: l.employee ? l.employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
+          registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: l.assistant ? l.assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
 
           summaryParts.push(l.appt.time + " " + (service ? service.name : "Atendimento") + " (" + (l.employee ? l.employee.name : "-") + ")" + (isParceria ? " [Parceria " + splitPct + "%]" : ""));
 
@@ -1251,6 +1521,25 @@
             }
           });
         });
+
+        if (!isParceria) {
+          var mainCostCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
+          var mainCategory = lines[0] && lines[0].service ? DB.findOne("categories", function (c) { return c.id === lines[0].service.categoryId; }) : null;
+          if (recRes.diff < -0.004 && recRes.shortfallChoice === "outra_forma") {
+            var shortfallTotal = round2(Math.abs(recRes.diff));
+            DB.insert("transactions", {
+              type: "receita", description: "Complemento de pagamento - " + client.name,
+              amount: shortfallTotal, date: lines[0].appt.date, categoryId: mainCategory ? mainCategory.id : null, costCenterId: mainCostCenter ? mainCostCenter.id : null,
+              paymentMethod: recRes.shortfallPayMethod, status: "pago",
+              clientId: client.id, appointmentId: lines[0].appt.id, reconciled: false
+            });
+          }
+          // Crédito do cliente: usado agora (desconta), gerado agora (pagou
+          // a mais) e/ou pendência (se optou por deixar em aberto).
+          if (recRes.creditToUse > 0) applyCreditChange(client, -recRes.creditToUse, "Crédito utilizado no Fechar Conta (" + summaryParts.join(" + ") + ")", lines[0].appt);
+          if (recRes.diff > 0.004) applyCreditChange(client, recRes.diff, "Pagamento a maior — crédito gerado (" + summaryParts.join(" + ") + ")", lines[0].appt);
+          else if (recRes.diff < -0.004 && recRes.shortfallChoice === "pendencia") applyCreditChange(client, recRes.diff, "Pagamento a menor — pendência gerada (" + summaryParts.join(" + ") + ")", lines[0].appt);
+        }
       });
 
       DB.log("Agenda", "Fechou conta consolidada de " + client.name + " (" + summaryParts.join(" + ") + ")" + (isParceria ? " como Parceria" : " — total " + Utils.fmtMoney(totalAmount)) + (insumoCount ? " com " + insumoCount + " item(ns) de insumo/produto" : ""));

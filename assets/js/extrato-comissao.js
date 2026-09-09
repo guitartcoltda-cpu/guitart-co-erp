@@ -102,6 +102,27 @@
     return _commCatId;
   }
 
+  // Gorjetas (Agenda → Fechar Conta, 09/09/2026) — separadas da comissão de
+  // propósito (não passam por Utils.apptCommissionSplit nem entram em
+  // "devido"/"pago" acima); só um KPI informativo à parte, somando o que já
+  // foi registrado de gorjeta para este profissional no período em
+  // exibição. A categoria "Gorjetas" é criada automaticamente pela Agenda
+  // no primeiro uso — aqui só faz leitura (se ainda não existe, soma 0).
+  var _gorjetaCatId;
+  function gorjetaCatId() {
+    if (_gorjetaCatId !== undefined) return _gorjetaCatId;
+    var c = DB.findOne("categories", function (x) { return x.name === "Gorjetas" && x.type === "despesa"; });
+    _gorjetaCatId = c ? c.id : null;
+    return _gorjetaCatId;
+  }
+  function tipsReceivedFor(employeeId, range) {
+    var catId = gorjetaCatId();
+    if (!catId) return 0;
+    return sum(DB.all("transactions").filter(function (t) {
+      return t.type === "despesa" && t.employeeId === employeeId && t.categoryId === catId && t.date >= range.start && t.date <= range.end;
+    }).map(function (t) { return t.amount; }));
+  }
+
   function lastDayOfMonth(monthKey) {
     var y = parseInt(monthKey.slice(0, 4), 10), m = parseInt(monthKey.slice(5, 7), 10);
     var d = new Date(y, m, 0); // dia 0 do mês seguinte = último dia deste mês
@@ -225,11 +246,12 @@
       var key = s ? s.name : "Outro";
       byService[key] = (byService[key] || 0) + Utils.apptCommissionSplit(a, e).mainCommission;
     });
+    var tipsReceived = round2(tipsReceivedFor(employeeId, range));
     return {
       employee: e, appointments: appointments, appointmentsAsAssistant: appointmentsAsAssistant, services: services, clients: clients, employeesAll: employeesAll,
       serviceRevenue: serviceRevenue, baseComissao: baseComissao, mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
       bonuses: bonuses, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
-      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService
+      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService, tipsReceived: tipsReceived
     };
   }
 
@@ -289,6 +311,12 @@
     ];
     if (data.consumoTotal > 0) {
       kpis.push(kpi("Desconto por Consumo", "- " + Utils.fmtMoney(data.consumoTotal), "fa-flask", "#c23b3b", "#fbe6e6"));
+    }
+    // Gorjetas (09/09/2026): separadas da comissão, só um KPI informativo à
+    // parte — só aparece quando há algo a mostrar, para não poluir a tela
+    // de quem nunca recebeu gorjeta.
+    if (data.tipsReceived > 0) {
+      kpis.push(kpi("Gorjetas Recebidas", Utils.fmtMoney(data.tipsReceived), "fa-hand-holding-dollar", "#b8923f", "#f6ecd3"));
     }
     document.getElementById("ec-summary").innerHTML = kpis.join("");
 
