@@ -97,13 +97,19 @@
   // Supabase). `isParceria: true` marca uma forma como "o cliente não paga
   // nada" — o valor do atendimento vira só a base para dividir o custo
   // entre o profissional e o salão (ver agenda.js, telas de conclusão de
-  // atendimento). A seed já inclui "Parceria" com essa flag.
+  // atendimento). A seed já inclui "Parceria" com essa flag. `isPackage:
+  // true` (09/09/2026) marca a forma "Pacote" — ao concluir um atendimento
+  // com essa forma de pagamento, o sistema reconhece automaticamente que a
+  // sessão está sendo paga consumindo uma sessão do pacote de tratamento já
+  // comprado pelo cliente (ver activePackagePurchasesForService em
+  // agenda.js), sem gerar cobrança nova.
   var DEFAULT_PAYMENT_METHODS = [
     { id: "pmt_pix", name: "Pix", isParceria: false },
     { id: "pmt_credito", name: "Cartão de Crédito", isParceria: false },
     { id: "pmt_debito", name: "Cartão de Débito", isParceria: false },
     { id: "pmt_dinheiro", name: "Dinheiro", isParceria: false },
-    { id: "pmt_parceria", name: "Parceria", isParceria: true }
+    { id: "pmt_parceria", name: "Parceria", isParceria: true },
+    { id: "pmt_pacote", name: "Pacote", isParceria: false, isPackage: true }
   ];
 
   var _cache = null;
@@ -691,11 +697,25 @@
     // (para não deixar nenhum lançamento antigo "órfão" de forma de
     // pagamento) — o app.js/agenda.js hoje já usava esses mesmos 4 nomes
     // fixos, mais o novo "Parceria".
+    //
+    // 09/09/2026: sistemas que já tinham Formas de Pagamento configuradas
+    // ANTES de "Pacote" existir (o `!current.length` acima só semeia numa
+    // lista vazia) precisam ganhar a forma nova automaticamente também, sem
+    // exigir um cadastro manual em Configurações — daí o segundo `if`
+    // abaixo, uma migração incremental idempotente (o `some()` garante que
+    // só roda até a forma "Pacote" passar a existir na lista salva).
     getPaymentMethods: function () {
       var db = load();
       var current = (db.settings && db.settings.paymentMethods) || [];
+      var changed = false;
       if (!current.length) {
         current = DEFAULT_PAYMENT_METHODS.slice();
+        changed = true;
+      } else if (!current.some(function (p) { return p.isPackage; })) {
+        current = current.concat([{ id: "pmt_pacote", name: "Pacote", isParceria: false, isPackage: true }]);
+        changed = true;
+      }
+      if (changed) {
         db.settings = Object.assign({}, db.settings, { paymentMethods: current });
         persist("settings");
         remoteReplaceSettings(db.settings);

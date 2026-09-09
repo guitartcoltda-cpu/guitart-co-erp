@@ -1020,6 +1020,39 @@
     return svc;
   }
 
+  // 09/09/2026: além do fluxo dedicado acima (criar o agendamento já como
+  // "Sessão de um pacote já comprado"), o usuário pediu que um atendimento
+  // NORMAL (avulso), já criado ou não pelo fluxo de pacotes, também consiga
+  // consumir uma sessão do pacote do cliente — bastando escolher "Forma de
+  // Pagamento: Pacote" na hora de concluir (ver isPackagePayMethod e o bloco
+  // de pacote dentro de openConcludeSingleModal, mais abaixo). Para isso, um
+  // pacote (Configurações → Pacotes) pode ter um `linkedServiceId` — o
+  // serviço REAL do catálogo que ele representa (ex.: "Botox Capilar"),
+  // deliberadamente separado do serviço sintético (isPackageService) usado
+  // pelo fluxo dedicado, que continua existindo e funcionando sem nenhuma
+  // alteração. Esta função devolve as compras de pacote do cliente que: (1)
+  // são de uma definição vinculada a exatamente este serviço, e (2) ainda
+  // têm sessão disponível (sessionsTotal > nº de agendamentos já
+  // consumidos).
+  function activePackagePurchasesForService(client, serviceId) {
+    if (!client || !serviceId) return [];
+    var defsById = {}; DB.getTreatmentPackages().forEach(function (d) { defsById[d.id] = d; });
+    return (client.packages || []).filter(function (pp) {
+      var def = defsById[pp.packageId];
+      if (!def || def.linkedServiceId !== serviceId) return false;
+      var remaining = (pp.sessionsTotal || 0) - (pp.appointmentIds || []).length;
+      return remaining > 0;
+    });
+  }
+
+  // Mesmo espírito de isParceriaMethod (ver seção Parceria abaixo): olha a
+  // forma de pagamento escolhida e diz se ela está marcada como `isPackage`
+  // (a forma "Pacote", seed/migrada em DB.getPaymentMethods — ver db.js).
+  function isPackagePayMethod(methodName, methods) {
+    var pm = (methods || paymentMethods()).find(function (p) { return p.name === methodName; });
+    return !!(pm && pm.isPackage);
+  }
+
   // ---------------- Gorjeta (profissional/assistente) ----------------
   // A pedido do usuário (09/09/2026): campo para registrar gorjeta no
   // Fechar Conta, separado da comissão (não entra no valor do serviço nem
@@ -1247,7 +1280,7 @@
       '</div>' +
       '<div id="ps-insumo-rows"></div>' +
       '<div class="small text-muted mb-16">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
-      '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ps-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
+      '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ps-pay">' + methods.filter(function (p) { return !p.isPackage; }).map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ps-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Sessão de Pacote", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#ps-tip-emp"), 0);
@@ -1328,17 +1361,38 @@
     var isPackageSale = !!(appt.packagePurchaseId && appt.packageSessionIndex === 1);
     var packagePurchase = isPackageSale ? (client.packages || []).find(function (pp) { return pp.id === appt.packagePurchaseId; }) : null;
 
+    // 09/09/2026: consumo de pacote via Forma de Pagamento (ver
+    // isPackagePayMethod/activePackagePurchasesForService acima) — só
+    // avaliado quando este atendimento ainda NÃO está vinculado a nenhum
+    // pacote de nenhuma outra forma (nem venda, nem sessão criada pelo
+    // fluxo dedicado). `pkgConsumeMatches` são as compras do cliente, do
+    // MESMO serviço deste atendimento, com sessão disponível.
+    var pkgConsumeMatches = (!appt.packagePurchaseId) ? activePackagePurchasesForService(client, appt.serviceId) : [];
+    // "Pacote" só aparece no seletor de Forma de Pagamento quando há pelo
+    // menos uma compra compatível — evita mostrar uma opção que não faria
+    // nada neste atendimento específico.
+    var visiblePayMethods = methods.filter(function (p) { return !p.isPackage || pkgConsumeMatches.length > 0; });
+
     var body = '<div class="form-grid">' +
       (isPackageSale && packagePurchase ? '<div class="form-field full"><div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;background:var(--gray-50);font-size:13px;">' +
         'Venda do pacote "' + Utils.escapeHtml(packagePurchase.packageName) + '" (' + Utils.escapeHtml(packagePurchase.sizeLabel) + ', ' + packagePurchase.sessionsTotal + ' sessões). ' +
         'O valor abaixo é o valor CHEIO do pacote, cobrado uma única vez, agora. Em cada uma das próximas sessões, o profissional que atender recebe comissão sobre o valor diluído (' + Utils.fmtMoney(appt.price) + ' por sessão), conforme os atendimentos forem acontecendo.' +
       '</div></div>' : "") +
-      '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
-      '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
+      '<div class="form-field" id="cc-amount-wrap"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
+      '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + visiblePayMethods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
       '</div>' +
       '<div id="cc-parceria-block" class="form-grid" style="display:none;">' +
         '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este atendimento. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
         parceriaSplitFieldHtml({ id: "cc-parceria-pct", appt: appt, employee: employee }) +
+      '</div>' +
+      '<div id="cc-package-block" class="form-grid" style="display:none;">' +
+        '<div class="form-field full"><div class="small text-muted" id="cc-package-info"><i class="fa-solid fa-circle-info"></i></div></div>' +
+        (pkgConsumeMatches.length > 1 ? '<div class="form-field full"><label>Qual pacote?</label><select id="cc-package-choice">' +
+          pkgConsumeMatches.map(function (pp) {
+            var used = (pp.appointmentIds || []).length;
+            return '<option value="' + pp.id + '">' + Utils.escapeHtml(pp.packageName) + ' - ' + Utils.escapeHtml(pp.sizeLabel) + ' (sessão ' + (used + 1) + ' de ' + pp.sessionsTotal + ', restam ' + (pp.sessionsTotal - used) + ')</option>';
+          }).join("") +
+        '</select></div>' : "") +
       '</div>' +
       tipFieldsHtml("cc", hasAssistant) +
       reconciliationHtml("cc", client) +
@@ -1358,19 +1412,44 @@
 
     var paySelect = box.querySelector("#cc-pay");
     var parceriaBlock = box.querySelector("#cc-parceria-block");
+    var packageBlock = box.querySelector("#cc-package-block");
+    var packageInfoEl = box.querySelector("#cc-package-info");
+    var packageChoiceEl = box.querySelector("#cc-package-choice");
+    var amountWrap = box.querySelector("#cc-amount-wrap");
     var amountInput = box.querySelector("#cc-amount");
-    var recon = wireReconciliation(box, "cc", client, methods,
-      function () { return isParceriaMethod(paySelect.value, methods) ? 0 : (Utils.moneyMaskToFloat(amountInput) || 0); },
-      function () { return !isParceriaMethod(paySelect.value, methods); });
-    function syncParceriaVisibility() {
+
+    // Compra de pacote selecionada agora (se houver mais de uma compatível,
+    // respeita o que está marcado em "Qual pacote?"; senão, a única opção).
+    function selectedPackagePurchase() {
+      if (!pkgConsumeMatches.length) return null;
+      if (packageChoiceEl) return pkgConsumeMatches.find(function (pp) { return pp.id === packageChoiceEl.value; }) || pkgConsumeMatches[0];
+      return pkgConsumeMatches[0];
+    }
+    function updatePackageInfo() {
+      var pp = selectedPackagePurchase();
+      if (!pp || !packageInfoEl) return;
+      var used = (pp.appointmentIds || []).length;
+      var diluted = round2((pp.totalPrice || 0) / (pp.sessionsTotal || 1));
+      packageInfoEl.innerHTML = '<i class="fa-solid fa-circle-info"></i> Esta sessão será descontada do pacote "' + Utils.escapeHtml(pp.packageName) + '" (' + Utils.escapeHtml(pp.sizeLabel) + ') — sessão ' + (used + 1) + ' de ' + pp.sessionsTotal + '. Nenhum valor será cobrado do cliente agora (já foi pago na compra do pacote); a comissão desta sessão é calculada sobre o valor diluído (' + Utils.fmtMoney(diluted) + ').';
+    }
+    if (packageChoiceEl) packageChoiceEl.addEventListener("change", updatePackageInfo);
+
+    var recon = wireReconciliation(box, "cc", client, methods.filter(function (p) { return !p.isPackage; }),
+      function () { return (isParceriaMethod(paySelect.value, methods) || isPackagePayMethod(paySelect.value, methods)) ? 0 : (Utils.moneyMaskToFloat(amountInput) || 0); },
+      function () { return !isParceriaMethod(paySelect.value, methods) && !isPackagePayMethod(paySelect.value, methods); });
+    function syncPayVisibility() {
       var isParc = isParceriaMethod(paySelect.value, methods);
+      var isPkgPay = isPackagePayMethod(paySelect.value, methods);
       parceriaBlock.style.display = isParc ? "" : "none";
-      recon.setVisible(!isParc);
+      packageBlock.style.display = isPkgPay ? "" : "none";
+      if (amountWrap) amountWrap.style.display = isPkgPay ? "none" : "";
+      if (isPkgPay) updatePackageInfo();
+      recon.setVisible(!isParc && !isPkgPay);
       recon.refresh();
     }
-    paySelect.addEventListener("change", syncParceriaVisibility);
+    paySelect.addEventListener("change", syncPayVisibility);
     amountInput.addEventListener("input", function () { recon.refresh(); });
-    syncParceriaVisibility();
+    syncPayVisibility();
 
     var rowsEl = box.querySelector("#cc-insumo-rows");
     box.querySelector("#cc-add-insumo").addEventListener("click", function () {
@@ -1379,28 +1458,56 @@
     });
 
     box.querySelector("#cc-save").addEventListener("click", function () {
-      var amount = Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || (isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price);
+      var payMethod = box.querySelector("#cc-pay").value;
+      var isParceria = isParceriaMethod(payMethod, methods);
+      var isPkgPay = isPackagePayMethod(payMethod, methods);
+      var chosenPurchase = isPkgPay ? selectedPackagePurchase() : null;
+      if (isPkgPay && !chosenPurchase) { Toast.show("Selecione qual pacote esta sessão vai consumir", "danger"); return; }
+      var packageDilutedValue = chosenPurchase ? round2((chosenPurchase.totalPrice || 0) / (chosenPurchase.sessionsTotal || 1)) : null;
+      var packageSessionIndexForLog = chosenPurchase ? (chosenPurchase.appointmentIds || []).length + 1 : null;
+      var amount = isPkgPay ? packageDilutedValue : (Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || (isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price));
       var rows = Utils.qsa(".insumo-item-row", rowsEl);
       var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
       var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
-      var payMethod = box.querySelector("#cc-pay").value;
-      var isParceria = isParceriaMethod(payMethod, methods);
       var splitPct = isParceria ? resolvedParceriaSplitPercent(box, "cc-parceria-pct", appt, employee) : null;
       var recRes = recon.resolve();
       var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#cc-tip-emp")) || 0;
       var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#cc-tip-asst")) || 0) : 0;
 
       DB.batch(function () {
-        // CRÍTICO: numa venda de pacote (1ª sessão), "amount" é o valor
-        // CHEIO cobrado do cliente — appt.price precisa continuar sendo o
-        // valor DILUÍDO já gravado na criação (é a base da comissão desta
-        // sessão). Por isso price só entra no patch quando NÃO é venda de
-        // pacote; numa venda de pacote o campo simplesmente não é tocado.
+        // CRÍTICO: numa venda de pacote (1ª sessão) OU num consumo de
+        // pacote via Forma de Pagamento, appt.price precisa ser o valor
+        // DILUÍDO (é a base da comissão desta sessão) — nunca o valor
+        // cobrado/exibido nesta tela. Por isso price só assume `amount`
+        // (o valor realmente cobrado do cliente) no caso normal, sem
+        // pacote nenhum envolvido.
         var apptPatch = { status: "concluido" };
-        if (!isPackageSale) apptPatch.price = amount;
+        if (isPkgPay) {
+          apptPatch.price = packageDilutedValue;
+          apptPatch.packagePurchaseId = chosenPurchase.id;
+          apptPatch.packageSessionIndex = packageSessionIndexForLog;
+        } else if (!isPackageSale) {
+          apptPatch.price = amount;
+        }
         if (isParceria && canEditParceriaSplit) apptPatch.commissionPercent = splitPct;
         DB.update("appointments", appt.id, apptPatch);
-        if (isParceria) {
+
+        if (isPkgPay) {
+          // Vincula esta sessão ao pacote — mesma mecânica de "Sessão de um
+          // pacote já comprado" em openApptModal (client.packages[].
+          // appointmentIds), só que acontecendo agora, na conclusão de um
+          // atendimento normal, em vez de na criação de um agendamento
+          // dedicado. Relê o cliente fresco do banco (não o `client`
+          // capturado na abertura do modal) para não perder nenhuma
+          // atualização concorrente. Nenhum lançamento de receita novo: o
+          // valor já foi cobrado do cliente na venda original do pacote.
+          var freshClientForPkg = DB.get("clients", client.id) || client;
+          var newPackages = (freshClientForPkg.packages || []).map(function (pp) {
+            if (pp.id !== chosenPurchase.id) return pp;
+            return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).concat([appt.id]) });
+          });
+          DB.update("clients", client.id, { packages: newPackages });
+        } else if (isParceria) {
           // Usa o mesmo cálculo de Utils.apptCommissionSplit já usado pelo
           // Comissionamento (considera assistente, se houver) — a parte do
           // profissional (mainCommission/assistantCommission) segue pelo
@@ -1477,7 +1584,8 @@
       });
 
       DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name +
-        (isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + ")") +
+        (isPkgPay ? " consumindo a sessão " + packageSessionIndexForLog + " de " + chosenPurchase.sessionsTotal + " do pacote \"" + chosenPurchase.packageName + "\" (comissão sobre " + Utils.fmtMoney(packageDilutedValue) + ", sem cobrança nova)" :
+         isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + ")") +
         (isPackageSale && packagePurchase ? " — venda do pacote \"" + packagePurchase.packageName + "\" (comissão desta sessão sobre " + Utils.fmtMoney(appt.price) + ")" : "") +
         (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
       // Enfileira o pedido de avaliação por WhatsApp (envio manual, mesmo
@@ -1485,7 +1593,7 @@
       // conclusão de atendimento deve gerar esse pedido para o cliente.
       if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", appt.id));
       Modal.close();
-      Toast.show(isParceria ? "Atendimento concluído como Parceria — divisão de custo registrada" : "Atendimento concluído e lançamento financeiro gerado", "success");
+      Toast.show(isPkgPay ? "Atendimento concluído — sessão do pacote consumida, nenhuma cobrança gerada" : (isParceria ? "Atendimento concluído como Parceria — divisão de custo registrada" : "Atendimento concluído e lançamento financeiro gerado"), "success");
       render();
     });
   }
@@ -1502,7 +1610,13 @@
     var client = DB.get("clients", group[0].clientId);
     var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
     var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
-    var methods = paymentMethods();
+    // "Pacote" (ver isPackagePayMethod) só é suportado hoje na conclusão de
+    // UM atendimento por vez (openConcludeSingleModal) — cada linha do
+    // Fechar Conta pode ser de um serviço diferente, e o vínculo de pacote é
+    // por serviço, então uma única forma de pagamento para o grupo inteiro
+    // não daria pra decidir corretamente qual linha consumiria qual pacote.
+    // Filtrada aqui de propósito para não aparecer como opção nesta tela.
+    var methods = paymentMethods().filter(function (p) { return !p.isPackage; });
 
     var lines = group.map(function (appt, idx) {
       return {
@@ -1745,7 +1859,7 @@
       '</div>' +
       '<div id="ai-insumo-rows"></div>' +
       '<div class="small text-muted mb-16">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
-      '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ai-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
+      '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ai-pay">' + methods.filter(function (p) { return !p.isPackage; }).map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ai-save">Salvar</button>';
     var box = Modal.open({ title: "Lançar Insumo/Produto", wide: true, bodyHtml: body, footHtml: foot });
 

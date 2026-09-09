@@ -968,6 +968,7 @@
   function renderPacotes() {
     var list = DB.getTreatmentPackages();
     var clients = DB.all("clients");
+    var servicesById = {}; DB.all("services").forEach(function (s) { servicesById[s.id] = s; });
     var pkGetters = {
       count: function (pk) { return clients.filter(function (c) { return (c.packages || []).some(function (pp) { return pp.packageId === pk.id; }); }).length; }
     };
@@ -975,13 +976,16 @@
     var tbl = Utils.qs("#tbl-pacotes");
     tbl.innerHTML = '<thead><tr>' +
       Utils.thSort("Pacote", "name", pacotesSortState) +
+      '<th>Serviço vinculado</th>' +
       '<th>Sessões</th>' +
       PACKAGE_SIZES.map(function (sz) { return '<th class="text-right">' + sz.label + '</th>'; }).join("") +
       Utils.thSort("Clientes", "count", pacotesSortState, { className: "text-right" }) +
       '<th></th></tr></thead><tbody>' +
       list.map(function (pk) {
         var count = pkGetters.count(pk);
+        var linkedSvc = pk.linkedServiceId ? servicesById[pk.linkedServiceId] : null;
         return '<tr><td class="font-bold">' + Utils.escapeHtml(pk.name) + '</td>' +
+          '<td>' + (linkedSvc ? Utils.escapeHtml(linkedSvc.name) : '<span class="small text-muted">Não vinculado</span>') + '</td>' +
           '<td>' + (pk.sessionsTotal || 4) + '</td>' +
           PACKAGE_SIZES.map(function (sz) { return '<td class="text-right">' + Utils.fmtMoney((pk.prices || {})[sz.key] || 0) + '</td>'; }).join("") +
           '<td class="text-right">' + count + '</td>' +
@@ -1006,9 +1010,16 @@
   function openPacoteModal(id) {
     var list = DB.getTreatmentPackages();
     var pk = id ? list.find(function (x) { return x.id === id; }) : null;
+    // Serviços "reais" do catálogo (exclui os sintéticos isPackageService,
+    // que são só bookkeeping interno — ver packageServiceFor em agenda.js).
+    var realServices = DB.all("services").filter(function (s) { return !s.isPackageService; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Nome do Pacote</label><input type="text" id="pacote-name" value="' + (pk ? Utils.escapeHtml(pk.name) : "") + '"></div>' +
       '<div class="form-field"><label>Nº de Sessões</label><input type="number" id="pacote-sessions" min="1" value="' + (pk ? pk.sessionsTotal : 4) + '"></div>' +
+      '<div class="form-field full"><label>Serviço vinculado (opcional)</label>' +
+        NameCombo.html({ id: "pacote-service", items: realServices.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }), value: pk ? (pk.linkedServiceId || "") : "", placeholder: "Nome do serviço" }) +
+        '<div class="hint">Vincule ao serviço real deste tratamento (ex.: "Botox Capilar") para que, ao concluir um atendimento normal desse serviço na Agenda, apareça a opção "Forma de Pagamento: Pacote" — o sistema reconhece sozinho que a sessão está sendo paga consumindo o pacote que o cliente já comprou, sem cobrar de novo. Sem esse vínculo, essa detecção automática não funciona (o pacote continua podendo ser vendido/agendado normalmente pelo fluxo de "Tipo de Atendimento" na Agenda).</div>' +
+      '</div>' +
       '<div class="form-field full"><div class="hint">Valor total do pacote por tamanho de cabelo (o profissional recebe comissão sobre o valor diluído — valor total ÷ nº de sessões — a cada sessão concluída).</div></div>' +
       PACKAGE_SIZES.map(function (sz) {
         return '<div class="form-field"><label>' + sz.label + ' (R$)</label><input type="text" id="pacote-price-' + sz.key + '"></div>';
@@ -1016,6 +1027,7 @@
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="pacote-save">Salvar</button>';
     var box = Modal.open({ title: pk ? "Editar Pacote" : "Novo Pacote", bodyHtml: body, footHtml: foot });
+    NameCombo.wire(box, { id: "pacote-service", items: realServices.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }) });
     PACKAGE_SIZES.forEach(function (sz) {
       Utils.wireMoneyMask(box.querySelector("#pacote-price-" + sz.key), pk ? (pk.prices || {})[sz.key] : 0);
     });
@@ -1025,13 +1037,14 @@
       var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!pk || x.id !== pk.id); });
       if (dup) { Toast.show("Já existe um pacote com este nome", "danger"); return; }
       var sessionsTotal = parseInt(box.querySelector("#pacote-sessions").value, 10) || 4;
+      var linkedServiceId = box.querySelector("#pacote-service").value || null;
       var prices = {};
       PACKAGE_SIZES.forEach(function (sz) { prices[sz.key] = Utils.moneyMaskToFloat(box.querySelector("#pacote-price-" + sz.key)); });
       if (pk) {
-        DB.saveTreatmentPackages(list.map(function (x) { return x.id === pk.id ? Object.assign({}, x, { name: name, sessionsTotal: sessionsTotal, prices: prices }) : x; }));
+        DB.saveTreatmentPackages(list.map(function (x) { return x.id === pk.id ? Object.assign({}, x, { name: name, sessionsTotal: sessionsTotal, prices: prices, linkedServiceId: linkedServiceId }) : x; }));
         DB.log("Configurações", "Atualizou o pacote de tratamento " + name);
       } else {
-        DB.saveTreatmentPackages(list.concat([{ id: DB.uid("pkg"), name: name, sessionsTotal: sessionsTotal, prices: prices }]));
+        DB.saveTreatmentPackages(list.concat([{ id: DB.uid("pkg"), name: name, sessionsTotal: sessionsTotal, prices: prices, linkedServiceId: linkedServiceId }]));
         DB.log("Configurações", "Criou o pacote de tratamento " + name);
       }
       Modal.close(); Toast.show("Pacote salvo", "success"); renderPacotes();
