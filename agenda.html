@@ -19,13 +19,16 @@
 <link rel="stylesheet" href="assets/css/style.css">
 <script>window.PAGE_META = { title: "Agenda", subtitle: "Agendamentos por cliente, profissional e serviço" };</script>
 <style>
-  .week-strip { display: flex; gap: 8px; margin-bottom: 16px; overflow-x: auto; }
-  .week-day { flex: 1; min-width: 92px; text-align: center; padding: 10px 6px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: #fff; cursor: pointer; }
+  /* Cartões do dia da semana — reduzidos ao mínimo (a pedido do cliente,
+     10/09/2026) para sobrar mais espaço vertical/horizontal para a grade de
+     agendamentos abaixo, que é o que realmente importa nessa tela. */
+  .week-strip { display: flex; gap: 5px; margin-bottom: 14px; overflow-x: auto; }
+  .week-day { flex: 1; min-width: 48px; max-width: 72px; text-align: center; padding: 5px 3px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: #fff; cursor: pointer; }
   .week-day:hover { background: var(--gray-50); }
   .week-day.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
-  .week-day .wd-name { font-size: 10.5px; text-transform: uppercase; opacity: .75; }
-  .week-day .wd-num { font-size: 17px; font-weight: 800; margin: 2px 0; }
-  .week-day .wd-count { font-size: 10.5px; }
+  .week-day .wd-name { font-size: 9px; text-transform: uppercase; opacity: .75; }
+  .week-day .wd-num { font-size: 13.5px; font-weight: 800; margin: 1px 0; }
+  .week-day .wd-count { font-size: 8.5px; white-space: nowrap; }
   .agenda-item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); margin-bottom: 8px; background: #fff; }
   .agenda-item .ai-time { width: 56px; font-weight: 800; font-size: 14px; color: var(--color-primary); flex-shrink: 0; }
   .agenda-item .ai-main { flex: 1; min-width: 0; }
@@ -69,11 +72,13 @@
   .mini-cal-day.mc-outside { color: var(--gray-300); }
   .mini-cal-day.mc-today { border: 1px solid var(--color-accent); font-weight: 700; }
   .mini-cal-day.mc-selected { background: var(--color-primary); color: #fff; font-weight: 700; }
-  /* Layout em duas colunas: barra lateral fixa (mini calendário, filtros,
-     legenda) + coluna principal com a navegação de dia e o calendário —
-     junta num só lugar o que antes ficava empilhado em blocos separados
-     acima da grade, deixando o calendário visível mais cedo na tela. */
-  .ag-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+  /* Layout (10/09/2026, a pedido do cliente): a barra lateral esquerda ficou
+     só com o mini calendário (Filtros subiu para perto de "Registrar
+     Ocorrência", no topo da tela; Legenda desceu para um rodapé horizontal
+     abaixo da grade principal) — e passou a poder ser ocultada inteiramente
+     (botão perto de "Hoje") para dar o máximo de espaço possível à agenda
+     principal, sem nada sobrando à esquerda dela. */
+  .ag-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; align-items: start; transition: grid-template-columns .15s ease; }
   /* min-width:0 é essencial aqui: sem isso, a grade de calendário (que usa
      width:max-content para os cartões de profissional) força a coluna
      inteira — e a página toda — a ficar mais larga que a tela em vez de
@@ -81,18 +86,33 @@
      "espremido"/ampliado em notebooks com resolução menor ou escala do
      Windows acima de 100%. */
   .ag-main { min-width: 0; }
-  .ag-rail { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
-  .ag-rail-card .card-header { padding: 14px 18px; }
-  .ag-rail-card .card-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-  .ag-legend-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--gray-700); }
-  .ag-legend-dot { width: 12px; height: 12px; border-radius: 4px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.08); }
+  .ag-rail { position: sticky; top: 16px; }
+  /* Rail oculto: some por completo (não fica nem um trilho fino) — a grade
+     principal ocupa então a largura inteira, sem nada ao lado esquerdo. */
+  .ag-layout.ag-rail-hidden { grid-template-columns: 0 1fr; gap: 0; }
+  .ag-layout.ag-rail-hidden .ag-rail { display: none; }
   .ag-main-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .ag-main-nav .ag-nav-controls { display: flex; align-items: center; gap: 6px; }
   .ag-main-nav #week-label { font-size: 14px; font-weight: 700; min-width: 190px; text-align: center; }
+  #btn-toggle-rail { margin-right: 6px; padding-right: 10px; border-right: 1px solid var(--border-color); border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+
+  /* Barra de filtros no topo (perto de "Registrar Ocorrência"/"Novo
+     Agendamento") — reaproveita o componente .filters-bar já usado em
+     outras telas do sistema (ex.: Lançamentos Financeiros). */
+  #ag-filters-bar .filters-bar-period { display: flex; gap: 10px; align-items: flex-end; }
+  #ag-filter-note { flex-basis: 100%; }
+
+  /* Legenda — vira uma faixa retangular horizontal, no rodapé do calendário
+     principal (abaixo do card de agendamentos), em vez da coluna vertical
+     que ficava na lateral. */
+  .ag-legend-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; background: #fff; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 18px; margin-top: 14px; }
+  .ag-legend-bar .ag-legend-title { font-size: 12px; font-weight: 700; color: var(--gray-500); text-transform: uppercase; letter-spacing: .3px; margin-right: 4px; }
+  .ag-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--gray-700); white-space: nowrap; }
+  .ag-legend-dot { width: 12px; height: 12px; border-radius: 4px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.08); }
   /* Faixa de profissionais da Visão do Dia — a grade abre mostrando só a
      coluna do profissional logado (ver currentEmployeeId em agenda.js);
      esta faixa é o jeito de trocar pra outro profissional sem precisar do
-     seletor "Profissional" do filtro lateral. Os demais ficam esmaecidos
+     seletor "Profissional" da barra de filtros no topo. Os demais ficam esmaecidos
      (meio "ocultos") até serem clicados, só o selecionado aparece em
      destaque — isso evita o problema de rolagem horizontal de mostrar
      todo mundo em colunas ao mesmo tempo. */
@@ -112,6 +132,8 @@
   }
   @media (max-width: 900px) {
     .mini-cal { max-width: 100%; }
+    #ag-filters-bar .filters-bar-period { flex-direction: column; align-items: stretch; width: 100%; }
+    #ag-filters-bar .filters-bar-period .form-field { width: 100%; }
   }
 </style>
 </head>
@@ -146,37 +168,26 @@
           </div>
         </div>
 
+        <!-- Filtros — movidos para o topo da tela, perto de "Registrar
+             Ocorrência" (a pedido do cliente, 10/09/2026); antes ficavam
+             numa caixa na lateral esquerda. -->
+        <div class="filters-bar" id="ag-filters-bar">
+          <div class="form-field"><label>Profissional</label><select id="ag-employee"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Serviço</label><select id="ag-service"><option value="">Todos</option></select></div>
+          <div class="form-field"><label>Situação</label><select id="ag-status"><option value="">Todas</option><option value="agendado">Agendado</option><option value="concluido">Concluído</option><option value="faltou">Faltou</option><option value="cancelado">Cancelado</option></select></div>
+          <div class="filters-bar-period" id="ag-period-filters" style="display:none;">
+            <div class="form-field"><label>De</label><input type="date" id="ag-period-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="ag-period-end"></div>
+            <div class="hint" style="align-self:center;">Deixe "Até" em branco para ver todos os agendamentos futuros sem limite.</div>
+          </div>
+          <button class="btn btn-sm btn-secondary" id="btn-ag-clear-filters" type="button">Limpar Filtros</button>
+          <div class="small text-muted" id="ag-filter-note"></div>
+        </div>
+
         <div class="ag-layout">
-          <aside class="ag-rail">
+          <aside class="ag-rail" id="ag-rail">
             <div id="ag-day-nav">
               <div class="mini-cal" id="mini-cal"></div>
-            </div>
-
-            <div class="card ag-rail-card">
-              <div class="card-header"><h3>Filtros</h3></div>
-              <div class="card-body">
-                <div class="filters-bar" id="ag-period-filters" style="display:none;">
-                  <div class="form-field"><label>De</label><input type="date" id="ag-period-start"></div>
-                  <div class="form-field"><label>Até</label><input type="date" id="ag-period-end"></div>
-                  <div class="small text-muted">Deixe "Até" em branco para ver todos os agendamentos futuros sem limite.</div>
-                </div>
-                <div class="form-field"><label>Profissional</label><select id="ag-employee"><option value="">Todos</option></select></div>
-                <div class="form-field"><label>Serviço</label><select id="ag-service"><option value="">Todos</option></select></div>
-                <div class="form-field"><label>Situação</label><select id="ag-status"><option value="">Todas</option><option value="agendado">Agendado</option><option value="concluido">Concluído</option><option value="faltou">Faltou</option><option value="cancelado">Cancelado</option></select></div>
-                <button class="btn btn-sm btn-secondary" id="btn-ag-clear-filters" type="button">Limpar Filtros</button>
-                <div class="small text-muted" id="ag-filter-note"></div>
-              </div>
-            </div>
-
-            <div class="card ag-rail-card">
-              <div class="card-header"><h3>Legenda</h3></div>
-              <div class="card-body">
-                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#2a78d6;"></span> Agendado</div>
-                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#1baf7a;"></span> Concluído</div>
-                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#b7791f;"></span> Faltou</div>
-                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#999;"></span> Cancelado</div>
-                <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#888;"></span> Ocorrência / Bloqueio</div>
-              </div>
             </div>
           </aside>
 
@@ -189,6 +200,7 @@
             <div id="ag-day-nav-main">
               <div class="ag-main-nav">
                 <div class="ag-nav-controls">
+                  <button class="btn btn-icon btn-secondary" id="btn-toggle-rail" title="Ocultar calendário"><i class="fa-solid fa-chevron-left"></i></button>
                   <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Semana anterior"><i class="fa-solid fa-angles-left"></i></button>
                   <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>
                   <button class="btn btn-secondary" id="btn-today"><i class="fa-solid fa-calendar-day"></i> Hoje</button>
@@ -203,6 +215,18 @@
             <div class="card">
               <div class="card-header"><div><h3 id="day-title">Agendamentos</h3></div></div>
               <div class="card-body" id="day-list"></div>
+            </div>
+
+            <!-- Legenda — desceu para um rodapé horizontal abaixo do
+                 calendário principal (a pedido do cliente, 10/09/2026);
+                 antes ficava numa caixa empilhada na lateral esquerda. -->
+            <div class="ag-legend-bar">
+              <span class="ag-legend-title">Legenda</span>
+              <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#2a78d6;"></span> Agendado</div>
+              <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#1baf7a;"></span> Concluído</div>
+              <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#b7791f;"></span> Faltou</div>
+              <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#999;"></span> Cancelado</div>
+              <div class="ag-legend-item"><span class="ag-legend-dot" style="background:#888;"></span> Ocorrência / Bloqueio</div>
             </div>
           </div>
         </div>
