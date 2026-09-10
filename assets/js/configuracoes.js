@@ -12,6 +12,44 @@
     return { first: parts[0], last: parts.length > 1 ? parts.slice(1).join(" ") : parts[0] };
   }
 
+  // Esconde, dentro desta própria tela, as abas de Configurações que o
+  // usuário logado não tem permissão de ver (allowedConfigTabs — ver
+  // Permissões/Grupos de Acesso mais abaixo). Só entra em jogo se houver
+  // alguma restrição de fato: se auth.js já deixou chegar até aqui, é
+  // porque a pessoa tem acesso ao módulo Configurações inteiro — o que
+  // pode faltar é só a visibilidade de abas específicas dentro dele, e
+  // isso auth.js não sabe checar (só bloqueia página inteira).
+  function enforceConfigTabsAccess() {
+    var session = window.CurrentUser ? window.CurrentUser.get() : null;
+    var dbUser = session ? DB.get("users", session.id) : null;
+    if (!dbUser) return;
+    var allowedTabs = effectiveAllowedConfigTabs(dbUser, getAccessGroups());
+    if (!allowedTabs || !Array.isArray(allowedTabs)) return; // sem restrição = todas as abas
+
+    var tabsWrap = document.getElementById("cfg-tabs");
+    var firstVisibleBtn = null;
+    Utils.qsa(".tab-btn", tabsWrap).forEach(function (btn) {
+      var panel = btn.getAttribute("data-panel");
+      var allowed = allowedTabs.indexOf(panel) !== -1;
+      btn.style.display = allowed ? "" : "none";
+      if (!allowed) {
+        var panelEl = document.getElementById(panel);
+        if (panelEl) panelEl.classList.remove("active");
+      }
+      if (allowed && !firstVisibleBtn) firstVisibleBtn = btn;
+    });
+
+    // A aba padrão ("Centros de Custo") pode não estar entre as liberadas
+    // — nesse caso abre a primeira aba que a pessoa realmente pode ver.
+    var activeBtn = tabsWrap.querySelector(".tab-btn.active");
+    if ((!activeBtn || activeBtn.style.display === "none") && firstVisibleBtn) {
+      Utils.qsa(".tab-btn", tabsWrap).forEach(function (b) { b.classList.remove("active"); });
+      Utils.qsa(".tab-panel").forEach(function (p) { p.classList.remove("active"); });
+      firstVisibleBtn.classList.add("active");
+      document.getElementById(firstVisibleBtn.getAttribute("data-panel")).classList.add("active");
+    }
+  }
+
   function init() {
     Utils.qsa(".tab-btn", document.getElementById("cfg-tabs")).forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -21,6 +59,8 @@
         document.getElementById(btn.getAttribute("data-panel")).classList.add("active");
       });
     });
+
+    enforceConfigTabsAccess();
 
     Utils.qs("#btn-new-cc").addEventListener("click", function () { openCcModal(null); });
     Utils.qs("#btn-new-cat").addEventListener("click", function () { openCatModal(null); });
@@ -389,8 +429,93 @@
   // open, or missing/null = full access (see assets/js/auth.js). The list
   // of screens shown here comes straight from AppLayout.NAV (assets/js/layout.js),
   // so it stays in sync automatically as pages are added/removed there.
+  //
+  // allowedConfigTabs on a user record (or on an accessGroups item): same
+  // convention as allowedPages, one level deeper — only matters when
+  // "configuracoes.html" is itself allowed. Array of tab-panel ids (the
+  // data-panel values in configuracoes.html, e.g. "p-cc") the person may
+  // see INSIDE Configurações; missing/null = every tab, inclusive as que
+  // forem criadas no futuro. Diferente de allowedPages, essa lista não vem
+  // de AppLayout.NAV (as abas não são páginas separadas) — é declarada só
+  // aqui, em configTabItems(), e o bloqueio de fato acontece dentro desta
+  // própria tela (ver enforceConfigTabsAccess em init()), porque auth.js só
+  // sabe bloquear página inteira, não sub-recurso dentro dela.
   function permPageItems() {
     return (window.AppLayout ? window.AppLayout.NAV : []).filter(function (item) { return !item.section; });
+  }
+
+  function configTabItems() {
+    return [
+      { panel: "p-cc", label: "Centros de Custo" },
+      { panel: "p-cat", label: "Categorias" },
+      { panel: "p-srv", label: "Serviços" },
+      { panel: "p-pacotes", label: "Pacotes" },
+      { panel: "p-paymethods", label: "Formas de Pagamento" },
+      { panel: "p-roles", label: "Cargos" },
+      { panel: "p-acessos", label: "Acessos" },
+      { panel: "p-groups", label: "Grupos de Acesso" },
+      { panel: "p-approvals", label: "Aprovações" },
+      { panel: "p-perms", label: "Permissões" },
+      { panel: "p-log", label: "Log de Atividade" },
+      { panel: "p-integracoes", label: "Integrações" },
+      { panel: "p-data", label: "Backup e Dados" }
+    ];
+  }
+
+  // Monta o bloco recolhido de sub-permissão (abas de Configurações) que é
+  // injetado logo depois do item "Configurações" no checklist de páginas —
+  // usado tanto no checklist por usuário (prefixo "perm") quanto no de
+  // grupo (prefixo "grp"). disabled=true quando o item pai já está
+  // desabilitado (vem de um grupo, ou "Acesso total" está ligado).
+  function configTabsBlockHtml(prefix, allowedConfigTabs, disabled) {
+    var fullTabs = !allowedConfigTabs || !Array.isArray(allowedConfigTabs);
+    return '<div class="' + prefix + '-configtabs-block" style="margin:4px 0 10px 28px;padding:10px 12px;border-left:3px solid var(--border-color);">' +
+      '<label class="flex items-center gap-8 mb-8">' +
+      '<input type="checkbox" class="' + prefix + '-configtabs-full"' + (fullTabs ? " checked" : "") + (disabled ? " disabled" : "") + '>' +
+      '<span><strong>Todas as abas de Configurações</strong> — inclusive as que forem criadas mais adiante</span>' +
+      '</label>' +
+      '<div class="form-grid">' + configTabItems().map(function (t) {
+        var checked = fullTabs || allowedConfigTabs.indexOf(t.panel) !== -1;
+        return '<label class="flex items-center gap-8">' +
+          '<input type="checkbox" class="' + prefix + '-configtab-cb" value="' + t.panel + '"' + (checked ? " checked" : "") + ((disabled || fullTabs) ? " disabled" : "") + '>' +
+          '<span>' + Utils.escapeHtml(t.label) + '</span>' +
+          '</label>';
+      }).join("") + '</div>' +
+      '</div>';
+  }
+
+  // Liga o checkbox "Todas as abas" do bloco (marcá-lo desabilita e marca
+  // todas as abas individuais, mesmo comportamento do "Acesso total" lá em
+  // cima). container é o elemento que contém o checklist inteiro (não só o
+  // bloco), porque o bloco é reconstruído via innerHTML a cada render.
+  function wireConfigTabsBlock(container, prefix) {
+    var fullCb = container.querySelector("." + prefix + "-configtabs-full");
+    if (!fullCb || fullCb.disabled) return;
+    fullCb.addEventListener("change", function () {
+      Utils.qsa("." + prefix + "-configtab-cb", container).forEach(function (cb) {
+        cb.disabled = fullCb.checked;
+        cb.checked = fullCb.checked;
+      });
+    });
+  }
+
+  // Mostra/esconde o bloco de abas conforme o item "Configurações" está
+  // marcado (não faz sentido escolher abas de um módulo que a pessoa nem
+  // vai poder abrir) — chamado no render inicial e sempre que o checkbox
+  // de "Configurações" ou o "Acesso total" mudam de estado. prefix é
+  // "perm" ou "grp", igual ao usado em configTabsBlockHtml/wireConfigTabsBlock.
+  function refreshConfigTabsVisibility(container, prefix, cfgCb, topFullCb) {
+    var block = container.querySelector("." + prefix + "-configtabs-block");
+    if (block) block.style.display = (cfgCb && cfgCb.checked && !(topFullCb && topFullCb.checked)) ? "" : "none";
+  }
+
+  function hasPermsTabAccess(allowedConfigTabs) {
+    return !allowedConfigTabs || !Array.isArray(allowedConfigTabs) || allowedConfigTabs.indexOf("p-perms") !== -1;
+  }
+  function effectiveAllowedConfigTabs(u, groups) {
+    if (!u.groupId) return u.allowedConfigTabs;
+    var g = groups.find(function (x) { return x.id === u.groupId; });
+    return g ? g.allowedConfigTabs : u.allowedConfigTabs;
   }
 
   function renderPerms() {
@@ -436,7 +561,7 @@
     // Mostra o estado atual dos controles. fromGroup=true desabilita tudo
     // (as permissões vêm do grupo, não dá pra editar aqui — só trocando
     // pra "Personalizado" ou editando o grupo na aba Grupos de Acesso).
-    function applyState(fullAccess, allowedPages, canApproveVal, fromGroup) {
+    function applyState(fullAccess, allowedPages, canApproveVal, fromGroup, allowedConfigTabs) {
       fullCb.checked = fullAccess;
       fullCb.disabled = fromGroup;
       if (approveCb) {
@@ -444,34 +569,45 @@
         approveCb.disabled = isAdminUser || fromGroup;
         approveCb.title = isAdminUser ? "Administradores já podem aprovar solicitações por padrão" : "";
       }
-      Utils.qs("#perm-checklist").innerHTML = items.map(function (it) {
+      var checklist = Utils.qs("#perm-checklist");
+      checklist.innerHTML = items.map(function (it) {
         var checked = fullAccess || (allowedPages && allowedPages.indexOf(it.href) !== -1);
-        return '<label class="flex items-center gap-8">' +
+        var html = '<label class="flex items-center gap-8">' +
           '<input type="checkbox" class="perm-item-cb" value="' + it.href + '"' + (checked ? " checked" : "") + (fromGroup || fullAccess ? " disabled" : "") + '>' +
           '<span><i class="fa-solid ' + it.icon + '"></i> ' + Utils.escapeHtml(it.label) + '</span>' +
           '</label>';
+        if (it.href === "configuracoes.html") html += configTabsBlockHtml("perm", allowedConfigTabs, fromGroup || fullAccess);
+        return html;
       }).join("");
       groupHint.textContent = fromGroup ? 'Permissões definidas pelo grupo selecionado — para personalizar só esta pessoa, mude para "Personalizado (sem grupo)" acima (isso desvincula do grupo).' : "";
+
+      var cfgCb = checklist.querySelector('.perm-item-cb[value="configuracoes.html"]');
+      wireConfigTabsBlock(checklist, "perm");
+      if (cfgCb) cfgCb.addEventListener("change", function () { refreshConfigTabsVisibility(checklist, "perm", cfgCb, fullCb); });
+      refreshConfigTabsVisibility(checklist, "perm", cfgCb, fullCb);
     }
 
     var initialGroup = groupSelect.value ? groups.find(function (g) { return g.id === groupSelect.value; }) : null;
     if (initialGroup) {
-      applyState(!initialGroup.allowedPages || !Array.isArray(initialGroup.allowedPages), initialGroup.allowedPages, initialGroup.canApprove, true);
+      applyState(!initialGroup.allowedPages || !Array.isArray(initialGroup.allowedPages), initialGroup.allowedPages, initialGroup.canApprove, true, initialGroup.allowedConfigTabs);
     } else {
-      applyState(!u.allowedPages || !Array.isArray(u.allowedPages), u.allowedPages, u.canApprove, false);
+      applyState(!u.allowedPages || !Array.isArray(u.allowedPages), u.allowedPages, u.canApprove, false, u.allowedConfigTabs);
     }
 
     groupSelect.onchange = function () {
       var gsel = groupSelect.value ? groups.find(function (g) { return g.id === groupSelect.value; }) : null;
       if (gsel) {
-        applyState(!gsel.allowedPages || !Array.isArray(gsel.allowedPages), gsel.allowedPages, gsel.canApprove, true);
+        applyState(!gsel.allowedPages || !Array.isArray(gsel.allowedPages), gsel.allowedPages, gsel.canApprove, true, gsel.allowedConfigTabs);
       } else {
         // Voltando para "Personalizado": usa o que está exibido agora (do
         // grupo) como ponto de partida editável, em vez de zerar tudo.
         var currentFull = fullCb.checked;
         var currentAllowed = Utils.qsa(".perm-item-cb").filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
         var currentApprove = approveCb ? approveCb.checked : false;
-        applyState(currentFull, currentAllowed, currentApprove, false);
+        var currentCfgTabsFullCb = Utils.qs(".perm-configtabs-full");
+        var currentConfigTabs = (currentCfgTabsFullCb && !currentCfgTabsFullCb.checked) ?
+          Utils.qsa(".perm-configtab-cb").filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; }) : null;
+        applyState(currentFull, currentAllowed, currentApprove, false, currentConfigTabs);
       }
     };
 
@@ -485,6 +621,9 @@
         cb.disabled = fullCb.checked;
         cb.checked = fullCb.checked;
       });
+      var checklist = Utils.qs("#perm-checklist");
+      var cfgCb = checklist.querySelector('.perm-item-cb[value="configuracoes.html"]');
+      refreshConfigTabsVisibility(checklist, "perm", cfgCb, fullCb);
     };
 
     Utils.qs("#btn-save-perms").onclick = function () {
@@ -495,11 +634,16 @@
           Toast.show("Não é possível vincular: nenhum outro usuário ativo ficaria com acesso a Configurações.", "danger");
           return;
         }
-        DB.update("users", u.id, { groupId: selectedGroup.id, allowedPages: selectedGroup.allowedPages, canApprove: selectedGroup.canApprove });
+        if (wouldLeaveNoPermsTabAccess(u.id, selectedGroup.allowedPages, selectedGroup.allowedConfigTabs)) {
+          Toast.show("Não é possível vincular: nenhum outro usuário ativo ficaria com acesso à aba Permissões dentro de Configurações.", "danger");
+          return;
+        }
+        DB.update("users", u.id, { groupId: selectedGroup.id, allowedPages: selectedGroup.allowedPages, allowedConfigTabs: selectedGroup.allowedConfigTabs, canApprove: selectedGroup.canApprove });
         DB.log("Configurações", "Vinculou " + u.firstName + " " + u.lastName + " ao grupo de acesso " + selectedGroup.name);
         Toast.show('Permissões atualizadas (vinculado ao grupo "' + selectedGroup.name + '")', "success");
       } else {
         var allowedPages = null; // null = full access
+        var allowedConfigTabs = null; // null = todas as abas de Configurações
         if (!fullCb.checked) {
           allowedPages = Utils.qsa(".perm-item-cb").filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
 
@@ -510,10 +654,28 @@
             Toast.show("Não é possível salvar: nenhum outro usuário ativo ficaria com acesso a Configurações.", "danger");
             return;
           }
+
+          // Só olha o sub-checklist de abas quando "Acesso total" (o de
+          // cima) está desligado — com ele ligado, allowedConfigTabs tem
+          // que ficar null também, senão uma restrição de abas antiga (de
+          // antes de marcar "Acesso total") ficaria "escondida" no banco e
+          // voltaria a valer se alguém desmarcasse "Acesso total" depois.
+          var cfgTabsFullCb = Utils.qs(".perm-configtabs-full");
+          if (cfgTabsFullCb && !cfgTabsFullCb.checked) {
+            allowedConfigTabs = Utils.qsa(".perm-configtab-cb").filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+          }
+        }
+        // Mesma rede de segurança acima, um nível abaixo: nunca deixar zero
+        // usuários ativos com acesso à própria aba Permissões dentro de
+        // Configurações (travaria todo mundo fora de quem consegue desfazer
+        // o erro, mesmo que o módulo Configurações continue liberado).
+        if (wouldLeaveNoPermsTabAccess(u.id, allowedPages, allowedConfigTabs)) {
+          Toast.show("Não é possível salvar: nenhum outro usuário ativo ficaria com acesso à aba Permissões dentro de Configurações.", "danger");
+          return;
         }
 
         var canApproveVal = approveCb ? approveCb.checked : !!u.canApprove;
-        DB.update("users", u.id, { groupId: null, allowedPages: allowedPages, canApprove: canApproveVal });
+        DB.update("users", u.id, { groupId: null, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal });
         var desc = "Atualizou as permissões de acesso de " + u.firstName + " " + u.lastName +
           " (" + (allowedPages === null ? "acesso total" : allowedPages.length + " tela(s) liberada(s)") + ")" +
           (canApproveVal && u.role !== "Administrador" ? " — pode aprovar solicitações" : "");
@@ -1099,6 +1261,33 @@
       return hasConfigAccess(eff);
     });
   }
+  // Mesmas duas redes de segurança acima, um nível abaixo (abas dentro de
+  // Configurações em vez do módulo inteiro): só importam quando a pessoa/
+  // grupo ainda vai continuar com acesso a Configurações depois da
+  // mudança — sem o módulo, a questão de qual aba nem existe.
+  function wouldLeaveNoPermsTabAccess(userId, futureAllowedPages, futureAllowedConfigTabs) {
+    if (!hasConfigAccess(futureAllowedPages)) return false;
+    if (hasPermsTabAccess(futureAllowedConfigTabs)) return false;
+    var groups = getAccessGroups();
+    return !DB.all("users").some(function (other) {
+      if (other.id === userId || !other.active) return false;
+      var eff = effectiveAllowedPages(other, groups);
+      if (!hasConfigAccess(eff)) return false;
+      return hasPermsTabAccess(effectiveAllowedConfigTabs(other, groups));
+    });
+  }
+  function groupEditWouldLeaveNoPermsTabAccess(groupId, futureAllowedPages, futureAllowedConfigTabs) {
+    if (!hasConfigAccess(futureAllowedPages)) return false;
+    if (hasPermsTabAccess(futureAllowedConfigTabs)) return false;
+    var groups = getAccessGroups();
+    return !DB.all("users").some(function (u) {
+      if (!u.active) return false;
+      var effPages = u.groupId === groupId ? futureAllowedPages : effectiveAllowedPages(u, groups);
+      if (!hasConfigAccess(effPages)) return false;
+      var effTabs = u.groupId === groupId ? futureAllowedConfigTabs : effectiveAllowedConfigTabs(u, groups);
+      return hasPermsTabAccess(effTabs);
+    });
+  }
 
   var groupsSortState = { field: null, dir: "asc" };
   function renderGroups() {
@@ -1174,20 +1363,29 @@
       '</label>' +
       '<div id="grp-checklist" class="form-grid">' + items.map(function (it) {
         var checked = fullAccess || (g && g.allowedPages && g.allowedPages.indexOf(it.href) !== -1);
-        return '<label class="flex items-center gap-8">' +
+        var html = '<label class="flex items-center gap-8">' +
           '<input type="checkbox" class="grp-item-cb" value="' + it.href + '"' + (checked ? " checked" : "") + (fullAccess ? " disabled" : "") + '>' +
           '<span><i class="fa-solid ' + it.icon + '"></i> ' + Utils.escapeHtml(it.label) + '</span>' +
           '</label>';
+        if (it.href === "configuracoes.html") html += configTabsBlockHtml("grp", g && g.allowedConfigTabs, fullAccess);
+        return html;
       }).join("") + '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="grp-save">Salvar</button>';
     var box = Modal.open({ title: g ? "Editar Grupo de Acesso" : "Novo Grupo de Acesso", wide: true, bodyHtml: body, footHtml: foot });
 
     var fullCb = box.querySelector("#grp-full-access");
+    var grpChecklist = box.querySelector("#grp-checklist");
+    var grpCfgCb = grpChecklist.querySelector('.grp-item-cb[value="configuracoes.html"]');
+    wireConfigTabsBlock(grpChecklist, "grp");
+    if (grpCfgCb) grpCfgCb.addEventListener("change", function () { refreshConfigTabsVisibility(grpChecklist, "grp", grpCfgCb, fullCb); });
+    refreshConfigTabsVisibility(grpChecklist, "grp", grpCfgCb, fullCb);
+
     fullCb.addEventListener("change", function () {
       Utils.qsa(".grp-item-cb", box).forEach(function (cb) {
         cb.disabled = fullCb.checked;
         cb.checked = fullCb.checked;
       });
+      refreshConfigTabsVisibility(grpChecklist, "grp", grpCfgCb, fullCb);
     });
 
     box.querySelector("#grp-save").addEventListener("click", function () {
@@ -1197,8 +1395,16 @@
       if (dup) { Toast.show("Já existe um grupo com este nome", "danger"); return; }
 
       var allowedPages = null;
+      var allowedConfigTabs = null; // null = todas as abas de Configurações
       if (!fullCb.checked) {
         allowedPages = Utils.qsa(".grp-item-cb", box).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+
+        // Só olha o sub-checklist de abas quando "Acesso total" (o de cima)
+        // está desligado — ver comentário equivalente em #btn-save-perms.
+        var grpCfgTabsFullCb = box.querySelector(".grp-configtabs-full");
+        if (grpCfgTabsFullCb && !grpCfgTabsFullCb.checked) {
+          allowedConfigTabs = Utils.qsa(".grp-configtab-cb", box).filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+        }
       }
       var canApproveVal = box.querySelector("#grp-can-approve").checked;
 
@@ -1206,16 +1412,20 @@
         Toast.show("Não é possível salvar: nenhum acesso ativo ficaria com acesso a Configurações depois desta alteração (considerando quem está neste grupo).", "danger");
         return;
       }
+      if (g && groupEditWouldLeaveNoPermsTabAccess(g.id, allowedPages, allowedConfigTabs)) {
+        Toast.show("Não é possível salvar: nenhum acesso ativo ficaria com acesso à aba Permissões depois desta alteração (considerando quem está neste grupo).", "danger");
+        return;
+      }
 
       var members = g ? DB.all("users").filter(function (u) { return u.groupId === g.id; }) : [];
       if (g) {
-        saveAccessGroups(list.map(function (x) { return x.id === g.id ? Object.assign({}, x, { name: name, allowedPages: allowedPages, canApprove: canApproveVal }) : x; }));
+        saveAccessGroups(list.map(function (x) { return x.id === g.id ? Object.assign({}, x, { name: name, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }) : x; }));
         if (members.length) {
-          DB.batch(function () { members.forEach(function (u) { DB.update("users", u.id, { allowedPages: allowedPages, canApprove: canApproveVal }); }); });
+          DB.batch(function () { members.forEach(function (u) { DB.update("users", u.id, { allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }); }); });
         }
         DB.log("Configurações", "Atualizou o grupo de acesso " + name + (members.length ? (" (" + members.length + " acesso(s) vinculado(s) atualizado(s) automaticamente)") : ""));
       } else {
-        saveAccessGroups(list.concat([{ id: DB.uid("grp"), name: name, allowedPages: allowedPages, canApprove: canApproveVal }]));
+        saveAccessGroups(list.concat([{ id: DB.uid("grp"), name: name, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }]));
         DB.log("Configurações", "Criou o grupo de acesso " + name);
       }
       Modal.close();
