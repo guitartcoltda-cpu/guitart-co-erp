@@ -38,6 +38,27 @@
   var GRID_END_MIN = 21 * 60;
   var PX_PER_MIN = 0.8;
 
+  // Ocultar/mostrar o mini calendário lateral (a pedido do cliente,
+  // 10/09/2026) — para dar o máximo de espaço possível à grade principal de
+  // agendamentos. Lembrado por navegador via localStorage, mesmo padrão já
+  // usado pelo menu lateral recolhível (ver COLLAPSE_KEY em layout.js). Na
+  // Visão Geral o rail some de qualquer forma (não há mini calendário para
+  // mostrar ali, já que a lista não é presa a um único dia selecionado).
+  var RAIL_COLLAPSE_KEY = "salao_erp_agenda_rail_collapsed";
+  var railCollapsed = false;
+  try { railCollapsed = localStorage.getItem(RAIL_COLLAPSE_KEY) === "1"; } catch (e) {}
+
+  function updateRailVisibility() {
+    var layout = document.querySelector(".ag-layout");
+    if (!layout) return;
+    layout.classList.toggle("ag-rail-hidden", viewMode !== "dia" || railCollapsed);
+    var toggleBtn = document.getElementById("btn-toggle-rail");
+    if (toggleBtn) {
+      toggleBtn.innerHTML = railCollapsed ? '<i class="fa-solid fa-chevron-right"></i>' : '<i class="fa-solid fa-chevron-left"></i>';
+      toggleBtn.title = railCollapsed ? "Mostrar calendário" : "Ocultar calendário";
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
   // Funcionário vinculado ao acesso logado (via users.employeeId — ver
@@ -90,6 +111,7 @@
         Utils.qs("#ag-day-nav").style.display = viewMode === "dia" ? "" : "none";
         Utils.qs("#ag-day-nav-main").style.display = viewMode === "dia" ? "" : "none";
         Utils.qs("#ag-period-filters").style.display = viewMode === "geral" ? "" : "none";
+        updateRailVisibility();
         render();
       });
     });
@@ -106,6 +128,7 @@
         Utils.qs("#ag-day-nav").style.display = "";
         Utils.qs("#ag-day-nav-main").style.display = "";
         Utils.qs("#ag-period-filters").style.display = "none";
+        updateRailVisibility();
       }
       render();
     });
@@ -120,6 +143,16 @@
     Utils.qs("#btn-new-appt").addEventListener("click", function () { openApptModal(null); });
     var occBtn = Utils.qs("#btn-new-occurrence");
     if (occBtn) occBtn.addEventListener("click", function () { openOccurrenceModal({ date: selectedDate }); });
+
+    var toggleRailBtn = Utils.qs("#btn-toggle-rail");
+    if (toggleRailBtn) {
+      toggleRailBtn.addEventListener("click", function () {
+        railCollapsed = !railCollapsed;
+        try { localStorage.setItem(RAIL_COLLAPSE_KEY, railCollapsed ? "1" : "0"); } catch (e) {}
+        updateRailVisibility();
+      });
+    }
+    updateRailVisibility();
 
     render();
   }
