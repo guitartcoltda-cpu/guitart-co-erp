@@ -1332,7 +1332,11 @@
       var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#ps-tip-asst")) || 0) : 0;
 
       DB.batch(function () {
-        DB.update("appointments", appt.id, { status: "concluido" });
+        // Forma de pagamento exibida no agendamento: "Pacote" fixo, já que o
+        // valor desta sessão foi cobrado inteiro na venda do pacote (1ª
+        // sessão) — não no #ps-pay acima, que é só para produto levado pelo
+        // cliente (venda avulsa à parte, sem relação com esta sessão).
+        DB.update("appointments", appt.id, { status: "concluido", paymentMethod: "Pacote" });
         registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: employee ? employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
         registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: assistant ? assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
 
@@ -1514,7 +1518,11 @@
         // cobrado/exibido nesta tela. Por isso price só assume `amount`
         // (o valor realmente cobrado do cliente) no caso normal, sem
         // pacote nenhum envolvido.
-        var apptPatch = { status: "concluido" };
+        // Forma de pagamento gravada no próprio agendamento (além de nos
+        // lançamentos financeiros) só para exibição em "Editar Agendamento"
+        // — payMethod já é "Pacote" no caso de consumo de pacote (isPkgPay),
+        // então nenhum caso especial é necessário aqui.
+        var apptPatch = { status: "concluido", paymentMethod: payMethod };
         if (isPkgPay) {
           apptPatch.price = packageDilutedValue;
           apptPatch.packagePurchaseId = chosenPurchase.id;
@@ -1765,7 +1773,10 @@
           var category = service ? DB.findOne("categories", function (c) { return c.id === service.categoryId; }) : null;
           var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
 
-          var apptPatch = { status: "concluido", price: amount };
+          // Mesma forma de pagamento do "Fechar Conta" (payMethod, escolhida
+          // uma única vez para o grupo inteiro) gravada em cada agendamento
+          // do grupo — só para exibição em "Editar Agendamento".
+          var apptPatch = { status: "concluido", price: amount, paymentMethod: payMethod };
           var splitPct = null;
           if (isParceria) {
             splitPct = resolvedParceriaSplitPercent(box, l.rowPrefix + "-parceria-pct", appt, l.employee);
@@ -2072,6 +2083,15 @@
         '<option value="cancelado"' + (a && a.status === "cancelado" ? " selected" : "") + '>Cancelado</option>' +
         '</select></div>' +
       commissionFieldHtml({ id: "am-comm-pct", label: "Comissão do Profissional (%)", currentValue: a ? a.commissionPercent : null, defaultRate: currentEmployee ? currentEmployee.commissionRate : null }) +
+      // Forma de pagamento usada ao concluir o atendimento — só exibição
+      // (somente leitura), só aparece quando o atendimento está concluído e
+      // tem a forma de pagamento gravada (ver openConcludeSingleModal /
+      // openConcludeGroupModal / openConcludePackageSessionModal). Atendimentos
+      // concluídos antes desta gravação existir não têm a.paymentMethod e por
+      // isso ficam sem o campo, em vez de mostrar algo incorreto.
+      (a && a.status === "concluido" && a.paymentMethod ?
+        '<div class="form-field full"><label>Forma de Pagamento</label><input type="text" value="' + Utils.escapeHtml(a.paymentMethod) + '" disabled></div>'
+      : "") +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div class="form-grid">' +
