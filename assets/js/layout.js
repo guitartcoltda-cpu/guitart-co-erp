@@ -92,6 +92,15 @@
     var displayName = user ? (user.firstName + " " + user.lastName) : "Visitante";
     var displayRole = user ? user.role : "";
     var initials = user && global.Utils ? Utils.initials(displayName) : "?";
+    // O atributo data-theme já foi aplicado por um pequeno script inline
+    // colado no <head> de cada página (roda antes do <link> do CSS, para
+    // não piscar claro e depois escurecer) — aqui só lemos o que já está
+    // lá para desenhar o ícone certo (lua = tema claro, clique escurece;
+    // sol = tema escuro, clique clareia). Ver o listener de
+    // #btn-theme-toggle em render() mais abaixo para o clique em si.
+    var isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    var themeIcon = isDark ? "fa-sun" : "fa-moon";
+    var themeTitle = isDark ? "Mudar para tema claro" : "Mudar para tema escuro";
     return (
       '<header class="topbar">' +
         '<div class="flex items-center gap-10">' +
@@ -101,6 +110,7 @@
         '</div>' +
         '<div class="topbar-right">' +
           '<div id="approvals-badge-slot"></div>' +
+          '<button type="button" class="btn btn-icon btn-ghost" id="btn-theme-toggle" title="' + themeTitle + '" aria-label="' + themeTitle + '"><i class="fa-solid ' + themeIcon + '"></i></button>' +
           '<div class="topbar-user-wrap">' +
             '<button type="button" class="topbar-user" id="topbar-user-btn" aria-haspopup="true" aria-expanded="false">' +
               '<div class="avatar">' + initials + '</div>' +
@@ -219,6 +229,27 @@
       collapseToggle.addEventListener("click", function () {
         var collapsed = document.body.classList.toggle("sidebar-collapsed");
         try { localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0"); } catch (e) {}
+      });
+    }
+
+    // Tema claro/escuro (10/09/2026, a pedido do cliente): botão com ícone
+    // de lua/sol na topbar. Diferente do menu lateral recolhível/rail da
+    // Agenda (que só ligam/desligam uma classe CSS), a troca de tema aqui
+    // recarrega a página — várias telas (gráficos da Agenda/Dashboard/DRE
+    // etc., ver Charts em charts.js) desenham SVG com cor fixa "no
+    // momento do desenho" em vez de CSS puro, então só uma classe no
+    // <body> deixaria esses gráficos com a cor antiga até a próxima
+    // atualização. Recarregar é simples, previsível e garante que TUDO
+    // na tela — inclusive gráficos — nasce já com a cor certa desde o
+    // primeiro desenho (o script inline no <head> já aplica o atributo
+    // antes de qualquer CSS pintar, então não há "pisca" nem troca de
+    // tema no meio do carregamento).
+    var themeToggle = document.getElementById("btn-theme-toggle");
+    if (themeToggle) {
+      themeToggle.addEventListener("click", function () {
+        var goingDark = document.documentElement.getAttribute("data-theme") !== "dark";
+        try { localStorage.setItem("salao_erp_theme", goingDark ? "dark" : "light"); } catch (e) {}
+        location.reload();
       });
     }
 

@@ -9,11 +9,28 @@
   "use strict";
 
   var CAT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
-  var INK_SECOND = "#52514e";
-  var INK_MUTED = "#898781";
-  var GRID = "#e1e0d9";
   var SUCCESS = "#006300";
   var DANGER = "#c23b3b";
+
+  // Os gráficos são desenhados como SVG com cor fixa no atributo (não CSS
+  // puro), então não "escutam" o tema claro/escuro sozinhos — por isso as
+  // cores neutras (grade, eixo, texto de eixo, trilho do donut) são lidas
+  // aqui, no momento do desenho, em vez de guardadas uma vez só. Como a
+  // troca de tema recarrega a página (ver #btn-theme-toggle em
+  // layout.js), todo gráfico já nasce com a cor certa — não existe o caso
+  // de "mudar o tema com um gráfico já na tela" para se preocupar. As
+  // cores da paleta categórica (CAT) continuam fixas nos dois temas: são
+  // tons vivos, pensados para funcionar tanto sobre fundo claro quanto
+  // escuro.
+  function isDarkTheme() {
+    return document.documentElement.getAttribute("data-theme") === "dark";
+  }
+  function inkSecond() { return isDarkTheme() ? "#c9c9cf" : "#52514e"; }
+  function inkMuted() { return isDarkTheme() ? "#9a9aa1" : "#898781"; }
+  function gridColor() { return isDarkTheme() ? "#333338" : "#e1e0d9"; }
+  function axisColor() { return isDarkTheme() ? "#48484f" : "#c3c2b7"; }
+  function trackColor() { return isDarkTheme() ? "#333338" : "#e6e2e4"; }
+  function dotStroke() { return isDarkTheme() ? "#1c1c20" : "#fff"; }
 
   function fmtCompact(n) {
     var abs = Math.abs(n);
@@ -64,7 +81,7 @@
   function buildLegend(container, series) {
     if (series.length < 2) return;
     var wrap = document.createElement("div");
-    wrap.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:12px;color:" + INK_SECOND + ";";
+    wrap.style.cssText = "display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:12px;color:" + inkSecond() + ";";
     series.forEach(function (s) {
       var item = document.createElement("div");
       item.style.cssText = "display:flex;align-items:center;gap:6px;";
@@ -106,8 +123,8 @@
       for (var g = 0; g <= steps; g++) {
         var val = (top / steps) * g;
         var y = padT + plotH - (val / top) * plotH;
-        svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: GRID, "stroke-width": 1 }));
-        var lbl = svgEl("text", { x: padL - 8, y: y + 4, "text-anchor": "end", "font-size": 10.5, fill: INK_MUTED });
+        svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: gridColor(), "stroke-width": 1 }));
+        var lbl = svgEl("text", { x: padL - 8, y: y + 4, "text-anchor": "end", "font-size": 10.5, fill: inkMuted() });
         lbl.textContent = fmtCompact(val);
         svg.appendChild(lbl);
       }
@@ -146,7 +163,7 @@
           svg.appendChild(rectG);
         });
 
-        var xl = svgEl("text", { x: groupX + groupW / 2, y: H - 8, "text-anchor": "middle", "font-size": 10.5, fill: INK_MUTED });
+        var xl = svgEl("text", { x: groupX + groupW / 2, y: H - 8, "text-anchor": "middle", "font-size": 10.5, fill: inkMuted() });
         xl.textContent = truncateLabel(cat, groupW);
         var xlTitle = svgEl("title", {});
         xlTitle.textContent = cat;
@@ -154,7 +171,7 @@
         svg.appendChild(xl);
       });
 
-      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH, stroke: "#c3c2b7", "stroke-width": 1 }));
+      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH, stroke: axisColor(), "stroke-width": 1 }));
 
       container.appendChild(svg);
       buildLegend(container, series.length > 1 ? series : []);
@@ -183,8 +200,8 @@
       for (var g = 0; g <= steps; g++) {
         var val = bottom + ((top - bottom) / steps) * g;
         var y = padT + plotH - ((val - bottom) / (top - bottom)) * plotH;
-        svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: GRID, "stroke-width": 1 }));
-        var lbl = svgEl("text", { x: padL - 8, y: y + 4, "text-anchor": "end", "font-size": 10.5, fill: INK_MUTED });
+        svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: y, y2: y, stroke: gridColor(), "stroke-width": 1 }));
+        var lbl = svgEl("text", { x: padL - 8, y: y + 4, "text-anchor": "end", "font-size": 10.5, fill: inkMuted() });
         lbl.textContent = fmtCompact(val);
         svg.appendChild(lbl);
       }
@@ -203,13 +220,13 @@
       });
 
       // hover crosshair
-      var hoverLine = svgEl("line", { x1: 0, x2: 0, y1: padT, y2: padT + plotH, stroke: "#c3c2b7", "stroke-width": 1, style: "display:none;" });
+      var hoverLine = svgEl("line", { x1: 0, x2: 0, y1: padT, y2: padT + plotH, stroke: axisColor(), "stroke-width": 1, style: "display:none;" });
       svg.appendChild(hoverLine);
       var dots = [];
       series.forEach(function (s) {
         var sd = [];
         s.data.forEach(function (v, i) {
-          var c = svgEl("circle", { cx: xPos(i), cy: yPos(v), r: 4, fill: s.color, stroke: "#fff", "stroke-width": 2, style: "display:none;" });
+          var c = svgEl("circle", { cx: xPos(i), cy: yPos(v), r: 4, fill: s.color, stroke: dotStroke(), "stroke-width": 2, style: "display:none;" });
           svg.appendChild(c);
           sd.push(c);
         });
@@ -244,12 +261,12 @@
       var everyNth = Math.ceil(categories.length / 8);
       categories.forEach(function (cat, i) {
         if (i % everyNth !== 0 && i !== categories.length - 1) return;
-        var xl = svgEl("text", { x: xPos(i), y: H - 8, "text-anchor": "middle", "font-size": 10.5, fill: INK_MUTED });
+        var xl = svgEl("text", { x: xPos(i), y: H - 8, "text-anchor": "middle", "font-size": 10.5, fill: inkMuted() });
         xl.textContent = cat;
         svg.appendChild(xl);
       });
 
-      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: yPos(0), y2: yPos(0), stroke: "#c3c2b7", "stroke-width": 1 }));
+      svg.appendChild(svgEl("line", { x1: padL, x2: W - padR, y1: yPos(0), y2: yPos(0), stroke: axisColor(), "stroke-width": 1 }));
 
       container.appendChild(svg);
       buildLegend(container, series.length > 1 ? series : []);
@@ -314,7 +331,7 @@
       var pct = total > 0 ? Math.min(1, value / total) : 0;
       var r = 26, c = 2 * Math.PI * r;
       var svg = svgEl("svg", { width: 64, height: 64, viewBox: "0 0 64 64" });
-      svg.appendChild(svgEl("circle", { cx: 32, cy: 32, r: r, fill: "none", stroke: "#e6e2e4", "stroke-width": 8 }));
+      svg.appendChild(svgEl("circle", { cx: 32, cy: 32, r: r, fill: "none", stroke: trackColor(), "stroke-width": 8 }));
       var circle = svgEl("circle", {
         cx: 32, cy: 32, r: r, fill: "none", stroke: color, "stroke-width": 8,
         "stroke-dasharray": c, "stroke-dashoffset": c * (1 - pct), "stroke-linecap": "round",
