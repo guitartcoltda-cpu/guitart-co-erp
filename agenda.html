@@ -86,11 +86,17 @@
      "espremido"/ampliado em notebooks com resolução menor ou escala do
      Windows acima de 100%. */
   .ag-main { min-width: 0; }
-  .ag-rail { position: sticky; top: 16px; }
-  /* Rail oculto: some por completo (não fica nem um trilho fino) — a grade
-     principal ocupa então a largura inteira, sem nada ao lado esquerdo. */
+  .ag-rail { position: sticky; top: 16px; min-width: 0; overflow: hidden; }
+  /* Rail oculto: a coluna colapsa para 0 (não fica nem um trilho fino) — a
+     grade principal ocupa então a largura inteira, sem nada sobrando à
+     esquerda dela. Importante: NÃO usar display:none aqui — isso tiraria
+     .ag-rail do fluxo do grid e faria .ag-main (que não tem grid-column
+     explícito) ser auto-posicionado de volta na 1ª coluna (que colapsou
+     para 0), em vez da 2ª — resultado: a grade principal também sumia.
+     visibility:hidden mantém o item "presente" para o auto-placement do
+     grid funcionar, só sem ocupar espaço visível (a coluna já está em 0). */
   .ag-layout.ag-rail-hidden { grid-template-columns: 0 1fr; gap: 0; }
-  .ag-layout.ag-rail-hidden .ag-rail { display: none; }
+  .ag-layout.ag-rail-hidden .ag-rail { visibility: hidden; pointer-events: none; }
   .ag-main-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .ag-main-nav .ag-nav-controls { display: flex; align-items: center; gap: 6px; }
   .ag-main-nav #week-label { font-size: 14px; font-weight: 700; min-width: 190px; text-align: center; }
