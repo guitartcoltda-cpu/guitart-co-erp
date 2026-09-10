@@ -490,12 +490,36 @@
   // bloco), porque o bloco é reconstruído via innerHTML a cada render.
   function wireConfigTabsBlock(container, prefix) {
     var fullCb = container.querySelector("." + prefix + "-configtabs-full");
-    if (!fullCb || fullCb.disabled) return;
+    if (!fullCb) return;
+    // Liga o listener sempre, mesmo que o checkbox esteja desabilitado no
+    // render atual (ex.: "Acesso total" ligado) — sem isso, quando o
+    // administrador desliga "Acesso total" depois, este checkbox ficava
+    // travado em disabled para sempre (o listener nunca tinha sido
+    // conectado) e não dava pra escolher abas individuais. O atributo
+    // disabled em si continua sendo controlado por syncConfigTabsDisabled.
     fullCb.addEventListener("change", function () {
       Utils.qsa("." + prefix + "-configtab-cb", container).forEach(function (cb) {
         cb.disabled = fullCb.checked;
         cb.checked = fullCb.checked;
       });
+    });
+  }
+
+  // Atualiza o estado disabled do bloco de abas (o "Todas as abas" e cada
+  // aba individual) conforme a condição externa (Acesso total ligado, ou
+  // fromGroup) muda — sem isso, o disabled ficava congelado no valor do
+  // render inicial (ver comentário em wireConfigTabsBlock). Quando
+  // outerDisabled vira true, força tudo marcado (Acesso total implica
+  // acesso a todas as abas também). Quando vira false, só destrava os
+  // checkboxes — os valores marcados continuam sendo os que já estavam.
+  function syncConfigTabsDisabled(container, prefix, outerDisabled) {
+    var fullCb = container.querySelector("." + prefix + "-configtabs-full");
+    if (!fullCb) return;
+    fullCb.disabled = outerDisabled;
+    if (outerDisabled) fullCb.checked = true;
+    Utils.qsa("." + prefix + "-configtab-cb", container).forEach(function (cb) {
+      cb.disabled = outerDisabled || fullCb.checked;
+      if (outerDisabled) cb.checked = true;
     });
   }
 
@@ -624,6 +648,7 @@
       var checklist = Utils.qs("#perm-checklist");
       var cfgCb = checklist.querySelector('.perm-item-cb[value="configuracoes.html"]');
       refreshConfigTabsVisibility(checklist, "perm", cfgCb, fullCb);
+      syncConfigTabsDisabled(checklist, "perm", fullCb.checked);
     };
 
     Utils.qs("#btn-save-perms").onclick = function () {
@@ -1386,6 +1411,7 @@
         cb.checked = fullCb.checked;
       });
       refreshConfigTabsVisibility(grpChecklist, "grp", grpCfgCb, fullCb);
+      syncConfigTabsDisabled(grpChecklist, "grp", fullCb.checked);
     });
 
     box.querySelector("#grp-save").addEventListener("click", function () {
