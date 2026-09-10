@@ -13,6 +13,15 @@
     } catch (e) {}
   })();
 </script>
+<script>
+  (function () {
+    try {
+      if (localStorage.getItem('salao_erp_theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) {}
+  })();
+</script>
 <title>Agenda · Guitart & Co.</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="icon" href="assets/img/logo-guitart.png">
@@ -23,13 +32,13 @@
      10/09/2026) para sobrar mais espaço vertical/horizontal para a grade de
      agendamentos abaixo, que é o que realmente importa nessa tela. */
   .week-strip { display: flex; gap: 5px; margin-bottom: 14px; overflow-x: auto; }
-  .week-day { flex: 1; min-width: 48px; max-width: 72px; text-align: center; padding: 5px 3px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: #fff; cursor: pointer; }
+  .week-day { flex: 1; min-width: 48px; max-width: 72px; text-align: center; padding: 5px 3px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-card); cursor: pointer; }
   .week-day:hover { background: var(--gray-50); }
   .week-day.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
   .week-day .wd-name { font-size: 9px; text-transform: uppercase; opacity: .75; }
   .week-day .wd-num { font-size: 13.5px; font-weight: 800; margin: 1px 0; }
   .week-day .wd-count { font-size: 8.5px; white-space: nowrap; }
-  .agenda-item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); margin-bottom: 8px; background: #fff; }
+  .agenda-item { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border-color); border-radius: var(--radius-md); margin-bottom: 8px; background: var(--bg-card); }
   .agenda-item .ai-time { width: 56px; font-weight: 800; font-size: 14px; color: var(--color-primary); flex-shrink: 0; }
   .agenda-item .ai-main { flex: 1; min-width: 0; }
   .agenda-item .ai-service { font-weight: 700; }
@@ -38,29 +47,36 @@
   .ag-general-date { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px; color: var(--gray-500); margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-color); }
 
   /* Visão do Dia — calendário em grade (colunas = profissionais, linhas = horário) */
-  .cal-scroll { overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: #fff; }
+  .cal-scroll { overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-color); border-radius: var(--radius-md); background: var(--bg-card); }
   .cal-grid-inner { display: grid; min-width: 100%; width: max-content; }
-  .cal-corner { position: sticky; top: 0; left: 0; z-index: 3; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
-  .cal-col-header { position: sticky; top: 0; z-index: 2; background: #fff; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); padding: 10px 6px; text-align: center; }
+  .cal-corner { position: sticky; top: 0; left: 0; z-index: 3; background: var(--bg-card); border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
+  .cal-col-header { position: sticky; top: 0; z-index: 2; background: var(--bg-card); border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); padding: 10px 6px; text-align: center; }
   .cal-col-header .avatar { margin: 0 auto 4px; }
   .cal-col-header .cch-name { font-weight: 800; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cal-col-header .cch-role { font-size: 10.5px; color: var(--gray-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cal-time-axis { position: sticky; left: 0; z-index: 1; background: #fff; border-right: 1px solid var(--border-color); }
+  .cal-time-axis { position: sticky; left: 0; z-index: 1; background: var(--bg-card); border-right: 1px solid var(--border-color); }
   .cal-hour-label { position: absolute; left: 0; right: 0; font-size: 10.5px; color: var(--gray-500); padding: 0 6px; transform: translateY(-50%); }
   .cal-col { position: relative; border-right: 1px solid var(--border-color); cursor: pointer; background-image: repeating-linear-gradient(to bottom, var(--border-color) 0, var(--border-color) 1px, transparent 1px, transparent 100%); background-repeat: repeat-y; }
   .cal-col:hover { background-color: var(--gray-50); }
   .cal-block { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 7px; font-size: 11px; overflow: hidden; cursor: pointer; border-left: 3px solid; box-shadow: 0 1px 2px rgba(0,0,0,.08); line-height: 1.3; }
   .cal-block.status-agendado { background: #e3eefb; border-color: #2a78d6; color: #184a86; }
   .cal-block.status-concluido { background: #e2f5ec; border-color: #1baf7a; color: #0e6b47; }
-  .cal-block.status-cancelado { background: #f1f1f1; border-color: #999; color: #777; text-decoration: line-through; opacity: .8; }
+  /* "Cancelado" e o bloco de ocorrência/bloqueio usam tons neutros (não uma
+     cor de marca) de propósito — para ficarem visualmente "apagados" no
+     meio dos outros horários. Por isso usam variáveis de cinza (que se
+     adaptam ao tema escuro) em vez de hex fixo: um cinza claro fixo
+     ficaria berrante — o bloco mais chamativo da tela, ao contrário da
+     intenção — sobre um fundo escuro. */
+  .cal-block.status-cancelado { background: var(--gray-100); border-color: var(--gray-400); color: var(--gray-500); text-decoration: line-through; opacity: .8; }
   .cal-block.status-faltou { background: #fdf2df; border-color: #b7791f; color: #7a5313; }
   .cal-block .cb-time { font-weight: 800; }
   .cal-block .cb-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cal-block .cb-meta { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cal-occ-block { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 7px; font-size: 11px; border-left: 3px solid #888; color: #555; cursor: pointer; overflow: hidden; background-color: #ececec; background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(0,0,0,.05) 6px, rgba(0,0,0,.05) 12px); }
+  .cal-occ-block { position: absolute; left: 3px; right: 3px; border-radius: 6px; padding: 3px 7px; font-size: 11px; border-left: 3px solid var(--gray-400); color: var(--gray-600); cursor: pointer; overflow: hidden; background-color: var(--gray-100); background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(0,0,0,.05) 6px, rgba(0,0,0,.05) 12px); }
+  [data-theme="dark"] .cal-occ-block { background-image: repeating-linear-gradient(45deg, transparent, transparent 6px, rgba(255,255,255,.06) 6px, rgba(255,255,255,.06) 12px); }
 
   /* Mini calendário — substitui o antigo bloco "Ir para data" +1/3/6 meses */
-  .mini-cal { background: #fff; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; margin-bottom: 16px; max-width: 320px; }
+  .mini-cal { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px; margin-bottom: 16px; max-width: 320px; }
   .mini-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .mini-cal-head .mc-label { font-weight: 800; font-size: 13px; text-transform: capitalize; }
   .mini-cal-head button { background: none; border: none; cursor: pointer; color: var(--gray-500); font-size: 13px; padding: 4px 10px; border-radius: var(--radius-sm); }
@@ -100,7 +116,13 @@
   .ag-main-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .ag-main-nav .ag-nav-controls { display: flex; align-items: center; gap: 6px; }
   .ag-main-nav #week-label { font-size: 14px; font-weight: 700; min-width: 190px; text-align: center; }
-  #btn-toggle-rail { margin-right: 6px; padding-right: 10px; border-right: 1px solid var(--border-color); border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+  /* Botão de ocultar/mostrar o mini-calendário — a pedido do cliente
+     (10/09/2026), ganhou cor de destaque (dourado, mesmo tom do botão de
+     recolher o menu lateral) para não se confundir com os botões cinza de
+     navegação ao lado (que têm um ícone "<" muito parecido, de "dia
+     anterior") nem com as setas "<"/">" do próprio mini-calendário. */
+  #btn-toggle-rail { margin-right: 10px; border: 1px solid var(--color-accent); background: var(--color-accent-light); color: var(--color-accent); }
+  #btn-toggle-rail:hover { background: var(--color-accent); color: #1a1a1a; }
 
   /* Barra de filtros no topo (perto de "Registrar Ocorrência"/"Novo
      Agendamento") — reaproveita o componente .filters-bar já usado em
@@ -111,7 +133,7 @@
   /* Legenda — vira uma faixa retangular horizontal, no rodapé do calendário
      principal (abaixo do card de agendamentos), em vez da coluna vertical
      que ficava na lateral. */
-  .ag-legend-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; background: #fff; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 18px; margin-top: 14px; }
+  .ag-legend-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 18px; margin-top: 14px; }
   .ag-legend-bar .ag-legend-title { font-size: 12px; font-weight: 700; color: var(--gray-500); text-transform: uppercase; letter-spacing: .3px; margin-right: 4px; }
   .ag-legend-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--gray-700); white-space: nowrap; }
   .ag-legend-dot { width: 12px; height: 12px; border-radius: 4px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.08); }
@@ -206,7 +228,7 @@
             <div id="ag-day-nav-main">
               <div class="ag-main-nav">
                 <div class="ag-nav-controls">
-                  <button class="btn btn-icon btn-secondary" id="btn-toggle-rail" title="Ocultar calendário"><i class="fa-solid fa-chevron-left"></i></button>
+                  <button class="btn btn-icon" id="btn-toggle-rail" title="Ocultar calendário"><i class="fa-solid fa-chevron-left"></i></button>
                   <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Semana anterior"><i class="fa-solid fa-angles-left"></i></button>
                   <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>
                   <button class="btn btn-secondary" id="btn-today"><i class="fa-solid fa-calendar-day"></i> Hoje</button>
