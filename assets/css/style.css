@@ -56,6 +56,49 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* ============================================================
+   Tema escuro (10/09/2026) — a pedido do cliente, botão com ícone de
+   lua na topbar (ver AppLayout.buildTopbar em layout.js), preferência
+   salva em localStorage e aplicada o mais cedo possível (script inline
+   no <head> de cada página, antes do <link> deste arquivo) para não
+   piscar claro antes de escurecer.
+
+   Em vez de escurecer elemento por elemento, a escala de cinza inteira
+   (--gray-50…900) é redefinida aqui mantendo o mesmo CONTRATO que o
+   resto do CSS já segue à risca no arquivo inteiro: 50–300 = tons
+   "próximos do fundo" (fundos sutis, bordas, divisores) e 400–900 =
+   tons "de texto" (do mais apagado ao mais contrastante). Como todo
+   componente do sistema (cards, tabelas, badges, abas, formulários...)
+   já usa var(--gray-*) em vez de cinza fixo, só redefinir a escala (+
+   --bg-page/--bg-card/--color-*-light/--shadow-*) já escurece o
+   sistema inteiro de forma consistente, sem precisar caçar cor por
+   cor em cada tela. As exceções (poucos pontos com #fff fixo, ou cores
+   de marca/status que são "chips" independentes do fundo da página —
+   badges, ícones de KPI, blocos coloridos da Agenda) foram tratadas à
+   parte, ver comentários nos respectivos arquivos. */
+:root[data-theme="dark"] {
+  --gray-50: #1b1b1f;
+  --gray-100: #232327;
+  --gray-200: #323238;
+  --gray-300: #45454c;
+  --gray-400: #6c6c74;
+  --gray-500: #93939b;
+  --gray-600: #adadb4;
+  --gray-700: #c8c8ce;
+  --gray-800: #e6e6e9;
+  --gray-900: #f6f6f7;
+
+  --bg-page: #121214;
+  --bg-card: #1c1c20;
+
+  --color-primary-light: #38383f;
+  --color-accent-light: #3a3320;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -253,7 +296,7 @@ body.sidebar-collapsed .sidebar-foot { display: none; }
 .topbar-user-caret { font-size: 10px; color: var(--gray-400); margin-left: 2px; }
 .topbar-user-menu {
   position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px;
-  background: #fff; border: 1px solid var(--gray-200); border-radius: 10px;
+  background: var(--bg-card); border: 1px solid var(--gray-200); border-radius: 10px;
   box-shadow: var(--shadow-lg); padding: 6px; z-index: 60;
 }
 .topbar-user-menu-item {
@@ -416,7 +459,7 @@ select, textarea {
   border-radius: var(--radius-sm);
   font-size: 13.5px;
   font-family: inherit;
-  background: #fff;
+  background: var(--bg-card);
   color: var(--gray-800);
   width: 100%;
 }
@@ -542,7 +585,7 @@ body.modal-open-lock { overflow: hidden; }
 }
 .modal-overlay.open { display: flex; }
 .modal-box {
-  background: #fff; border-radius: var(--radius-lg);
+  background: var(--bg-card); border-radius: var(--radius-lg);
   width: 100%; max-width: 620px;
   max-height: 90vh; overflow-y: auto;
   overscroll-behavior: contain;
@@ -552,14 +595,14 @@ body.modal-open-lock { overflow: hidden; }
 .modal-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 18px 22px; border-bottom: 1px solid var(--border-color);
-  position: sticky; top: 0; background: #fff; z-index: 2;
+  position: sticky; top: 0; background: var(--bg-card); z-index: 2;
 }
 .modal-head h3 { font-size: 16px; font-weight: 700; }
 .modal-body { padding: 22px; }
 .modal-foot {
   padding: 16px 22px; border-top: 1px solid var(--border-color);
   display: flex; justify-content: flex-end; gap: 8px;
-  position: sticky; bottom: 0; background: #fff;
+  position: sticky; bottom: 0; background: var(--bg-card);
 }
 .modal-close-btn {
   width: 30px; height: 30px; border-radius: 8px; border: none;
@@ -639,7 +682,7 @@ body.modal-open-lock { overflow: hidden; }
   border: 1px solid var(--border-color); border-radius: var(--radius-sm);
   padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  background: #fff;
+  background: var(--bg-card);
 }
 .recon-item.matched { background: var(--color-success-bg); border-color: #b8e0cc; }
 .recon-item.selected { outline: 2px solid var(--color-primary); }
