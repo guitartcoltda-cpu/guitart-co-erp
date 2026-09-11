@@ -367,10 +367,11 @@
       valueFormatter: function (v) { return Utils.fmtMoney(v); }
     });
 
-    // table — a coluna "Produtos" mostra, por atendimento, a metade do
-    // profissional no consumo de insumos lançado naquele atendimento
-    // específico (Agenda → Concluir Atendimento); consumo lançado manualmente
-    // no Estoque sem vínculo com um atendimento não aparece aqui linha a
+    // table — a coluna "Produtos" mostra, por atendimento, a parte do
+    // profissional (sempre 50/50 neste caminho) no consumo de insumos
+    // lançado naquele atendimento específico (Agenda → Concluir
+    // Atendimento); consumo lançado manualmente no Estoque (percentual
+    // ajustável) sem vínculo com um atendimento não aparece aqui linha a
     // linha, só no total mensal (seção "Desconto por Consumo de Insumos"
     // abaixo e no KPI). A coluna "Comissão" continua sendo a comissão pura
     // do serviço — o desconto de consumo já é subtraído no total do mês.
@@ -458,17 +459,19 @@
       } else {
         consumoEl.style.display = "";
         var products = DB.all("products");
-        consumoEl.innerHTML = '<div class="card-header"><div><h3>Desconto por Consumo de Insumos</h3><div class="card-header-sub">Metade do custo dos produtos usados nos seus atendimentos (a outra metade é despesa do salão)</div></div></div>' +
+        consumoEl.innerHTML = '<div class="card-header"><div><h3>Desconto por Consumo de Insumos</h3><div class="card-header-sub">Sua parte no custo dos produtos usados nos seus atendimentos — 50% por padrão, ou outro percentual quando ajustado no lançamento (o restante é despesa do salão)</div></div></div>' +
           '<div class="table-wrap"><table class="data-table">' +
-          '<thead><tr><th>Data</th><th>Produto</th><th class="text-right">Qtd.</th><th class="text-right">Custo Total</th><th class="text-right">Sua Metade</th></tr></thead>' +
+          '<thead><tr><th>Data</th><th>Produto</th><th class="text-right">Qtd.</th><th class="text-right">Custo Total</th><th class="text-right">%</th><th class="text-right">Sua Parte</th></tr></thead>' +
           '<tbody>' + data.consumoItems.map(function (c) {
             var p = products.find(function (x) { return x.id === c.productId; });
+            var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
             return '<tr><td>' + Utils.fmtDate(c.date) + '</td><td>' + Utils.escapeHtml(p ? p.name : "-") + '</td>' +
               '<td class="text-right text-num">' + (window.Consumo ? Consumo.fmtQty(c.quantity, c.unit) : c.quantity + c.unit) + '</td>' +
               '<td class="text-right text-num">' + Utils.fmtMoney(c.totalCost) + '</td>' +
+              '<td class="text-right text-num">' + pct + '%</td>' +
               '<td class="text-right text-num font-bold text-danger">- ' + Utils.fmtMoney(c.employeeShare) + '</td></tr>';
           }).join("") + '</tbody>' +
-          '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="4">Subtotal do desconto</td><td class="text-right text-num text-danger">- ' + Utils.fmtMoney(data.consumoTotal) + '</td></tr></tfoot>' +
+          '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="5">Subtotal do desconto</td><td class="text-right text-num text-danger">- ' + Utils.fmtMoney(data.consumoTotal) + '</td></tr></tfoot>' +
           '</table></div>';
       }
     }

@@ -392,37 +392,41 @@
     rows = Utils.sortBy(rows, commissionSortState, COMMISSION_SORT_GETTERS);
     tbl.innerHTML = '<thead><tr><th class="com-col-check"><input type="checkbox" id="com-select-all"></th>' +
       Utils.thSort("Profissional", "employee", commissionSortState) +
-      Utils.thSort("Cargo", "cargo", commissionSortState) +
-      Utils.thSort("Atendimentos", "atendimentos", commissionSortState, { className: "text-right" }) +
-      Utils.thSort("Receita de Serviços", "serviceRevenue", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Atend.", "atendimentos", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Receita", "serviceRevenue", commissionSortState, { className: "text-right" }) +
       Utils.thSort("Taxa", "taxa", commissionSortState, { className: "text-right" }) +
       Utils.thSort("Devido", "devido", commissionSortState, { className: "text-right" }) +
+      '<th class="text-right">Ajustes</th>' +
       Utils.thSort("Pago", "pago", commissionSortState, { className: "text-right" }) +
       Utils.thSort("Saldo", "saldo", commissionSortState, { className: "text-right" }) +
-      Utils.thSort("Status", "status", commissionSortState) +
-      '<th></th></tr></thead><tbody>' +
+      '<th class="com-col-actions"></th></tr></thead><tbody>' +
       rows.map(function (r) {
         var status = r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
-        var bonusNote = "";
-        if (r.bonusTotal > 0) bonusNote = '<div class="small text-muted" style="font-weight:400;">+ ' + Utils.fmtMoney(r.bonusTotal) + ' comissionamento esporádico</div>';
-        else if (r.bonusTotal < 0) bonusNote = '<div class="small text-danger" style="font-weight:400;">- ' + Utils.fmtMoney(Math.abs(r.bonusTotal)) + ' desconto</div>';
-        if (r.assistantCommissionTotal > 0) bonusNote += '<div class="small text-muted" style="font-weight:400;">inclui ' + Utils.fmtMoney(r.assistantCommissionTotal) + ' como assistente</div>';
-        if (r.consumoTotal > 0) bonusNote += '<div class="small text-danger" style="font-weight:400;">- ' + Utils.fmtMoney(r.consumoTotal) + ' consumo de insumos</div>';
+        // Coluna "Ajustes" — discrimina, cada um na sua própria linha
+        // compacta, tudo que soma/desconta do Devido além da comissão base
+        // (esporádico, desconto, consumo de insumos, participação como
+        // assistente), em vez de empilhar frases longas dentro da célula
+        // de Devido (o que ficava ilegível — ver pedido do usuário).
+        var adjustLines = [];
+        if (r.bonusTotal > 0) adjustLines.push('<div class="small text-success" style="font-weight:600;white-space:nowrap;">+' + Utils.fmtMoney(r.bonusTotal) + ' esporádico</div>');
+        else if (r.bonusTotal < 0) adjustLines.push('<div class="small text-danger" style="font-weight:600;white-space:nowrap;">-' + Utils.fmtMoney(Math.abs(r.bonusTotal)) + ' desconto</div>');
+        if (r.consumoTotal > 0) adjustLines.push('<div class="small text-danger" style="font-weight:600;white-space:nowrap;">-' + Utils.fmtMoney(r.consumoTotal) + ' insumos</div>');
+        if (r.assistantCommissionTotal > 0) adjustLines.push('<div class="small text-muted" style="white-space:nowrap;">+' + Utils.fmtMoney(r.assistantCommissionTotal) + ' assist.</div>');
+        var adjustHtml = adjustLines.length ? adjustLines.join("") : '<span class="small text-muted">—</span>';
         return '<tr>' +
           '<td class="com-col-check">' + (r.saldo > 0.01 ? '<input type="checkbox" class="com-row-check" data-id="' + r.employee.id + '"' + (selectedIds[r.employee.id] ? " checked" : "") + '>' : "") + '</td>' +
-          '<td><div class="flex items-center gap-8">' + Utils.avatarHtml(r.employee.name, r.employee.photoDataUrl) + Utils.escapeHtml(r.employee.name) + '</div></td>' +
-          '<td>' + Utils.escapeHtml(r.employee.role) + '</td>' +
+          '<td><div class="flex items-center gap-8">' + Utils.avatarHtml(r.employee.name, r.employee.photoDataUrl) +
+            '<div><div>' + Utils.escapeHtml(r.employee.name) + '</div><div class="small text-muted">' + Utils.escapeHtml(r.employee.role) + '</div></div></div></td>' +
           '<td class="text-right text-num">' + r.atendimentos + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(r.serviceRevenue) + '</td>' +
           '<td class="text-right text-num">' + r.employee.commissionRate + '%</td>' +
-          '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + bonusNote +
-          '</td>' +
+          '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + '</td>' +
+          '<td class="text-right com-col-ajustes">' + adjustHtml + '</td>' +
           '<td class="text-right text-num text-success">' + Utils.fmtMoney(r.pago) + '</td>' +
-          '<td class="text-right text-num ' + (r.saldo > 0.01 ? "text-danger" : "") + '">' + Utils.fmtMoney(Math.max(0, r.saldo)) + '</td>' +
-          '<td>' + status + '</td>' +
-          '<td><div class="flex gap-6">' +
-            '<button class="btn btn-sm btn-outline" data-details="' + r.employee.id + '">Ver detalhes</button>' +
-            (r.saldo > 0.01 ? '<button class="btn btn-sm btn-primary" data-pay="' + r.employee.id + '">Registrar pagamento</button>' : "") +
+          '<td class="text-right"><div class="text-num font-bold ' + (r.saldo > 0.01 ? "text-danger" : "") + '">' + Utils.fmtMoney(Math.max(0, r.saldo)) + '</div>' + status + '</td>' +
+          '<td class="com-col-actions"><div class="flex gap-6 justify-end">' +
+            '<button class="btn btn-icon btn-ghost" data-details="' + r.employee.id + '" title="Ver detalhes"><i class="fa-solid fa-circle-info"></i></button>' +
+            (r.saldo > 0.01 ? '<button class="btn btn-icon btn-primary" data-pay="' + r.employee.id + '" title="Registrar pagamento"><i class="fa-solid fa-hand-holding-dollar"></i></button>' : "") +
           '</div></td>' +
           '</tr>';
       }).join("") + '</tbody>';
@@ -532,12 +536,13 @@
         '</tr>';
     }
 
-    // "Produtos" mostra, por atendimento, a metade do profissional no
+    // "Produtos" mostra, por atendimento, a parte do profissional no
     // consumo de insumos lançado naquele atendimento específico (Agenda →
-    // Concluir Atendimento) — mesmo padrão já usado no Extrato do
-    // Profissional (ver extrato-comissao.js). Consumo lançado manualmente no
-    // Estoque, sem vínculo com um atendimento, não aparece aqui linha a
-    // linha, só no total do subtítulo abaixo (consumoSectionHtml) e no KPI.
+    // Concluir Atendimento, sempre 50/50) — mesmo padrão já usado no
+    // Extrato do Profissional (ver extrato-comissao.js). Consumo lançado
+    // manualmente no Estoque (percentual ajustável, ver estoque.js), sem
+    // vínculo com um atendimento, não aparece aqui linha a linha, só no
+    // total do subtítulo abaixo (consumoSectionHtml) e no KPI.
     var consumoByAppt = {};
     (row.consumoItems || []).forEach(function (c) {
       if (!c.appointmentId) return;
@@ -657,26 +662,30 @@
     });
   }
 
-  // Mostra o consumo de insumos (ml/g) lançado para o profissional no mês —
-  // metade do custo é dele (desconta do Devido), metade já virou despesa da
-  // empresa em Lançamentos (ver assets/js/consumo.js).
+  // Mostra o consumo de insumos (ml/g) lançado para o profissional no
+  // período — a parte dele (desconta do Devido, 50% por padrão, mas pode
+  // ser outro percentual quando ajustado no lançamento em Estoque) já virou
+  // despesa da empresa em Lançamentos pela outra parte (ver
+  // assets/js/consumo.js).
   function consumoSectionHtml(row) {
     if (!row.consumoItems || !row.consumoItems.length) return "";
     var products = DB.all("products");
     var linesHtml = row.consumoItems.map(function (c) {
       var p = products.find(function (x) { return x.id === c.productId; });
+      var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
       return '<tr>' +
         '<td>' + Utils.fmtDate(c.date) + '</td>' +
         '<td>' + Utils.escapeHtml(p ? p.name : "-") + '</td>' +
         '<td class="text-right text-num">' + (window.Consumo ? Consumo.fmtQty(c.quantity, c.unit) : c.quantity + c.unit) + '</td>' +
         '<td class="text-right text-num">' + Utils.fmtMoney(c.totalCost) + '</td>' +
+        '<td class="text-right text-num">' + pct + '%</td>' +
         '<td class="text-right text-num font-bold text-danger">- ' + Utils.fmtMoney(c.employeeShare) + '</td>' +
         '</tr>';
     }).join("");
     return '<h4 style="font-size:14px;margin-top:18px;margin-bottom:8px;">Desconto por Consumo de Insumos</h4>' +
-      '<table class="data-table"><thead><tr><th>Data</th><th>Produto</th><th class="text-right">Qtd.</th><th class="text-right">Custo Total</th><th class="text-right">Sua Metade</th></tr></thead>' +
+      '<table class="data-table"><thead><tr><th>Data</th><th>Produto</th><th class="text-right">Qtd.</th><th class="text-right">Custo Total</th><th class="text-right">%</th><th class="text-right">Sua Parte</th></tr></thead>' +
       '<tbody>' + linesHtml + '</tbody>' +
-      '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="4">Subtotal do desconto</td>' +
+      '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="5">Subtotal do desconto</td>' +
       '<td class="text-right text-num text-danger">- ' + Utils.fmtMoney(row.consumoTotal) + '</td></tr></tfoot></table>';
   }
 

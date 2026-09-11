@@ -1,12 +1,15 @@
 /* ============================================================
-   Salão ERP — Consumo de Insumos (custo dividido 50/50)
+   Salão ERP — Consumo de Insumos (custo dividido entre profissional
+   e salão, 50/50 por padrão)
    Módulo compartilhado usado pela Agenda (ao concluir um
-   atendimento) e pelo Estoque (lançamento manual): registra o
-   consumo de um produto de uso interno medido em ml/g, deduz do
-   estoque, gera a metade do custo como despesa real da empresa e
-   deixa a outra metade disponível para reduzir o "Devido" do
-   profissional no comissionamento (ver Utils.consumoDeductionFor
-   usado em comissoes.js / extrato-comissao.js).
+   atendimento, sempre 50/50) e pelo Estoque (lançamento manual, onde
+   o percentual pode ser ajustado — negociações nem sempre são meio a
+   meio, ver "Lançar Consumo de Insumos"): registra o consumo de um
+   produto de uso interno medido em ml/g, deduz do estoque, gera a
+   parte do salão como despesa real da empresa e deixa a parte do
+   profissional disponível para reduzir o "Devido" no comissionamento
+   (ver Utils.consumoDeductionFor usado em comissoes.js /
+   extrato-comissao.js).
    ============================================================ */
 (function (global) {
   "use strict";
@@ -28,6 +31,21 @@
     return product.unit || "un";
   }
 
+  // Quanto custa 1 ml/g (ou 1 unidade, se não tiver embalagem cadastrada)
+  // a partir do preço de VENDA da embalagem — mesmo raciocínio de
+  // unitCostOf, mas usado quando a referência de valor é o preço de venda
+  // normal do produto (ver "Lançar Consumo de Insumos" no Estoque, que
+  // parte do preço de venda em vez do custo de compra). Separado de
+  // unitCostOf porque os dois preços podem existir juntos no mesmo
+  // produto (custo de compra × preço de venda) e cada tela usa um deles.
+  function unitSalePriceOf(product) {
+    var size = Number(product.packageSize) || 0;
+    if (size > 0 && (product.packageUnit === "ml" || product.packageUnit === "g")) {
+      return (Number(product.salePrice) || 0) / size;
+    }
+    return Number(product.salePrice) || 0;
+  }
+
   // Formata uma quantidade consumida para exibição, convertendo
   // automaticamente para a unidade "maior" quando passa de 1000 — g vira
   // kg, ml vira L. Unidades que não são de medida (ex.: "un", "pct")
@@ -46,6 +64,7 @@
 
   var Consumo = {
     unitCostOf: unitCostOf,
+    unitSalePriceOf: unitSalePriceOf,
     unitLabelOf: unitLabelOf,
     fmtQty: fmtQty,
 
@@ -55,13 +74,17 @@
         .sort(function (a, b) { return a.name.localeCompare(b.name); });
     },
 
-    // opts: { productId, employeeId, quantity, appointmentId?, clientId?, date?, notes?, unitPriceOverride? }
+    // opts: { productId, employeeId, quantity, appointmentId?, clientId?, date?, notes?, unitPriceOverride?, employeeSharePercent? }
     // `unitPriceOverride`, quando informado, substitui o preço de custo por
     // ml/g/unidade calculado a partir da embalagem — usado pela tela
     // "Lançar Consumo" do Estoque, que parte do preço de venda normal do
     // produto (com desconto opcional só ali, ver estoque.js) em vez do
     // custo de compra. O restante do sistema (ex.: Agenda ao concluir um
     // atendimento) continua usando o custo de compra, sem essa opção.
+    // `employeeSharePercent` (0-100), quando informado, substitui o padrão
+    // de 50% — usado pela mesma tela do Estoque, onde a negociação de
+    // quem paga o quê nem sempre é meio a meio. A Agenda nunca informa
+    // esse parâmetro, então continua sempre 50/50 como sempre foi.
     // Lança 1 consumo. Lança exceção (string) em caso de dado inválido —
     // quem chama deve envolver em try/catch e mostrar via Toast.
     register: function (opts) {
@@ -73,7 +96,8 @@
 
       var unitCost = opts.unitPriceOverride != null ? Number(opts.unitPriceOverride) || 0 : unitCostOf(product);
       var totalCost = round2(unitCost * quantity);
-      var employeeShare = round2(totalCost / 2);
+      var employeeSharePercent = opts.employeeSharePercent != null ? Math.max(0, Math.min(100, Number(opts.employeeSharePercent))) : 50;
+      var employeeShare = round2(totalCost * (employeeSharePercent / 100));
       var companyShare = round2(totalCost - employeeShare);
       var date = opts.date || Utils.todayISO();
 
@@ -82,7 +106,7 @@
         record = DB.insert("productConsumptions", {
           productId: product.id, employeeId: opts.employeeId || null, appointmentId: opts.appointmentId || null,
           clientId: opts.clientId || null, quantity: quantity, unit: unitLabelOf(product),
-          unitCost: Math.round(unitCost * 10000) / 10000, totalCost: totalCost,
+          unitCost: Math.round(unitCost * 10000) / 10000, totalCost: totalCost, employeeSharePercent: employeeSharePercent,
           employeeShare: employeeShare, companyShare: companyShare, date: date, notes: opts.notes || ""
         });
 
@@ -120,7 +144,8 @@
       });
 
       DB.log("Estoque", "Registrou consumo de " + quantity + unitLabelOf(product) + " de " + product.name +
-        (employee ? " para " + employee.name : "") + " — total " + Utils.fmtMoney(totalCost) + " (metade empresa, metade profissional)");
+        (employee ? " para " + employee.name : "") + " — total " + Utils.fmtMoney(totalCost) +
+        (employeeSharePercent === 50 ? " (metade empresa, metade profissional)" : " (" + employeeSharePercent + "% profissional, " + round2(100 - employeeSharePercent) + "% empresa)"));
 
       return record;
     },
@@ -149,16 +174,22 @@
     },
 
     // Aplica um desconto (em R$) sobre um lançamento de consumo já salvo,
-    // reduzindo o custo total e recalculando a divisão 50/50. Usado tanto
-    // quando um Administrador dá desconto direto na tela de Estoque quanto
-    // quando uma solicitação de desconto é aprovada em Configurações →
-    // Aprovações (ver assets/js/approvals.js e configuracoes.js).
+    // reduzindo o custo total e recalculando a divisão profissional/salão —
+    // mantendo o mesmo percentual definido no lançamento original
+    // (employeeSharePercent), não necessariamente 50/50. Lançamentos
+    // antigos, gravados antes de o percentual ser configurável, não têm
+    // esse campo e continuam assumindo 50% (o único valor que existia até
+    // então). Usado tanto quando um Administrador dá desconto direto na
+    // tela de Estoque quanto quando uma solicitação de desconto é aprovada
+    // em Configurações → Aprovações (ver assets/js/approvals.js e
+    // configuracoes.js).
     applyDiscount: function (consumptionId, discountAmount) {
       var c = DB.get("productConsumptions", consumptionId);
       if (!c) return null;
       var discount = Math.max(0, Number(discountAmount) || 0);
       var newTotal = Math.max(0, round2(c.totalCost - discount));
-      var employeeShare = round2(newTotal / 2);
+      var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
+      var employeeShare = round2(newTotal * (pct / 100));
       var companyShare = round2(newTotal - employeeShare);
       return DB.update("productConsumptions", consumptionId, {
         totalCost: newTotal, employeeShare: employeeShare, companyShare: companyShare,

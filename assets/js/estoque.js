@@ -216,11 +216,14 @@
   }
 
   // ---- Consumo de Insumos (lançamento manual) ----------------------------
-  // Cada funcionário paga metade do que consome (em ml/g) de cada produto de
-  // uso interno; a outra metade é despesa do salão. O módulo compartilhado
-  // assets/js/consumo.js já faz a baixa de estoque + o lançamento financeiro
-  // e a dedução no comissionamento — aqui só oferecemos o formulário manual
-  // (o outro ponto de lançamento é o "Concluir Atendimento" na Agenda).
+  // Cada funcionário paga uma parte do que consome (em ml/g) de cada
+  // produto de uso interno — 50% por padrão, mas ajustável item a item
+  // nesta tela (ver consumoItemRowHtml/employeeSharePercent); a outra
+  // parte é despesa do salão. O módulo compartilhado assets/js/consumo.js
+  // já faz a baixa de estoque + o lançamento financeiro e a dedução no
+  // comissionamento — aqui só oferecemos o formulário manual (o outro
+  // ponto de lançamento, sempre 50/50, é o "Concluir Atendimento" na
+  // Agenda).
 
   function getConsumos() {
     var employees = DB.all("employees");
@@ -263,19 +266,20 @@
       Utils.thSort("Produto", "product", consumoSortState) +
       Utils.thSort("Qtd.", "quantity", consumoSortState, { className: "text-right" }) +
       Utils.thSort("Custo Total", "totalCost", consumoSortState, { className: "text-right" }) +
-      Utils.thSort("Metade Profissional", "employeeShare", consumoSortState, { className: "text-right" }) +
-      Utils.thSort("Metade Salão", "companyShare", consumoSortState, { className: "text-right" }) +
+      Utils.thSort("Parte Profissional", "employeeShare", consumoSortState, { className: "text-right" }) +
+      Utils.thSort("Parte Salão", "companyShare", consumoSortState, { className: "text-right" }) +
       Utils.thSort("Observações", "notes", consumoSortState) +
       '<th></th></tr></thead><tbody>' +
       pageItems.map(function (c) {
         var p = products.find(function (x) { return x.id === c.productId; });
+        var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
         return '<tr>' +
           '<td class="text-num">' + Utils.fmtDate(c.date) + '</td>' +
           '<td><div class="flex items-center gap-8">' + Utils.avatarHtml(c._employee ? c._employee.name : "?", c._employee ? c._employee.photoDataUrl : null) + '<span>' + Utils.escapeHtml(c._employee ? c._employee.name : "Funcionário removido") + '</span></div></td>' +
           '<td>' + Utils.escapeHtml(p ? p.name : "?") + '</td>' +
           '<td class="text-right text-num">' + Consumo.fmtQty(c.quantity, c.unit) + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(c.totalCost) + (c.discountApplied ? '<div class="small text-danger">desconto de ' + Utils.fmtMoney(c.discountApplied) + '</div>' : '') + '</td>' +
-          '<td class="text-right text-num text-danger">' + Utils.fmtMoney(c.employeeShare) + '</td>' +
+          '<td class="text-right text-num text-danger">' + Utils.fmtMoney(c.employeeShare) + (pct !== 50 ? '<div class="small text-muted">' + pct + '%</div>' : '') + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(c.companyShare) + '</td>' +
           '<td class="small text-muted">' + Utils.escapeHtml(c.notes || "-") + '</td>' +
           '<td><div class="flex gap-6">' +
@@ -342,8 +346,8 @@
           '<tr><td>Produto</td><td>' + Utils.escapeHtml(product ? product.name : "Produto removido") + '</td></tr>' +
           '<tr><td>Quantidade</td><td>' + Consumo.fmtQty(c.quantity, c.unit) + '</td></tr>' +
           '<tr><td>Custo Total</td><td>' + Utils.fmtMoney(c.totalCost) + (c.discountApplied ? ' <span class="text-danger small">(desconto de ' + Utils.fmtMoney(c.discountApplied) + ' aplicado)</span>' : '') + '</td></tr>' +
-          '<tr><td>Metade Profissional</td><td class="text-danger">' + Utils.fmtMoney(c.employeeShare) + '</td></tr>' +
-          '<tr><td>Metade Salão</td><td>' + Utils.fmtMoney(c.companyShare) + '</td></tr>' +
+          '<tr><td>Parte Profissional</td><td class="text-danger">' + Utils.fmtMoney(c.employeeShare) + ' <span class="small text-muted">(' + (c.employeeSharePercent != null ? c.employeeSharePercent : 50) + '%)</span></td></tr>' +
+          '<tr><td>Parte Salão</td><td>' + Utils.fmtMoney(c.companyShare) + ' <span class="small text-muted">(' + round2(100 - (c.employeeSharePercent != null ? c.employeeSharePercent : 50)) + '%)</span></td></tr>' +
           '<tr><td>Observações</td><td>' + Utils.escapeHtml(c.notes || "-") + '</td></tr>' +
         '</table>' +
       '</div></div>' +
@@ -422,15 +426,36 @@
         '<div class="form-field full"><label>Produto</label><select class="cs-produto">' +
           products.map(function (p) { return '<option value="' + p.id + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") +
         '</select></div>' +
+        '<div class="form-field full small text-muted cs-price-info" style="margin-top:-6px;"></div>' +
         '<div class="form-field"><label>Quantidade</label><div class="flex items-center gap-6">' +
           '<input type="number" class="cs-qtd" step="0.1" min="0" placeholder="Qtd.">' +
           '<span class="small text-muted cs-unit" style="min-width:24px;"></span>' +
         '</div></div>' +
         '<div class="form-field"><label>Valor do item (R$)</label><input type="text" class="cs-valor"' + (canDiscount ? "" : " disabled") + '></div>' +
+        '<div class="form-field full"><label>% do custo para o Profissional (o restante fica com o salão)</label>' +
+          '<input type="number" class="cs-pct" step="1" min="0" max="100" value="50"></div>' +
       '</div>' +
-      (canDiscount ? '<div class="small text-muted mt-8">Preenchido automaticamente com o preço de venda normal do produto — edite para dar desconto.</div>' :
+      '<div class="small cs-split-preview mt-8"></div>' +
+      (canDiscount ? '<div class="small text-muted mt-8">O valor do item já vem calculado a partir do preço por unidade do produto — edite para dar desconto. Ajuste o percentual acima se a divisão do custo não for meio a meio (padrão 50%).</div>' :
         '<div class="small text-muted mt-8">Valor calculado pelo preço de venda normal do produto. Para dar desconto, solicite depois de lançar (a lista de Consumo de Insumos abaixo tem essa opção) — só um Administrador pode aprovar.</div>') +
       '</div>';
+  }
+
+  // Preço de referência para o valor do item — sempre um preço POR
+  // UNIDADE (por g/ml, ou por unidade se o produto não tiver embalagem em
+  // ml/g cadastrada), nunca o preço da embalagem inteira. Prioriza o preço
+  // de venda normal do produto; só cai para o preço de custo se o produto
+  // (de uso interno) não tiver preço de venda cadastrado. Ambos passam
+  // pelas funções do módulo Consumo, que já dividem pelo tamanho da
+  // embalagem (packageSize) quando aplicável — é justamente essa divisão
+  // que faltava aqui antes (usava o preço da embalagem inteira direto,
+  // gerando valores muito acima do real ao multiplicar por uma quantidade
+  // em gramas/ml).
+  function consumoRefUnitPrice(p) {
+    if (!p) return 0;
+    var bySale = Consumo.unitSalePriceOf(p);
+    if (bySale) return bySale;
+    return Consumo.unitCostOf(p);
   }
 
   function wireConsumoItemRow(row) {
@@ -438,19 +463,49 @@
     var unitEl = row.querySelector(".cs-unit");
     var qtdEl = row.querySelector(".cs-qtd");
     var valorEl = row.querySelector(".cs-valor");
-    // Preço de referência para o valor do item: preço de venda normal do
-    // produto — só cai para o preço de custo se o produto (de uso interno)
-    // não tiver preço de venda cadastrado.
-    function refPrice(p) { return (p && p.salePrice) ? Number(p.salePrice) : (p ? Number(p.costPrice) || 0 : 0); }
+    var pctEl = row.querySelector(".cs-pct");
+    var priceInfoEl = row.querySelector(".cs-price-info");
+    var splitPreviewEl = row.querySelector(".cs-split-preview");
+
+    // Texto explicativo, pensado para quem não tem intimidade com a
+    // lógica interna: mostra de onde vem o preço por g/ml, para a
+    // quantidade digitada deixar de parecer "mágica".
+    function updatePriceInfo(p, unitPrice) {
+      if (!p) { priceInfoEl.textContent = ""; return; }
+      var unitLabel = Consumo.unitLabelOf(p);
+      if (p.packageSize && (p.packageUnit === "ml" || p.packageUnit === "g")) {
+        var pkgPrice = p.salePrice || p.costPrice || 0;
+        priceInfoEl.textContent = "Embalagem de " + Utils.fmtNumber(p.packageSize, 0) + " " + p.packageUnit + " = " + Utils.fmtMoney(pkgPrice) +
+          "  →  " + Utils.fmtMoney(unitPrice) + " por " + p.packageUnit + " consumido(a)";
+      } else {
+        priceInfoEl.textContent = "Preço de referência: " + Utils.fmtMoney(unitPrice) + " por " + unitLabel;
+      }
+    }
+
+    function updateSplitPreview() {
+      var total = Utils.moneyMaskToFloat(valorEl);
+      var pct = parseFloat(pctEl.value);
+      if (isNaN(pct)) pct = 50;
+      pct = Math.max(0, Math.min(100, pct));
+      var empShare = round2(total * (pct / 100));
+      var compShare = round2(total - empShare);
+      splitPreviewEl.innerHTML = 'Profissional: <b class="text-danger">' + Utils.fmtMoney(empShare) + '</b> (' + pct + '%) · Salão: <b>' + Utils.fmtMoney(compShare) + '</b> (' + round2(100 - pct) + '%)';
+    }
+
     function updateAll() {
       var p = DB.get("products", prodSel.value);
       unitEl.textContent = p ? Consumo.unitLabelOf(p) : "";
+      var unitPrice = p ? consumoRefUnitPrice(p) : 0;
+      updatePriceInfo(p, unitPrice);
       var qty = parseFloat(qtdEl.value) || 0;
-      Utils.setMoneyMaskValue(valorEl, p ? refPrice(p) * qty : 0);
+      Utils.setMoneyMaskValue(valorEl, p ? round2(unitPrice * qty) : 0);
+      updateSplitPreview();
     }
     Utils.wireMoneyMask(valorEl, 0);
     prodSel.addEventListener("change", updateAll);
     qtdEl.addEventListener("input", updateAll);
+    valorEl.addEventListener("input", updateSplitPreview);
+    pctEl.addEventListener("input", updateSplitPreview);
     row.querySelector(".cs-remove").addEventListener("click", function () { row.remove(); });
     updateAll();
   }
@@ -474,7 +529,7 @@
       '</div>' +
       '<div id="cm-items"></div>' +
       '<div class="form-field full"><label>Observações (opcional)</label><input type="text" id="cm-notes" placeholder="Ex: durante o atendimento, coloração, etc."></div>' +
-      '<div class="small text-muted mt-8">O custo de cada item é dividido 50/50: metade vira desconto no comissionamento do profissional, metade vira despesa do salão.</div>';
+      '<div class="small text-muted mt-8">O custo de cada item é dividido entre profissional e salão, conforme o percentual definido em cada item acima (50% por padrão — ajuste quando a negociação for diferente, inclusive 100% para um dos lados).</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cm-save">Lançar Consumo</button>';
     var box = Modal.open({ title: "Lançar Consumo de Insumos", wide: true, bodyHtml: body, footHtml: foot });
     NameCombo.wire(box, { id: "cm-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
@@ -506,8 +561,10 @@
           var qty = parseFloat(row.querySelector(".cs-qtd").value) || 0;
           var itemValor = Utils.moneyMaskToFloat(row.querySelector(".cs-valor"));
           var unitPriceOverride = qty > 0 ? (itemValor / qty) : 0;
+          var pctRaw = parseFloat(row.querySelector(".cs-pct").value);
+          var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
           try {
-            Consumo.register({ productId: productId, employeeId: employeeId, quantity: qty, date: date, notes: notes, unitPriceOverride: unitPriceOverride });
+            Consumo.register({ productId: productId, employeeId: employeeId, quantity: qty, date: date, notes: notes, unitPriceOverride: unitPriceOverride, employeeSharePercent: employeeSharePercent });
           } catch (err) { errorMsg = String(err); }
         });
       });
