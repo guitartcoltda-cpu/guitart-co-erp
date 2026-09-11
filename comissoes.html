@@ -39,12 +39,15 @@
   #tbl-commission th.com-col-check, #tbl-commission td.com-col-check { width: 34px; text-align: center; }
   #tbl-commission .com-row-check, #tbl-commission #com-select-all { width: 16px; height: 16px; cursor: pointer; }
   /* A pedido do usuário (11/09/2026): a tabela de Comissionamento ganhou
-     uma coluna própria para os ajustes (esporádico/desconto/consumo de
-     insumos), que antes ficavam empilhados dentro da célula de "Devido" —
-     e precisa caber inteira na tela, sem rolagem lateral. As regras abaixo
-     enxugam o espaçamento e dão largura mínima só onde o conteúdo precisa,
-     em vez do padding padrão (mais largo) usado nas demais tabelas do
-     sistema. */
+     uma coluna própria para os descontos/acréscimos (esporádico líquido −
+     consumo de insumos), que antes ficavam empilhados dentro da célula de
+     "Devido" — e precisa caber inteira na tela, sem rolagem lateral. As
+     regras abaixo enxugam o espaçamento e dão largura mínima só onde o
+     conteúdo precisa, em vez do padding padrão (mais largo) usado nas
+     demais tabelas do sistema. Correção do mesmo dia: a coluna passou a
+     mostrar só o valor total (não mais um item por linha) e foi
+     reposicionada antes de "Devido" — a classe .com-col-ajustes foi
+     mantida (não é exibida ao usuário, só um seletor de CSS interno). */
   #tbl-commission th, #tbl-commission td { padding: 9px 10px; }
   #tbl-commission thead th { white-space: normal; }
   #tbl-commission .com-col-ajustes { min-width: 110px; }
