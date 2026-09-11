@@ -220,8 +220,11 @@ function cellText(row, colIndex) {
   var tds = row.querySelectorAll("td");
   return tds[colIndex] ? tds[colIndex].textContent.trim() : null;
 }
-// Colunas de #tbl-commission: 0 checkbox, 1 Profissional, 2 Cargo, 3 Atendimentos,
-// 4 Receita de Serviços, 5 Taxa, 6 Devido, 7 Pago, 8 Saldo, 9 Status, 10 ações.
+// Colunas de #tbl-commission (11/09/2026, após a correção de "Devido não
+// parecia descontar"): 0 checkbox, 1 Profissional (com Cargo como
+// subtítulo), 2 Atendimentos, 3 Receita de Serviços, 4 Comissão (com Taxa
+// como subtítulo), 5 Descontos/Acréscimos (valor único, esporádico líquido
+// − consumo), 6 Devido, 7 Pago, 8 Saldo (com Status como badge), 9 ações.
 function moneyIn(text, value) {
   return typeof text === "string" && text.indexOf(Utils.fmtMoney(value)) !== -1;
 }
@@ -252,7 +255,7 @@ function setCustomRange(start, end) {
     if (!row) return;
     check("A: Receita de Serviços = 450 (100+200+150, exclui mês anterior)", moneyIn(cellText(row, 3), 450), cellText(row, 3));
     // Devido = comissão (20% de 450 = 90) + esporádico (50-20+15=45, inclui b1/b2 sem data e b3 com data) - consumo (10) = 125
-    check("A: Devido = 125", moneyIn(cellText(row, 5), 125), cellText(row, 5));
+    check("A: Devido = 125", moneyIn(cellText(row, 6), 125), cellText(row, 6));
     // Pago = 30 (t1, contido no mês inteiro — implícito pelo relatedMonth)
     check("A: Pago = 30", moneyIn(cellText(row, 7), 30), cellText(row, 7));
     check("A: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
@@ -271,7 +274,7 @@ function setCustomRange(start, end) {
     // Comissão = 20+40=60; b1/b2 (sem data, fallback por mês tocado) somam 30;
     // b3 (data=dia 10) está DENTRO do corte 05-10, então também entra = +15;
     // consumo do dia 10 entra = 10. Devido = 60+30+15-10 = 95
-    check("B: Devido = 95 (b1/b2 pelo fallback de mês + b3 pela data exata, dentro do corte; consumo do dia 10 desconta)", moneyIn(cellText(row, 5), 95), cellText(row, 5));
+    check("B: Devido = 95 (b1/b2 pelo fallback de mês + b3 pela data exata, dentro do corte; consumo do dia 10 desconta)", moneyIn(cellText(row, 6), 95), cellText(row, 6));
     // Pago = 0 — o pagamento t1 (implícito = mês inteiro) não está contido no corte 05-10
     check("B: Pago = 0 (pagamento do mês inteiro não vaza para o corte semanal)", moneyIn(cellText(row, 7), 0), cellText(row, 7));
     check("B: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
@@ -290,7 +293,7 @@ function setCustomRange(start, end) {
     // b3 (data=dia 10) fica FORA do corte 11-20 e é corretamente excluído (ao
     // contrário de b1/b2, que continuam entrando por não terem data própria);
     // consumo do dia 10 também não entra = 0. Devido = 30+30+0-0 = 60
-    check("C: Devido = 60 (b3, com data no dia 10, corretamente excluído deste corte; b1/b2 sem data continuam pelo fallback; consumo do dia 10 excluído)", moneyIn(cellText(row, 5), 60), cellText(row, 5));
+    check("C: Devido = 60 (b3, com data no dia 10, corretamente excluído deste corte; b1/b2 sem data continuam pelo fallback; consumo do dia 10 excluído)", moneyIn(cellText(row, 6), 60), cellText(row, 6));
     check("C: Pago = 0", moneyIn(cellText(row, 7), 0), cellText(row, 7));
     check("C: Saldo = 60", moneyIn(cellText(row, 8), 60), cellText(row, 8));
   })();
@@ -358,7 +361,7 @@ function setCustomRange(start, end) {
     check("H1: Receita = 200 (só o atendimento do dia 10)", moneyIn(cellText(row, 3), 200), cellText(row, 3));
     // Comissão = 40; b1/b2 sem data somam 30 (fallback, mês inteiro tocado); b3 com data=d10 também entra = +15; consumo do dia 10 = 10
     // Devido = 40+30+15-10 = 75
-    check("H1: Devido = 75 (b3 entra por bater exatamente com o dia do corte)", moneyIn(cellText(row, 5), 75), cellText(row, 5));
+    check("H1: Devido = 75 (b3 entra por bater exatamente com o dia do corte)", moneyIn(cellText(row, 6), 75), cellText(row, 6));
   })();
 
   // Corte de um único dia sem nenhum atendimento/consumo/b3 (d09) — só os
@@ -373,7 +376,7 @@ function setCustomRange(start, end) {
     check("H2: Receita = 0 (nenhum atendimento no dia 09)", moneyIn(cellText(row, 3), 0), cellText(row, 3));
     // Comissão = 0; b1/b2 sem data ainda somam 30 (fallback); b3 (data=d10) corretamente excluído; consumo = 0
     // Devido = 0+30-0 = 30
-    check("H2: Devido = 30 (só o fallback de b1/b2 sem data; b3, com data no dia 10, corretamente excluído do dia 09)", moneyIn(cellText(row, 5), 30), cellText(row, 5));
+    check("H2: Devido = 30 (só o fallback de b1/b2 sem data; b3, com data no dia 10, corretamente excluído do dia 09)", moneyIn(cellText(row, 6), 30), cellText(row, 6));
   })();
 
   // ---- I. Modal "Ver detalhes" — coluna "Produtos" mostra o desconto de
