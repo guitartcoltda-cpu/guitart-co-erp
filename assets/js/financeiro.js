@@ -416,14 +416,31 @@
     var costCenters = DB.all("costCenters");
     var clients = DB.all("clients").sort(function (a, b) { return a.name.localeCompare(b.name); });
     var employees = DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    // Produtos elegíveis para venda direta (item ligado a um produto do
+    // estoque, sem profissional obrigatório) — só faz sentido em Receita,
+    // por isso o seletor de Produto só aparece nos itens dessa aba (ver
+    // itemRowHtml). Mesmo filtro por type "revenda" já usado em
+    // agenda.js/estoque.js para produtos vendáveis.
+    var products = DB.all("products").filter(function (p) { return p.type === "revenda"; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
 
     var type = "receita";
 
     function catsForType(t) { return categories.filter(function (c) { return c.type === t; }); }
 
+    // Categoria/Centro de Custo padrão quando um item vira venda de produto
+    // — mesmo nome de categoria ("Venda de Produtos") já usado em todo o
+    // resto do sistema (Agenda ao concluir atendimento, Estoque → Movimentar
+    // Estoque com motivo "Venda"). Se a categoria ainda não existir no
+    // banco, o item simplesmente mantém a categoria/CC que já estava
+    // selecionada — sem criar nada automaticamente aqui.
+    function revendaDefaults() {
+      var cat = categories.find(function (c) { return c.name === "Venda de Produtos" && c.type === "receita"; });
+      return cat ? { categoryId: cat.id, costCenterId: cat.costCenterId } : null;
+    }
+
     function blankItem() {
       var cats = catsForType(type);
-      return { desc: "", categoryId: cats[0] ? cats[0].id : "", costCenterId: cats[0] ? cats[0].costCenterId : "", employeeId: "", amount: "" };
+      return { desc: "", categoryId: cats[0] ? cats[0].id : "", costCenterId: cats[0] ? cats[0].costCenterId : "", employeeId: "", amount: "", productId: "", qty: "1" };
     }
 
     var items = [blankItem()];
@@ -457,11 +474,29 @@
 
     function itemRowHtml(item, idx) {
       var filteredCats = catsForType(type);
+      var isReceita = type === "receita";
+      var selectedProduct = item.productId ? DB.get("products", item.productId) : null;
+      // Venda direta de um produto do estoque, sem precisar de profissional
+      // vinculado — o campo Produto só aparece em itens de Receita; ao
+      // escolher um produto, Quantidade aparece junto e o estoque disponível
+      // é mostrado como referência (a baixa de fato só acontece ao salvar,
+      // ver #tm-save).
+      var productFieldHtml = isReceita
+        ? '<div class="form-field"><label>Produto (opcional — venda direta, baixa o estoque)</label><select class="si-produto">' +
+            '<option value="">— Nenhum (serviço/outro) —</option>' +
+            products.map(function (p) { return '<option value="' + p.id + '"' + (item.productId === p.id ? " selected" : "") + '>' + Utils.escapeHtml(p.name) + '</option>'; }).join("") +
+          '</select></div>' +
+          (selectedProduct
+            ? '<div class="form-field"><label>Quantidade</label><input type="number" class="si-qty" step="0.01" min="0.01" value="' + Utils.escapeHtml(String(item.qty || "1")) + '">' +
+                '<div class="small text-muted mt-4">Estoque disponível: ' + Utils.fmtNumber(selectedProduct.currentStock, 2) + ' ' + (selectedProduct.unit || "un") + '</div></div>'
+            : "")
+        : "";
       return '<div class="sale-item-row" data-item-idx="' + idx + '">' +
         (items.length > 1 ? '<button type="button" class="btn btn-icon btn-ghost si-remove" data-remove-item="' + idx + '" title="Remover item"><i class="fa-solid fa-xmark"></i></button>' : "") +
         '<div class="sale-item-index">Item ' + (idx + 1) + '</div>' +
         '<div class="form-grid">' +
           '<div class="form-field full"><label>Descrição</label><input type="text" class="si-desc" placeholder="Ex: Manicure, Corte, Água de coco..." value="' + Utils.escapeHtml(item.desc) + '"></div>' +
+          productFieldHtml +
           '<div class="form-field"><label>Categoria</label><select class="si-cat">' +
             filteredCats.map(function (c) { return '<option value="' + c.id + '"' + (item.categoryId === c.id ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") + '</select></div>' +
           '<div class="form-field"><label>Centro de Custo</label><select class="si-cc">' +
@@ -474,12 +509,20 @@
 
     function syncItemsFromDom() {
       Utils.qsa(".sale-item-row", box.querySelector("#tm-items")).forEach(function (row, i) {
+        var prodEl = row.querySelector(".si-produto");
+        var qtyEl = row.querySelector(".si-qty");
         items[i] = {
           desc: row.querySelector(".si-desc").value,
           categoryId: row.querySelector(".si-cat").value,
           costCenterId: row.querySelector(".si-cc").value,
           employeeId: row.querySelector(".si-emp").value,
-          amount: row.querySelector(".si-amount").value
+          amount: row.querySelector(".si-amount").value,
+          // .si-produto/.si-qty só existem em itens de Receita (e .si-qty só
+          // quando um produto está selecionado) — fora daí, preserva o que
+          // já estava em memória em vez de apagar (ex.: trocar de aba e
+          // voltar não deve perder a quantidade digitada).
+          productId: prodEl ? prodEl.value : (items[i] ? items[i].productId || "" : ""),
+          qty: qtyEl ? qtyEl.value : (items[i] ? items[i].qty || "1" : "1")
         };
       });
     }
@@ -504,6 +547,45 @@
           if (cat) {
             var row = sel.closest(".sale-item-row");
             row.querySelector(".si-cc").value = cat.costCenterId;
+          }
+          updateTotal();
+        });
+      });
+      // Escolher um produto: preenche descrição/valor/categoria/centro de
+      // custo automaticamente (tudo continua editável depois) e faz a linha
+      // ser re-renderizada para mostrar (ou esconder, se voltar para "— Nenhum
+      // —") o campo Quantidade — por isso usa renderItems() completo em vez
+      // de só atualizar valores, diferente do campo Quantidade abaixo (que
+      // não pode perder o foco a cada tecla digitada).
+      Utils.qsa(".si-produto", itemsEl).forEach(function (sel) {
+        sel.addEventListener("change", function () {
+          syncItemsFromDom();
+          var idx = parseInt(sel.closest(".sale-item-row").getAttribute("data-item-idx"), 10);
+          var product = sel.value ? DB.get("products", sel.value) : null;
+          if (product) {
+            var qty = parseFloat(items[idx].qty) || 1;
+            items[idx].qty = String(qty);
+            items[idx].desc = "Produto - " + product.name;
+            items[idx].amount = Utils.moneyMaskValueStr(round2((product.salePrice || product.costPrice || 0) * qty));
+            var defaults = revendaDefaults();
+            if (defaults) { items[idx].categoryId = defaults.categoryId; items[idx].costCenterId = defaults.costCenterId; }
+          } else {
+            items[idx].qty = "1";
+          }
+          renderItems();
+        });
+      });
+      Utils.qsa(".si-qty", itemsEl).forEach(function (inp) {
+        inp.addEventListener("input", function () {
+          var row = inp.closest(".sale-item-row");
+          var idx = parseInt(row.getAttribute("data-item-idx"), 10);
+          items[idx].qty = inp.value;
+          var product = items[idx].productId ? DB.get("products", items[idx].productId) : null;
+          if (product) {
+            var qty = parseFloat(inp.value) || 0;
+            var amountInput = row.querySelector(".si-amount");
+            Utils.setMoneyMaskValue(amountInput, round2((product.salePrice || product.costPrice || 0) * qty));
+            items[idx].amount = amountInput.value;
           }
           updateTotal();
         });
@@ -556,7 +638,9 @@
         items = items.map(function (it) {
           var stillValid = cats.some(function (c) { return c.id === it.categoryId; });
           if (stillValid) return it;
-          return { desc: it.desc, categoryId: cats[0] ? cats[0].id : "", costCenterId: cats[0] ? cats[0].costCenterId : "", employeeId: it.employeeId, amount: it.amount };
+          // Produto/Quantidade só existem em Receita — trocar de aba limpa
+          // esse vínculo (Despesa não baixa estoque neste formulário).
+          return { desc: it.desc, categoryId: cats[0] ? cats[0].id : "", costCenterId: cats[0] ? cats[0].costCenterId : "", employeeId: it.employeeId, amount: it.amount, productId: "", qty: "1" };
         });
         renderItems();
       });
@@ -570,7 +654,14 @@
       var clientId = box.querySelector("#tm-client").value || null;
       if (!date) { Toast.show("Informe a data", "danger"); return; }
 
+      // Soma quantidades por produto ao validar — dois itens diferentes da
+      // MESMA venda podem apontar para o mesmo produto (ex.: "Água de Coco"
+      // lançada duas vezes para pessoas diferentes), e o estoque disponível
+      // precisa ser conferido contra a demanda total da venda, não item a
+      // item isoladamente (senão dois itens de 3un cada passariam na
+      // validação com só 5un em estoque).
       var validItems = [];
+      var productQtyNeeded = {};
       for (var i = 0; i < items.length; i++) {
         var it = items[i];
         var amount = Utils.parseMoneyMaskStr(it.amount);
@@ -578,6 +669,22 @@
         if (!it.desc.trim()) { Toast.show("Informe a descrição do item " + (i + 1), "danger"); return; }
         if (!amount || amount <= 0) { Toast.show("Informe um valor válido para o item \"" + it.desc + "\"", "danger"); return; }
         if (!it.categoryId || !it.costCenterId) { Toast.show("Selecione categoria e centro de custo para o item \"" + it.desc + "\"", "danger"); return; }
+        // Item ligado a um produto (venda direta): confere quantidade e
+        // disponibilidade de estoque antes de deixar salvar — mesma
+        // validação já usada em Estoque → Movimentar Estoque (motivo
+        // "Venda"), para não deixar o estoque negativo.
+        if (it.productId) {
+          var prod = DB.get("products", it.productId);
+          if (!prod) { Toast.show("O produto do item \"" + it.desc + "\" não foi encontrado — selecione novamente", "danger"); return; }
+          var qty = parseFloat(it.qty) || 0;
+          if (qty <= 0) { Toast.show("Informe uma quantidade válida para o produto \"" + prod.name + "\"", "danger"); return; }
+          productQtyNeeded[it.productId] = round2((productQtyNeeded[it.productId] || 0) + qty);
+          if (productQtyNeeded[it.productId] > (Number(prod.currentStock) || 0)) {
+            Toast.show("Estoque insuficiente para \"" + prod.name + "\" — disponível: " + Utils.fmtNumber(prod.currentStock, 2) + " " + (prod.unit || "un") +
+              (productQtyNeeded[it.productId] !== qty ? ", solicitado no total desta venda: " + Utils.fmtNumber(productQtyNeeded[it.productId], 2) : ""), "danger");
+            return;
+          }
+        }
         validItems.push(it);
       }
       if (!validItems.length) { Toast.show("Adicione ao menos um item com descrição e valor", "danger"); return; }
@@ -599,6 +706,14 @@
         };
         if (isMulti) { rec.saleId = saleId; rec.saleItemIndex = idx; }
         if (pay === "Cartão de Crédito") rec.installments = installments;
+        // productId marca esta transação como venda de produto para o
+        // resto do sistema (Relatório de Vendas, Dashboard — ver uso de
+        // t.productId nesses arquivos). saleQty vai junto só para o caso de
+        // parcelamento >3x: a baixa de estoque em si só acontece quando o
+        // lançamento é de fato gravado — na hora (abaixo) ou, se for para
+        // aprovação, só quando aprovado (ver parcelamento_venda em
+        // configuracoes.js), nunca no momento da solicitação.
+        if (it.productId) { rec.productId = it.productId; rec.saleQty = round2(parseFloat(it.qty) || 0); }
         return rec;
       }
 
@@ -621,15 +736,35 @@
         return;
       }
 
-      if (isMulti) {
-        DB.batch(function () {
-          records.forEach(function (rec) { DB.insert("transactions", rec); });
+      // Itens ligados a um produto (venda direta) baixam o estoque e geram
+      // o movimento correspondente, atomicamente junto com a gravação
+      // do(s) lançamento(s) — mesmo padrão (stockMovements reason "venda")
+      // já usado ao concluir um atendimento com produto levado pelo cliente
+      // (ver agenda.js) e em Estoque → Movimentar Estoque.
+      function applyProductStock(it) {
+        if (!it.productId) return;
+        var product = DB.get("products", it.productId);
+        if (!product) return;
+        var qty = round2(parseFloat(it.qty) || 0);
+        if (qty <= 0) return;
+        DB.update("products", product.id, { currentStock: Math.max(0, round2((Number(product.currentStock) || 0) - qty)) });
+        var clientName = clientId ? ((DB.get("clients", clientId) || {}).name || "") : "";
+        DB.insert("stockMovements", {
+          productId: product.id, type: "saida", reason: "venda", quantity: qty, date: date,
+          notes: "Venda direta (Lançamentos Financeiros)" + (clientName ? " — " + clientName : "")
         });
+      }
+
+      DB.batch(function () {
+        records.forEach(function (rec) { DB.insert("transactions", rec); });
+        validItems.forEach(applyProductStock);
+      });
+
+      if (isMulti) {
         DB.log("Lançamento", "Registrou um lançamento com " + records.length + " itens — total " + Utils.fmtMoney(round2(total)));
         Toast.show("Lançamento registrado com " + records.length + " itens", "success");
       } else {
         var rec = records[0];
-        DB.insert("transactions", rec);
         DB.log("Lançamento", "Criou o lançamento \"" + rec.description + "\" (" + Utils.fmtMoney(rec.amount) + ")");
         Toast.show("Lançamento criado", "success");
       }

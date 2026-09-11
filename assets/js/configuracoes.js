@@ -735,12 +735,28 @@
     // Venda parcelada acima de 3x no crédito (ver openNewTxnModal em
     // financeiro.js): os lançamentos só foram montados, não gravados — são
     // inseridos de fato agora que um administrador (ou aprovador) autorizou.
+    // Um registro com productId (item de venda direta de produto, ver
+    // mesmo arquivo) também só baixa o estoque agora, nunca no momento da
+    // solicitação — mesmo espírito de "nada é gravado até aprovar".
     parcelamento_venda: function (payload) {
       var records = payload.records || [];
+      function applyProductStock(r) {
+        if (!r.productId) return;
+        var product = DB.get("products", r.productId);
+        if (!product) return;
+        var qty = Number(r.saleQty) || 0;
+        if (qty <= 0) return;
+        DB.update("products", product.id, { currentStock: Math.max(0, Math.round(((Number(product.currentStock) || 0) - qty) * 100) / 100) });
+        var clientName = r.clientId ? ((DB.get("clients", r.clientId) || {}).name || "") : "";
+        DB.insert("stockMovements", {
+          productId: product.id, type: "saida", reason: "venda", quantity: qty, date: r.date,
+          notes: "Venda direta (Lançamentos Financeiros, aprovada)" + (clientName ? " — " + clientName : "")
+        });
+      }
       if (records.length > 1) {
-        DB.batch(function () { records.forEach(function (r) { DB.insert("transactions", r); }); });
+        DB.batch(function () { records.forEach(function (r) { DB.insert("transactions", r); applyProductStock(r); }); });
       } else if (records.length === 1) {
-        DB.insert("transactions", records[0]);
+        DB.batch(function () { DB.insert("transactions", records[0]); applyProductStock(records[0]); });
       }
     },
     ajuste_ponto: function (payload) {
