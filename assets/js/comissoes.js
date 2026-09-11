@@ -12,7 +12,6 @@
   var COMMISSION_SORT_GETTERS = {
     employee: function (r) { return r.employee.name; },
     cargo: function (r) { return r.employee.role; },
-    taxa: function (r) { return r.employee.commissionRate; },
     saldo: function (r) { return Math.max(0, r.saldo); },
     status: function (r) { return r.saldo <= 0.01 ? 0 : (r.pago > 0 ? 1 : 2); }
   };
@@ -390,38 +389,51 @@
       return;
     }
     rows = Utils.sortBy(rows, commissionSortState, COMMISSION_SORT_GETTERS);
+    // A pedido do usuário (11/09/2026, correção): a coluna "Ajustes" (com os
+    // lançamentos empilhados linha a linha) dava a impressão de que esses
+    // valores eram só informativos, ainda não descontados do "Devido" — e a
+    // ordem das colunas (Devido antes de Ajustes) reforçava essa impressão
+    // errada, mesmo o desconto já estando aplicado em computeRows() (devido
+    // = baseComissao + bonusTotal - consumoTotal). Corrigido em duas
+    // frentes: (1) renomeada para "Descontos/Acréscimos" e reduzida a um
+    // único valor somado (esporádico líquido − consumo de insumos), sem
+    // itemizar linha a linha — quem quiser o detalhe abre "Ver detalhes";
+    // (2) reordenada para ficar ENTRE "Comissão" (base, antes de qualquer
+    // desconto/acréscimo) e "Devido" (final, depois de aplicado), para a
+    // tabela se ler como uma conta da esquerda para a direita: Comissão →
+    // Descontos/Acréscimos → Devido. A comissão como assistente de outro
+    // profissional não entra nessa coluna — ela já é comissão de verdade
+    // (não um ajuste), por isso soma dentro de "Comissão" (baseComissao).
     tbl.innerHTML = '<thead><tr><th class="com-col-check"><input type="checkbox" id="com-select-all"></th>' +
       Utils.thSort("Profissional", "employee", commissionSortState) +
       Utils.thSort("Atend.", "atendimentos", commissionSortState, { className: "text-right" }) +
       Utils.thSort("Receita", "serviceRevenue", commissionSortState, { className: "text-right" }) +
-      Utils.thSort("Taxa", "taxa", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Comissão", "baseComissao", commissionSortState, { className: "text-right" }) +
+      '<th class="text-right">Descontos/Acréscimos</th>' +
       Utils.thSort("Devido", "devido", commissionSortState, { className: "text-right" }) +
-      '<th class="text-right">Ajustes</th>' +
       Utils.thSort("Pago", "pago", commissionSortState, { className: "text-right" }) +
       Utils.thSort("Saldo", "saldo", commissionSortState, { className: "text-right" }) +
       '<th class="com-col-actions"></th></tr></thead><tbody>' +
       rows.map(function (r) {
         var status = r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
-        // Coluna "Ajustes" — discrimina, cada um na sua própria linha
-        // compacta, tudo que soma/desconta do Devido além da comissão base
-        // (esporádico, desconto, consumo de insumos, participação como
-        // assistente), em vez de empilhar frases longas dentro da célula
-        // de Devido (o que ficava ilegível — ver pedido do usuário).
-        var adjustLines = [];
-        if (r.bonusTotal > 0) adjustLines.push('<div class="small text-success" style="font-weight:600;white-space:nowrap;">+' + Utils.fmtMoney(r.bonusTotal) + ' esporádico</div>');
-        else if (r.bonusTotal < 0) adjustLines.push('<div class="small text-danger" style="font-weight:600;white-space:nowrap;">-' + Utils.fmtMoney(Math.abs(r.bonusTotal)) + ' desconto</div>');
-        if (r.consumoTotal > 0) adjustLines.push('<div class="small text-danger" style="font-weight:600;white-space:nowrap;">-' + Utils.fmtMoney(r.consumoTotal) + ' insumos</div>');
-        if (r.assistantCommissionTotal > 0) adjustLines.push('<div class="small text-muted" style="white-space:nowrap;">+' + Utils.fmtMoney(r.assistantCommissionTotal) + ' assist.</div>');
-        var adjustHtml = adjustLines.length ? adjustLines.join("") : '<span class="small text-muted">—</span>';
+        var netAdjust = round2(r.bonusTotal - r.consumoTotal);
+        var adjustHtml;
+        if (Math.abs(netAdjust) < 0.005) {
+          adjustHtml = '<span class="small text-muted">—</span>';
+        } else if (netAdjust > 0) {
+          adjustHtml = '<span class="text-num font-bold text-success">+' + Utils.fmtMoney(netAdjust) + '</span>';
+        } else {
+          adjustHtml = '<span class="text-num font-bold text-danger">-' + Utils.fmtMoney(Math.abs(netAdjust)) + '</span>';
+        }
         return '<tr>' +
           '<td class="com-col-check">' + (r.saldo > 0.01 ? '<input type="checkbox" class="com-row-check" data-id="' + r.employee.id + '"' + (selectedIds[r.employee.id] ? " checked" : "") + '>' : "") + '</td>' +
           '<td><div class="flex items-center gap-8">' + Utils.avatarHtml(r.employee.name, r.employee.photoDataUrl) +
             '<div><div>' + Utils.escapeHtml(r.employee.name) + '</div><div class="small text-muted">' + Utils.escapeHtml(r.employee.role) + '</div></div></div></td>' +
           '<td class="text-right text-num">' + r.atendimentos + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(r.serviceRevenue) + '</td>' +
-          '<td class="text-right text-num">' + r.employee.commissionRate + '%</td>' +
-          '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + '</td>' +
+          '<td class="text-right"><div class="text-num">' + Utils.fmtMoney(r.baseComissao) + '</div><div class="small text-muted">' + r.employee.commissionRate + '%</div></td>' +
           '<td class="text-right com-col-ajustes">' + adjustHtml + '</td>' +
+          '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + '</td>' +
           '<td class="text-right text-num text-success">' + Utils.fmtMoney(r.pago) + '</td>' +
           '<td class="text-right"><div class="text-num font-bold ' + (r.saldo > 0.01 ? "text-danger" : "") + '">' + Utils.fmtMoney(Math.max(0, r.saldo)) + '</div>' + status + '</td>' +
           '<td class="com-col-actions"><div class="flex gap-6 justify-end">' +
