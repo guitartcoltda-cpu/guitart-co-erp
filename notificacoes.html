@@ -67,16 +67,8 @@
         <div class="kpi-grid" id="nt-kpis" style="margin-bottom:16px;"></div>
 
         <div class="filters-bar">
-          <div class="form-field"><label>Tipo</label>
-            <select id="nt-type">
-              <option value="">Todos</option>
-              <option value="confirmacao">Confirmação de Agendamento</option>
-              <option value="lembrete">Lembrete de Véspera</option>
-              <option value="inatividade">Cliente Ausente Há Tempo</option>
-              <option value="avaliacao">Pedido de Avaliação</option>
-              <option value="pagamento_admin">Pagamentos do Dia (Administradores)</option>
-            </select>
-          </div>
+          <div class="form-field"><label>De</label><input type="date" id="nt-date-start"></div>
+          <div class="form-field"><label>Até</label><input type="date" id="nt-date-end"></div>
           <div class="form-field"><label>Situação</label>
             <select id="nt-status">
               <option value="pendente">Pendentes</option>
@@ -85,10 +77,19 @@
               <option value="">Todas</option>
             </select>
           </div>
+          <button class="btn btn-ghost btn-sm" id="btn-clear-nt-filters">Limpar filtros</button>
         </div>
 
         <div class="card">
           <div class="card-header"><div><h3>Notificações</h3><div class="card-header-sub">Confirmações de agendamento, lembretes de véspera e alertas de clientes ausentes</div></div></div>
+          <div class="tabs" id="nt-tabs" style="padding:0 20px;">
+            <button type="button" class="tab-btn active" data-type="">Todos</button>
+            <button type="button" class="tab-btn" data-type="confirmacao">Confirmação de Agendamento</button>
+            <button type="button" class="tab-btn" data-type="lembrete">Lembrete de Véspera</button>
+            <button type="button" class="tab-btn" data-type="inatividade">Cliente Ausente Há Tempo</button>
+            <button type="button" class="tab-btn" data-type="avaliacao">Pedido de Avaliação</button>
+            <button type="button" class="tab-btn" data-type="pagamento_admin">Pagamentos do Dia</button>
+          </div>
           <div class="nt-bulkbar" id="nt-bulkbar" style="display:none;">
             <label class="flex items-center gap-8"><input type="checkbox" id="nt-select-all"> <span id="nt-select-count">0 selecionado(s)</span></label>
             <button class="btn btn-sm btn-primary" id="nt-bulk-open"><i class="fa-solid fa-paper-plane"></i> Abrir WhatsApp dos selecionados</button>
