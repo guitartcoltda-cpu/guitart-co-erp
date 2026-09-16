@@ -37,8 +37,6 @@
       });
     });
 
-    Utils.qs("#btn-sample-csv").addEventListener("click", downloadSampleCSV);
-
     var zone = Utils.qs("#upload-zone");
     var fileInput = Utils.qs("#file-input");
     zone.addEventListener("click", function () { fileInput.click(); });
@@ -151,37 +149,6 @@
       return yy + "-" + mm + "-" + dd;
     }
     return null;
-  }
-
-  // ---------------- Sample CSV generator ----------------
-  function downloadSampleCSV() {
-    var today = Utils.todayISO();
-    var unreconciled = DB.all("transactions").filter(function (t) {
-      return t.status === "pago" && !t.reconciled && t.paymentMethod !== "Dinheiro";
-    });
-    if (!unreconciled.length) { Toast.show("Não há lançamentos pendentes de conciliação para simular", "info"); return; }
-
-    var rows = [["data", "descricao", "valor"]];
-    unreconciled.forEach(function (t) {
-      var bankDate = Utils.addDays(t.date, [0, 1, 2][Math.floor(Math.random() * 3)]);
-      var prefix = t.type === "receita" ? (t.paymentMethod === "Pix" ? "PIX RECEBIDO - " : "REC CARTAO - ") : (t.paymentMethod === "Transferência" ? "TED ENVIADA - " : "PGTO - ");
-      var amount = t.type === "receita" ? t.amount : -t.amount;
-      rows.push([bankDate, (prefix + t.description).slice(0, 90), String(round2(amount)).replace(".", ",")]);
-    });
-    // ruído: linhas sem correspondência no sistema
-    var noise = [
-      ["TARIFA PACOTE DE SERVICOS", -49.9], ["IOF OPERACAO CARTAO", -12.3],
-      ["RENDIMENTO POUPANCA", 8.42], ["TED RECEBIDA - APORTE SOCIO", 1500],
-      ["ESTORNO CARTAO CLIENTE", -35]
-    ];
-    noise.forEach(function (n) {
-      var d = Utils.addDays(today, -Math.floor(Math.random() * 30));
-      rows.push([d, n[0], String(n[1]).replace(".", ",")]);
-    });
-
-    var csv = rows.map(function (r) { return r.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(";"); }).join("\n");
-    Utils.downloadFile("extrato_exemplo_" + today + ".csv", "﻿" + csv, "text/csv;charset=utf-8");
-    Toast.show("Extrato de exemplo gerado — importe-o para testar a conciliação", "success");
   }
 
   // ---------------- Comparação lado a lado ----------------
