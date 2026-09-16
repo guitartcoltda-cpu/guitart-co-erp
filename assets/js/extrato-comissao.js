@@ -204,8 +204,30 @@
     var services = DB.all("services"), clients = DB.all("clients");
     var serviceRevenue = sum(appointments.map(function (a) { return a.price; }));
     var mainCommissionTotal = 0;
-    appointments.forEach(function (a) { mainCommissionTotal += Utils.apptCommissionSplit(a, e).mainCommission; });
+    // Repasse a Assistente: quando o atendimento teve assistente, metade do
+    // valor da comissão dela saiu do bolso deste profissional (a outra
+    // metade é despesa do salão) — já embutido em mainCommission, mas
+    // rastreado à parte aqui para poder mostrar, linha a linha e em total,
+    // de onde vem esse desconto — a pedido do usuário (16/09/2026), para o
+    // próprio profissional conseguir conferir o repasse no extrato.
+    var assistantDeductionTotal = 0;
+    var assistantDeductionItems = [];
+    appointments.forEach(function (a) {
+      var split = Utils.apptCommissionSplit(a, e);
+      mainCommissionTotal += split.mainCommission;
+      if (a.assistantId) {
+        var deduct = round2(split.pool - split.mainCommission);
+        if (deduct > 0.005) {
+          assistantDeductionTotal += deduct;
+          assistantDeductionItems.push({
+            appointmentId: a.id, date: a.date, time: a.time, clientId: a.clientId, serviceId: a.serviceId,
+            assistantId: a.assistantId, deduct: deduct, assistantTotal: split.assistantCommission, salonShare: split.salonShare
+          });
+        }
+      }
+    });
     mainCommissionTotal = round2(mainCommissionTotal);
+    assistantDeductionTotal = round2(assistantDeductionTotal);
     var assistantCommissionTotal = 0;
     appointmentsAsAssistant.forEach(function (a) {
       var mainEmp = employeesAll.find(function (x) { return x.id === a.employeeId; });
@@ -250,6 +272,7 @@
     return {
       employee: e, appointments: appointments, appointmentsAsAssistant: appointmentsAsAssistant, services: services, clients: clients, employeesAll: employeesAll,
       serviceRevenue: serviceRevenue, baseComissao: baseComissao, mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
+      assistantDeductionTotal: assistantDeductionTotal, assistantDeductionItems: assistantDeductionItems,
       bonuses: bonuses, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
       devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService, tipsReceived: tipsReceived
     };
@@ -311,6 +334,12 @@
     ];
     if (data.consumoTotal > 0) {
       kpis.push(kpi("Desconto por Consumo", "- " + Utils.fmtMoney(data.consumoTotal), "fa-flask", "#c23b3b", "#fbe6e6"));
+    }
+    // Repasse a Assistente (16/09/2026): igual ao desconto por consumo,
+    // informativo e só aparece quando há algo a mostrar — o profissional que
+    // nunca usou assistente não vê este KPI.
+    if (data.assistantDeductionTotal > 0) {
+      kpis.push(kpi("Desconto por Repasse a Assistente", "- " + Utils.fmtMoney(data.assistantDeductionTotal), "fa-user-group", "#c23b3b", "#fbe6e6"));
     }
     // Gorjetas (09/09/2026): separadas da comissão, só um KPI informativo à
     // parte — só aparece quando há algo a mostrar, para não poluir a tela
@@ -384,21 +413,26 @@
     if (!data.appointments.length) {
       Utils.emptyTable(tbl, "fa-calendar", "Nenhum atendimento concluído no período");
     } else {
+      var asstDeductByAppt = {};
+      data.assistantDeductionItems.forEach(function (i) { asstDeductByAppt[i.appointmentId] = i.deduct; });
       var ecSortGetters = {
         dataHora: function (a) { return a.date + " " + a.time; },
         cliente: function (a) { var c = data.clients.find(function (x) { return x.id === a.clientId; }); return c ? c.name : ""; },
         servico: function (a) { var s = data.services.find(function (x) { return x.id === a.serviceId; }); return s ? s.name : ""; },
         produtos: function (a) { return consumoByAppt[a.id] || 0; },
+        repasseAssistente: function (a) { return asstDeductByAppt[a.id] || 0; },
         commission: function (a) { return Utils.apptCommissionSplit(a, e).mainCommission; }
       };
       var sortedAppointments = Utils.sortBy(data.appointments, ecSortState, ecSortGetters);
       var linkedConsumoTotal = 0;
+      var linkedAsstDeductTotal = 0;
       tbl.innerHTML = '<thead><tr>' +
         Utils.thSort("Data/Hora", "dataHora", ecSortState) +
         Utils.thSort("Cliente", "cliente", ecSortState) +
         Utils.thSort("Serviço", "servico", ecSortState) +
         Utils.thSort("Valor Cobrado", "price", ecSortState, { className: "text-right" }) +
         Utils.thSort("Produtos", "produtos", ecSortState, { className: "text-right" }) +
+        Utils.thSort("Repasse Assistente", "repasseAssistente", ecSortState, { className: "text-right" }) +
         Utils.thSort("Comissão", "commission", ecSortState, { className: "text-right" }) +
         '</tr></thead><tbody>' +
         sortedAppointments.map(function (a) {
@@ -407,12 +441,20 @@
           var commission = Utils.apptCommissionSplit(a, e).mainCommission;
           var apptConsumo = consumoByAppt[a.id] || 0;
           linkedConsumoTotal += apptConsumo;
+          var apptAsstDeduct = asstDeductByAppt[a.id] || 0;
+          linkedAsstDeductTotal += apptAsstDeduct;
+          var asstLabel = "";
+          if (a.assistantId) {
+            var asstEmp = data.employeesAll.find(function (x) { return x.id === a.assistantId; });
+            asstLabel = ' <span class="small text-muted">(assistida por ' + Utils.escapeHtml(asstEmp ? asstEmp.name : "assistente") + ')</span>';
+          }
           return '<tr>' +
             '<td>' + Utils.fmtDate(a.date) + ' · ' + a.time + '</td>' +
             '<td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
-            '<td>' + Utils.escapeHtml(s ? s.name : "-") + (a.assistantId ? ' <span class="small text-muted">(com assistente)</span>' : '') + '</td>' +
+            '<td>' + Utils.escapeHtml(s ? s.name : "-") + asstLabel + '</td>' +
             '<td class="text-right text-num">' + Utils.fmtMoney(a.price) + '</td>' +
             '<td class="text-right text-num' + (apptConsumo > 0 ? ' text-danger' : ' text-muted') + '">' + (apptConsumo > 0 ? "- " + Utils.fmtMoney(apptConsumo) : "-") + '</td>' +
+            '<td class="text-right text-num' + (apptAsstDeduct > 0 ? ' text-danger' : ' text-muted') + '">' + (apptAsstDeduct > 0 ? "- " + Utils.fmtMoney(apptAsstDeduct) : "-") + '</td>' +
             '<td class="text-right text-num font-bold">' + Utils.fmtMoney(commission) + '</td>' +
             '</tr>';
         }).join("") + '</tbody>' +
@@ -420,6 +462,7 @@
           '<td colspan="3">Total (' + data.appointments.length + ' atendimento' + (data.appointments.length === 1 ? "" : "s") + ')</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(data.serviceRevenue) + '</td>' +
           '<td class="text-right text-num' + (linkedConsumoTotal > 0 ? ' text-danger' : '') + '">' + (linkedConsumoTotal > 0 ? "- " + Utils.fmtMoney(round2(linkedConsumoTotal)) : "-") + '</td>' +
+          '<td class="text-right text-num' + (linkedAsstDeductTotal > 0 ? ' text-danger' : '') + '">' + (linkedAsstDeductTotal > 0 ? "- " + Utils.fmtMoney(round2(linkedAsstDeductTotal)) : "-") + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(data.mainCommissionTotal) + '</td>' +
         '</tr></tfoot>';
       Utils.wireSortHeaders(tbl, ecSortState, render);
@@ -446,6 +489,35 @@
               '<td class="text-right text-num font-bold">' + Utils.fmtMoney(commission) + '</td></tr>';
           }).join("") + '</tbody>' +
           '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="4">Subtotal como assistente</td><td class="text-right text-num">' + Utils.fmtMoney(data.assistantCommissionTotal) + '</td></tr></tfoot>' +
+          '</table></div>';
+      }
+    }
+
+    // desconto por repasse a assistente — atendimentos em que este
+    // profissional foi o principal e usou uma assistente; metade do valor
+    // que ela ganhou saiu do bolso dele (a outra metade é despesa do
+    // salão) — a pedido do usuário (16/09/2026), para justificar de onde
+    // vem esse desconto na hora do pagamento.
+    var asstDeductEl = document.getElementById("ec-assistant-deduct");
+    if (asstDeductEl) {
+      if (!data.assistantDeductionItems.length) {
+        asstDeductEl.innerHTML = '';
+        asstDeductEl.style.display = "none";
+      } else {
+        asstDeductEl.style.display = "";
+        asstDeductEl.innerHTML = '<div class="card-header"><div><h3>Desconto por Repasse a Assistente</h3><div class="card-header-sub">Sua parte no pagamento da assistente nos atendimentos em que você usou ajuda — metade do valor dela (a outra metade é despesa do salão)</div></div></div>' +
+          '<div class="table-wrap"><table class="data-table">' +
+          '<thead><tr><th>Data/Hora</th><th>Serviço</th><th>Assistente</th><th class="text-right">Repasse Total</th><th class="text-right">Sua Parte</th></tr></thead>' +
+          '<tbody>' + data.assistantDeductionItems.map(function (i) {
+            var s = data.services.find(function (x) { return x.id === i.serviceId; });
+            var asstEmp = data.employeesAll.find(function (x) { return x.id === i.assistantId; });
+            return '<tr><td>' + Utils.fmtDate(i.date) + ' · ' + i.time + '</td>' +
+              '<td>' + Utils.escapeHtml(s ? s.name : "-") + '</td>' +
+              '<td>' + Utils.escapeHtml(asstEmp ? asstEmp.name : "-") + '</td>' +
+              '<td class="text-right text-num">' + Utils.fmtMoney(i.assistantTotal) + '</td>' +
+              '<td class="text-right text-num font-bold text-danger">- ' + Utils.fmtMoney(i.deduct) + '</td></tr>';
+          }).join("") + '</tbody>' +
+          '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="4">Subtotal do desconto</td><td class="text-right text-num text-danger">- ' + Utils.fmtMoney(data.assistantDeductionTotal) + '</td></tr></tfoot>' +
           '</table></div>';
       }
     }

@@ -297,13 +297,30 @@
       var asAssistant = apptsByAssistantId[e.id] || [];
       var serviceRevenue = round2(sumBy(asMain, "price"));
       var mainCommissionTotal = 0;
-      asMain.forEach(function (a) { mainCommissionTotal += Utils.apptCommissionSplit(a, e).mainCommission; });
+      // Repasse a Assistente: quando o atendimento tem assistente, metade do
+      // valor da comissão da assistente sai do bolso do profissional
+      // principal (a outra metade é despesa do salão — ver
+      // Utils.apptCommissionSplit e salonShare). Esse desconto já vem
+      // embutido em mainCommission (split.pool − deductedFromMain), então
+      // rastreamos aqui, à parte, só o valor descontado (pool − mainCommission)
+      // para conseguir mostrá-lo de forma explícita nos detalhes e no
+      // Extrato do Profissional — a pedido do usuário (16/09/2026), que
+      // precisa conseguir justificar para o profissional de onde vem o
+      // desconto na hora do pagamento. Não altera "Comissão" nem "Devido":
+      // é só a mesma dedução, já aplicada, tornada visível.
+      var assistantDeductionTotal = 0;
+      asMain.forEach(function (a) {
+        var split = Utils.apptCommissionSplit(a, e);
+        mainCommissionTotal += split.mainCommission;
+        if (a.assistantId) assistantDeductionTotal += round2(split.pool - split.mainCommission);
+      });
       var assistantCommissionTotal = 0;
       asAssistant.forEach(function (a) {
         var mainEmp = employeesById[a.employeeId];
         assistantCommissionTotal += Utils.apptCommissionSplit(a, mainEmp).assistantCommission;
       });
       mainCommissionTotal = round2(mainCommissionTotal);
+      assistantDeductionTotal = round2(assistantDeductionTotal);
       assistantCommissionTotal = round2(assistantCommissionTotal);
       var baseComissao = round2(mainCommissionTotal + assistantCommissionTotal);
       var bonuses = bonusesFor(e.id);
@@ -315,6 +332,7 @@
       return {
         employee: e, serviceRevenue: serviceRevenue, atendimentos: asMain.length,
         mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
+        assistantDeductionTotal: assistantDeductionTotal,
         baseComissao: baseComissao, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
         devido: devido, pago: pago, saldo: round2(devido - pago)
       };
@@ -416,6 +434,13 @@
       '<th class="com-col-actions"></th></tr></thead><tbody>' +
       rows.map(function (r) {
         var status = r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
+        // Aviso discreto sob "Comissão" quando parte dela já saiu para pagar
+        // assistente(s) — o valor completo (o que foi de fato descontado)
+        // só aparece em "Ver detalhes", mas esse aviso já sinaliza que existe
+        // algo a explicar, sem precisar abrir o modal para descobrir.
+        var asstHintHtml = r.assistantDeductionTotal > 0.005
+          ? '<div class="small text-danger">-' + Utils.fmtMoney(r.assistantDeductionTotal) + ' repasse assistente</div>'
+          : '';
         var netAdjust = round2(r.bonusTotal - r.consumoTotal);
         var adjustHtml;
         if (Math.abs(netAdjust) < 0.005) {
@@ -431,7 +456,7 @@
             '<div><div>' + Utils.escapeHtml(r.employee.name) + '</div><div class="small text-muted">' + Utils.escapeHtml(r.employee.role) + '</div></div></div></td>' +
           '<td class="text-right text-num">' + r.atendimentos + '</td>' +
           '<td class="text-right text-num">' + Utils.fmtMoney(r.serviceRevenue) + '</td>' +
-          '<td class="text-right"><div class="text-num">' + Utils.fmtMoney(r.baseComissao) + '</div><div class="small text-muted">' + r.employee.commissionRate + '%</div></td>' +
+          '<td class="text-right"><div class="text-num">' + Utils.fmtMoney(r.baseComissao) + '</div><div class="small text-muted">' + r.employee.commissionRate + '%</div>' + asstHintHtml + '</td>' +
           '<td class="text-right com-col-ajustes">' + adjustHtml + '</td>' +
           '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + '</td>' +
           '<td class="text-right text-num text-success">' + Utils.fmtMoney(r.pago) + '</td>' +
@@ -561,19 +586,35 @@
       consumoByAppt[c.appointmentId] = round2((consumoByAppt[c.appointmentId] || 0) + c.employeeShare);
     });
     var linkedConsumoTotal = 0;
+    var linkedAsstDeductTotal = 0;
     var mainLinesHtml = apptsMain.map(function (a) {
       var s = servicesById[a.serviceId];
       var c = clientsById[a.clientId];
       var split = Utils.apptCommissionSplit(a, e);
-      var label = a.assistantId ? "com assistente — " + Utils.fmtMoney(split.salonShare) + " pagos pelo salão" : null;
       var apptConsumo = consumoByAppt[a.id] || 0;
       linkedConsumoTotal += apptConsumo;
+      // Repasse Assistente, linha a linha: quanto do valor QUE SERIA da
+      // comissão principal saiu para custear a assistente naquele
+      // atendimento específico (a outra metade, salonShare, é despesa do
+      // salão — mostrada por extenso no rótulo do serviço, com o nome da
+      // assistente, para o profissional entender exatamente de onde vem o
+      // desconto — a pedido do usuário, 16/09/2026).
+      var apptAsstDeduct = 0;
+      var label = null;
+      if (a.assistantId) {
+        apptAsstDeduct = round2(split.pool - split.mainCommission);
+        linkedAsstDeductTotal += apptAsstDeduct;
+        var asstEmp = employeesById[a.assistantId];
+        label = "assistida por " + Utils.escapeHtml(asstEmp ? asstEmp.name : "assistente") + " — repasse total " +
+          Utils.fmtMoney(split.assistantCommission) + " (" + Utils.fmtMoney(apptAsstDeduct) + " seu + " + Utils.fmtMoney(split.salonShare) + " do salão)";
+      }
       return '<tr>' +
         '<td>' + Utils.fmtDate(a.date) + ' · ' + a.time + '</td>' +
         '<td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
         '<td>' + Utils.escapeHtml(s ? s.name : "-") + (label ? ' <span class="small text-muted">(' + label + ')</span>' : '') + '</td>' +
         '<td class="text-right text-num">' + Utils.fmtMoney(a.price) + '</td>' +
         '<td class="text-right text-num' + (apptConsumo > 0 ? ' text-danger' : ' text-muted') + '">' + (apptConsumo > 0 ? "- " + Utils.fmtMoney(apptConsumo) : "-") + '</td>' +
+        '<td class="text-right text-num' + (apptAsstDeduct > 0 ? ' text-danger' : ' text-muted') + '">' + (apptAsstDeduct > 0 ? "- " + Utils.fmtMoney(apptAsstDeduct) : "-") + '</td>' +
         '<td class="text-right text-num font-bold">' + Utils.fmtMoney(split.mainCommission) + '</td>' +
         '</tr>';
     }).join("");
@@ -600,11 +641,12 @@
       '</div>' +
       '<h4 style="font-size:14px;margin-bottom:8px;">Atendimentos como Profissional Principal</h4>' +
       '<table class="data-table">' +
-      '<thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Produtos</th><th class="text-right">Comissão</th></tr></thead>' +
-      '<tbody>' + (mainLinesHtml || '<tr><td colspan="6" class="text-center text-muted">Nenhum atendimento concluído neste período</td></tr>') + '</tbody>' +
+      '<thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Produtos</th><th class="text-right">Repasse Assistente</th><th class="text-right">Comissão</th></tr></thead>' +
+      '<tbody>' + (mainLinesHtml || '<tr><td colspan="7" class="text-center text-muted">Nenhum atendimento concluído neste período</td></tr>') + '</tbody>' +
       '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="3">Total (' + apptsMain.length + ' atendimento' + (apptsMain.length === 1 ? "" : "s") + ')</td>' +
       '<td class="text-right text-num">' + Utils.fmtMoney(row.serviceRevenue) + '</td>' +
       '<td class="text-right text-num' + (linkedConsumoTotal > 0 ? ' text-danger' : '') + '">' + (linkedConsumoTotal > 0 ? "- " + Utils.fmtMoney(round2(linkedConsumoTotal)) : "-") + '</td>' +
+      '<td class="text-right text-num' + (linkedAsstDeductTotal > 0 ? ' text-danger' : '') + '">' + (linkedAsstDeductTotal > 0 ? "- " + Utils.fmtMoney(round2(linkedAsstDeductTotal)) : "-") + '</td>' +
       '<td class="text-right text-num">' + Utils.fmtMoney(row.mainCommissionTotal) + '</td></tr></tfoot>' +
       '</table>' +
       asstSectionHtml +
@@ -614,8 +656,9 @@
         '<button type="button" class="btn btn-sm btn-outline" id="dm-add-bonus"><i class="fa-solid fa-plus"></i> Novo Lançamento</button>' +
       '</div>' +
       '<div id="dm-bonus-section"></div>' +
+      resumoCalculoHtml(row) +
       '<div class="flex justify-between mt-16" style="font-weight:800;font-size:15px;border-top:2px solid var(--border-color);padding-top:10px;">' +
-        '<span>Total Devido (comissão + esporádico − consumo de insumos)</span><span id="dm-grand-total">' + Utils.fmtMoney(row.devido) + '</span>' +
+        '<span>Total Devido</span><span id="dm-grand-total">' + Utils.fmtMoney(row.devido) + '</span>' +
       '</div>';
 
     var box = Modal.open({ title: "Detalhes da Comissão — " + e.name, wide: true, bodyHtml: body });
@@ -663,7 +706,17 @@
     function refreshGrandTotal() {
       var rows = computeRows(); // uma única chamada — reaproveitada abaixo
       var newRow = rows.find(function (r) { return r.employee.id === employeeId; });
-      if (newRow) box.querySelector("#dm-grand-total").textContent = Utils.fmtMoney(newRow.devido);
+      if (newRow) {
+        box.querySelector("#dm-grand-total").textContent = Utils.fmtMoney(newRow.devido);
+        // Só a linha de Esporádico do resumo muda com o lançamento/remoção
+        // feito no próprio modal — as demais (comissão bruta, repasse
+        // assistente, consumo) dependem do período/atendimentos, que não
+        // mudam enquanto o modal está aberto.
+        var bonusEl = box.querySelector("#dm-recap-bonus");
+        if (bonusEl) {
+          bonusEl.textContent = (newRow.bonusTotal < 0 ? "- " + Utils.fmtMoney(Math.abs(newRow.bonusTotal)) : Utils.fmtMoney(newRow.bonusTotal));
+        }
+      }
       renderBonusSection();
       render(rows); // keep the page-level table/summary in sync while the modal is open
     }
@@ -672,6 +725,42 @@
     box.querySelector("#dm-add-bonus").addEventListener("click", function () {
       openBonusModal(employeeId, refreshGrandTotal);
     });
+  }
+
+  // Resumo do Cálculo — recapitula, do começo ao fim, como se chega no
+  // "Total Devido" a partir da comissão bruta, para o profissional conseguir
+  // conferir sozinho (ou o administrador justificar na hora) de onde vem
+  // cada desconto/acréscimo, incluindo o repasse a assistente(s), que antes
+  // ficava só embutido dentro de "Comissão" sem nenhuma linha própria — a
+  // pedido do usuário (16/09/2026). Não recalcula nada: só reapresenta, em
+  // formato de extrato, os mesmos valores que já compõem row.devido.
+  function resumoCalculoHtml(row) {
+    var mainGross = round2(row.mainCommissionTotal + row.assistantDeductionTotal);
+    var lines = [];
+    lines.push({ label: "Comissão como Profissional Principal (bruta, antes do repasse a assistente)", value: mainGross });
+    if (row.assistantDeductionTotal > 0.005) {
+      lines.push({ label: "(−) Repasse a Assistente(s)", value: -row.assistantDeductionTotal, danger: true });
+    }
+    if (row.assistantCommissionTotal > 0.005) {
+      lines.push({ label: "(+) Comissão como Assistente de Outro Profissional", value: row.assistantCommissionTotal, success: true });
+    }
+    lines.push({ label: "= Comissão do Período", value: row.baseComissao, strong: true });
+    var rowsHtml = lines.map(function (l) {
+      var cls = l.danger ? " text-danger" : (l.success ? " text-success" : "");
+      var weight = l.strong ? "font-weight:700;" : "";
+      var valText = l.value < 0 ? "- " + Utils.fmtMoney(Math.abs(l.value)) : Utils.fmtMoney(l.value);
+      return '<div class="flex justify-between small mt-8' + cls + '" style="' + weight + '"><span>' + l.label + '</span><span class="text-num">' + valText + '</span></div>';
+    }).join("");
+    var bonusValText = row.bonusTotal < 0 ? "- " + Utils.fmtMoney(Math.abs(row.bonusTotal)) : Utils.fmtMoney(row.bonusTotal);
+    rowsHtml += '<div class="flex justify-between small mt-8"><span>(+/−) Comissionamento Esporádico do Período</span><span class="text-num" id="dm-recap-bonus">' + bonusValText + '</span></div>';
+    if (row.consumoTotal > 0.005) {
+      rowsHtml += '<div class="flex justify-between small mt-8 text-danger"><span>(−) Consumo de Insumos</span><span class="text-num">- ' + Utils.fmtMoney(row.consumoTotal) + '</span></div>';
+    }
+    return '<div class="mt-16" style="border-top:1px solid var(--border-color);padding-top:12px;">' +
+      '<h4 style="font-size:14px;margin-bottom:4px;">Resumo do Cálculo</h4>' +
+      '<div class="small text-muted mb-8">Da comissão bruta até o total devido — use esta lista para justificar o valor final ao profissional.</div>' +
+      rowsHtml +
+      '</div>';
   }
 
   // Mostra o consumo de insumos (ml/g) lançado para o profissional no
