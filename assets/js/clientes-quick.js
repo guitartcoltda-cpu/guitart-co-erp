@@ -88,13 +88,18 @@
     if (cancelBtn) cancelBtn.addEventListener("click", function () { if (typeof onCancel === "function") onCancel(); });
   }
 
-  // ---------------- Popup "Novo Cliente" (só nome) ----------------
+  // ---------------- Popup "Novo Cliente" (nome + telefone/nascimento opcionais) ----------------
   // A pedido do usuário (16/09/2026): criar um cliente novo a partir do
   // modal de Agendamento não deve pedir telefone/e-mail na hora — só
-  // atrasa quem está no meio de um agendamento. Agora é só o nome, num
-  // popup de verdade por cima do modal de agendamento, que fecha sozinho
-  // assim que salva. Telefone/e-mail continuam disponíveis para completar
-  // depois, normalmente, pela ficha do cliente (Clientes → editar).
+  // atrasa quem está no meio de um agendamento. Agora é um popup de verdade
+  // por cima do modal de agendamento, que fecha sozinho assim que salva.
+  // Atualização (16/09/2026, continuação): a pedido do usuário, o popup
+  // ganhou Telefone e Data de Nascimento — ambos OPCIONAIS ("caso ele
+  // queira passar"), sem nenhuma validação obrigatória, diferente do
+  // formulário completo de Clientes (que exige telefone). E-mail continua
+  // de fora do popup por não ter sido pedido — segue disponível, junto com
+  // qualquer campo que faltar, para completar depois pela ficha do cliente
+  // (Clientes → editar).
   //
   // Como o app só suporta UM modal ativo por vez (ver Utils.Modal.open,
   // que sempre fecha o modal anterior antes de abrir um novo — abrir um
@@ -110,6 +115,8 @@
       '<div class="am-nc-popup-card" style="background:var(--bg-card);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);padding:20px;width:100%;max-width:360px;">' +
         '<h3 style="margin:0 0 14px;font-size:16px;">Novo Cliente</h3>' +
         '<div class="form-field full"><label>Nome do Cliente</label><input type="text" id="am-nc-popup-name" placeholder="Nome e sobrenome"></div>' +
+        '<div class="form-field full mt-8"><label>Telefone (com DDD) — opcional</label><input type="tel" id="am-nc-popup-phone" placeholder="(11) 98765-4321"></div>' +
+        '<div class="form-field full mt-8"><label>Data de Nascimento — opcional</label><input type="date" id="am-nc-popup-birthday"></div>' +
         '<div class="flex gap-8 mt-16" style="justify-content:flex-end;">' +
           '<button type="button" class="btn btn-sm btn-ghost" id="am-nc-popup-cancel">Cancelar</button>' +
           '<button type="button" class="btn btn-sm btn-primary" id="am-nc-popup-save">Salvar</button>' +
@@ -128,12 +135,20 @@
     });
 
     var nameInput = overlay.querySelector("#am-nc-popup-name");
+    var phoneInput = overlay.querySelector("#am-nc-popup-phone");
+    var birthdayInput = overlay.querySelector("#am-nc-popup-birthday");
+    Utils.wirePhoneMask(phoneInput);
     overlay.querySelector("#am-nc-popup-cancel").addEventListener("click", function () { destroy(); if (typeof onCancel === "function") onCancel(); });
     function save() {
       var name = nameInput.value.trim();
       if (!name) { Toast.show("Informe o nome do cliente", "danger"); return; }
-      var client = DB.insert("clients", { name: name, phone: "", email: "", birthday: null, firstVisit: Utils.todayISO(), tags: [], notes: "" });
-      DB.log("Cliente", "Cadastrou o cliente " + name + " (cadastro rápido — só nome, via Agenda)");
+      var phone = phoneInput.value.trim();
+      if (phone && !Utils.isValidPhoneBR(phone)) { Toast.show("Telefone inválido — informe com DDD (ex.: (11) 98765-4321), ou deixe em branco", "danger"); return; }
+      var client = DB.insert("clients", {
+        name: name, phone: phone, email: "", birthday: birthdayInput.value || null,
+        firstVisit: Utils.todayISO(), tags: [], notes: ""
+      });
+      DB.log("Cliente", "Cadastrou o cliente " + name + " (cadastro rápido via Agenda)");
       Toast.show("Cliente cadastrado", "success");
       destroy();
       if (typeof onCreated === "function") onCreated(client);
