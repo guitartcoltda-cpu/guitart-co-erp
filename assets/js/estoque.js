@@ -76,8 +76,8 @@
     var movesThisMonth = DB.all("stockMovements").filter(function (m) { return Utils.monthKey(m.date) === Utils.monthKey(Utils.todayISO()); });
 
     document.getElementById("stock-summary").innerHTML = [
-      kpi("Produtos Cadastrados", String(all.length), "fa-boxes-stacked", "#2a78d6", "#e3eefb"),
-      kpi("Valor em Estoque (custo)", Utils.fmtMoney(totalValue), "fa-sack-dollar", "#b8923f", "#f6ecd3"),
+      kpi("Produtos Cadastrados", String(all.length), "fa-boxes-stacked", "#0eb8d9", "#dbf7fc"),
+      kpi("Valor em Estoque (custo)", Utils.fmtMoney(totalValue), "fa-sack-dollar", "#6d5efc", "#ece9ff"),
       kpi("Abaixo do Mínimo", String(lowStock.length), "fa-triangle-exclamation", "#c23b3b", "#fbe6e6"),
       kpi("Movimentações no Mês", String(movesThisMonth.length), "fa-arrow-right-arrow-left", "#1baf7a", "#e2f5ec")
     ].join("");

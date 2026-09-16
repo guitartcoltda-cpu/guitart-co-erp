@@ -116,9 +116,9 @@
     });
 
     document.getElementById("mq-summary").innerHTML = [
-      kpi("Receita via Cartão/Pix", Utils.fmtMoney(cardRevenue), txns.filter(function (t) { return byMethod[t.paymentMethod]; }).length + " venda(s) no período", "fa-credit-card", "#2a78d6", "#e3eefb"),
+      kpi("Receita via Cartão/Pix", Utils.fmtMoney(cardRevenue), txns.filter(function (t) { return byMethod[t.paymentMethod]; }).length + " venda(s) no período", "fa-credit-card", "#0eb8d9", "#dbf7fc"),
       kpi("Taxa Estimada Paga", Utils.fmtMoney(estimatedFee), "Estimativa — ver nota acima", "fa-hand-holding-dollar", "#c23b3b", "#fbe6e6"),
-      kpi("Taxa Média Efetiva", feePct.toFixed(2) + "%", "sobre a receita via cartão/Pix", "fa-percent", "#b8923f", "#f6ecd3"),
+      kpi("Taxa Média Efetiva", feePct.toFixed(2) + "%", "sobre a receita via cartão/Pix", "fa-percent", "#6d5efc", "#ece9ff"),
       kpi("Maior Taxa Cadastrada", maiorTaxa.toFixed(2) + "%", machines.length + " maquininha(s) cadastrada(s)", "fa-arrow-trend-up", "#4a3aa7", "#ece8f8")
     ].join("");
 

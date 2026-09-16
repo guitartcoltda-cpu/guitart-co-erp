@@ -1136,7 +1136,7 @@
     var c = DB.findOne("categories", function (x) { return x.name === "Gorjetas" && x.type === "despesa"; });
     if (!c) {
       var cc = DB.findOne("costCenters", function (x) { return x.key === "operacional"; });
-      c = DB.insert("categories", { name: "Gorjetas", type: "despesa", costCenterId: cc ? cc.id : null, color: "#b8923f" });
+      c = DB.insert("categories", { name: "Gorjetas", type: "despesa", costCenterId: cc ? cc.id : null, color: "#6d5efc" });
     }
     _gorjetaCatId = c.id;
     return _gorjetaCatId;

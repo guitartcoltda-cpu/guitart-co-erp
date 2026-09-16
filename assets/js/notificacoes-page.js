@@ -77,10 +77,10 @@
     var pendentes = all.filter(function (n) { return n.status === "pendente"; });
     document.getElementById("nt-kpis").innerHTML = [
       kpi("Pendentes", String(pendentes.length), "fa-clock", "#b7791f", "#fdf2df"),
-      kpi("Confirmações", String(pendentes.filter(function (n) { return n.type === "confirmacao"; }).length), "fa-calendar-check", "#2a78d6", "#e3eefb"),
+      kpi("Confirmações", String(pendentes.filter(function (n) { return n.type === "confirmacao"; }).length), "fa-calendar-check", "#0eb8d9", "#dbf7fc"),
       kpi("Lembretes de Véspera", String(pendentes.filter(function (n) { return n.type === "lembrete"; }).length), "fa-bell", "#b7791f", "#fdf2df"),
       kpi("Clientes Ausentes", String(pendentes.filter(function (n) { return n.type === "inatividade"; }).length), "fa-user-clock", "#c23b3b", "#fbe6e6"),
-      kpi("Pedidos de Avaliação", String(pendentes.filter(function (n) { return n.type === "avaliacao"; }).length), "fa-star", "#b8923f", "#f6ecd3"),
+      kpi("Pedidos de Avaliação", String(pendentes.filter(function (n) { return n.type === "avaliacao"; }).length), "fa-star", "#6d5efc", "#ece9ff"),
       kpi("Pagamentos do Dia", String(pendentes.filter(function (n) { return n.type === "pagamento_admin"; }).length), "fa-sack-dollar", "#1baf7a", "#e2f5ec"),
       kpi("Já Enviadas", String(all.filter(function (n) { return n.status === "enviada"; }).length), "fa-circle-check", "#1baf7a", "#e2f5ec")
     ].join("");

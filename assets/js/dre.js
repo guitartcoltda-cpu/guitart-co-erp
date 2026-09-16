@@ -104,7 +104,7 @@
       kpi("Receita do Período", Utils.fmtMoney(receitaTotal), "fa-arrow-trend-up", "#1baf7a", "#e2f5ec"),
       kpi("Despesa do Período", Utils.fmtMoney(despesaTotal), "fa-arrow-trend-down", "#c23b3b", "#fbe6e6"),
       kpi("Resultado", Utils.fmtMoney(resultado), "fa-scale-balanced", resultado >= 0 ? "#1baf7a" : "#c23b3b", resultado >= 0 ? "#e2f5ec" : "#fbe6e6"),
-      kpi("Margem", margem.toFixed(1) + "%", "fa-percent", "#b8923f", "#f6ecd3")
+      kpi("Margem", margem.toFixed(1) + "%", "fa-percent", "#6d5efc", "#ece9ff")
     ].join("");
 
     // trend chart

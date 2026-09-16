@@ -8,7 +8,10 @@
 (function (global) {
   "use strict";
 
-  var CAT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"];
+  // Paleta categórica refrescada (16/09/2026) para acompanhar o redesenho
+  // "futurista/tecnológico" — mesmas 8 posições/ordem de sempre (a lógica
+  // de atribuição por índice não mudou), só tons mais vívidos/saturados.
+  var CAT = ["#0eb8d9", "#f97316", "#10b981", "#f59e0b", "#ec4899", "#14b8a6", "#6d5efc", "#ef4444"];
   var SUCCESS = "#006300";
   var DANGER = "#c23b3b";
 

@@ -346,7 +346,7 @@
     if (rankingSub) rankingSub.textContent = "Top profissionais por valor devido — " + periodLabel();
 
     document.getElementById("com-summary").innerHTML = [
-      kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#2a78d6", "#e3eefb"),
+      kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#0eb8d9", "#dbf7fc"),
       kpi("Comissão Paga", Utils.fmtMoney(totalPago), "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Saldo em Aberto", Utils.fmtMoney(totalAberto), "fa-hourglass-half", "#b7791f", "#fdf2df"),
       kpi("Profissionais Comissionados", String(rows.length), "fa-users", "#4a3aa7", "#ece8f8"),

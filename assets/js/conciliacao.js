@@ -384,7 +384,7 @@
     var pct = totalBankLines ? (matchedCount / totalBankLines * 100) : 0;
 
     document.getElementById("recon-summary").innerHTML = [
-      kpi("Linhas Importadas", String(totalBankLines), "fa-file-lines", "#2a78d6", "#e3eefb"),
+      kpi("Linhas Importadas", String(totalBankLines), "fa-file-lines", "#0eb8d9", "#dbf7fc"),
       kpi("Conciliadas", matchedCount + " (" + pct.toFixed(0) + "%)", "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Extrato sem correspondência", String(unmatchedBank.length), "fa-triangle-exclamation", "#b7791f", "#fdf2df"),
       kpi("Lançamentos sem conciliar", String(unmatchedTxn.length), "fa-file-invoice", "#c23b3b", "#fbe6e6")

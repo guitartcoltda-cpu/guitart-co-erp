@@ -115,8 +115,8 @@
     var aniversariantes = all.filter(function (e) { return e.birthday && parseInt(e.birthday.split("-")[1], 10) === curMonthNum; }).length;
 
     document.getElementById("emp-summary").innerHTML = [
-      kpi("Funcionários Ativos", String(ativos.length), "fa-users", "#2a78d6", "#e3eefb"),
-      kpi("Folha Fixa Mensal", Utils.fmtMoney(folhaFixa), "fa-money-check-dollar", "#b8923f", "#f6ecd3"),
+      kpi("Funcionários Ativos", String(ativos.length), "fa-users", "#0eb8d9", "#dbf7fc"),
+      kpi("Folha Fixa Mensal", Utils.fmtMoney(folhaFixa), "fa-money-check-dollar", "#6d5efc", "#ece9ff"),
       kpi("Comissão Média", comissaoMedia.toFixed(1) + "%", "fa-percent", "#1baf7a", "#e2f5ec"),
       kpi("Total Cadastrado", String(all.length), "fa-id-badge", "#4a3aa7", "#ece8f8"),
       kpi("Aniversariantes do Mês", String(aniversariantes), "fa-cake-candles", "#e87ba4", "#fbe9f0", "kpi-bday")

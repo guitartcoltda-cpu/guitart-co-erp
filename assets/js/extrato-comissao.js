@@ -304,7 +304,7 @@
     var e = data.employee;
 
     var kpis = [
-      kpi("Comissão do Período", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#2a78d6", "#e3eefb"),
+      kpi("Comissão do Período", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#0eb8d9", "#dbf7fc"),
       kpi("Já Recebido", Utils.fmtMoney(data.pago), "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Saldo em Aberto", Utils.fmtMoney(Math.max(0, data.saldo)), "fa-hourglass-half", "#b7791f", "#fdf2df"),
       kpi("Atendimentos no Período", String(data.appointments.length), "fa-scissors", "#4a3aa7", "#ece8f8")
@@ -316,7 +316,7 @@
     // parte — só aparece quando há algo a mostrar, para não poluir a tela
     // de quem nunca recebeu gorjeta.
     if (data.tipsReceived > 0) {
-      kpis.push(kpi("Gorjetas Recebidas", Utils.fmtMoney(data.tipsReceived), "fa-hand-holding-dollar", "#b8923f", "#f6ecd3"));
+      kpis.push(kpi("Gorjetas Recebidas", Utils.fmtMoney(data.tipsReceived), "fa-hand-holding-dollar", "#6d5efc", "#ece9ff"));
     }
     document.getElementById("ec-summary").innerHTML = kpis.join("");
 

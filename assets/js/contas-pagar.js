@@ -108,10 +108,10 @@
     var proximos30 = all.filter(function (t) { return t._bucket === "30d"; });
 
     document.getElementById("cp-summary").innerHTML = [
-      kpi("Total em Aberto", Utils.fmtMoney(totalAberto), all.length + " conta(s)", "fa-file-invoice-dollar", "#2a78d6", "#e3eefb"),
+      kpi("Total em Aberto", Utils.fmtMoney(totalAberto), all.length + " conta(s)", "fa-file-invoice-dollar", "#0eb8d9", "#dbf7fc"),
       kpi("Vencidas", Utils.fmtMoney(sum(vencidas)), vencidas.length + " conta(s)", "fa-triangle-exclamation", "#c23b3b", "#fbe6e6"),
       kpi("Vence Hoje", Utils.fmtMoney(sum(venceHoje)), venceHoje.length + " conta(s)", "fa-calendar-day", "#b7791f", "#fdf2df"),
-      kpi("Próx. 7 dias", Utils.fmtMoney(sum(proximos7)), proximos7.length + " conta(s)", "fa-calendar-week", "#b8923f", "#f6ecd3"),
+      kpi("Próx. 7 dias", Utils.fmtMoney(sum(proximos7)), proximos7.length + " conta(s)", "fa-calendar-week", "#6d5efc", "#ece9ff"),
       kpi("Próx. 8–30 dias", Utils.fmtMoney(sum(proximos30)), proximos30.length + " conta(s)", "fa-calendar", "#1baf7a", "#e2f5ec")
     ].join("");
 

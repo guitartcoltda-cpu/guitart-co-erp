@@ -97,8 +97,8 @@
     document.getElementById("fin-summary").innerHTML = [
       kpi("Receitas no período", Utils.fmtMoney(receitas), "fa-arrow-up", "#1baf7a", "#e2f5ec"),
       kpi("Despesas no período", Utils.fmtMoney(despesas), "fa-arrow-down", "#c23b3b", "#fbe6e6"),
-      kpi("Saldo no período", Utils.fmtMoney(receitas - despesas), "fa-scale-balanced", "#2a78d6", "#e3eefb"),
-      kpi("Lançamentos", String(all.length), "fa-list", "#b8923f", "#f6ecd3")
+      kpi("Saldo no período", Utils.fmtMoney(receitas - despesas), "fa-scale-balanced", "#0eb8d9", "#dbf7fc"),
+      kpi("Lançamentos", String(all.length), "fa-list", "#6d5efc", "#ece9ff")
     ].join("");
 
     var txnGetters = {

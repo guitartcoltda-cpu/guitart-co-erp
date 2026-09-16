@@ -82,11 +82,11 @@
     var requestsPending = pendingAdjustRequests().length;
 
     document.getElementById("pg-summary").innerHTML = [
-      kpi("Registros Hoje", String(todays.length), "fa-fingerprint", "#2a78d6", "#e3eefb"),
+      kpi("Registros Hoje", String(todays.length), "fa-fingerprint", "#0eb8d9", "#dbf7fc"),
       kpi("Bateram Entrada Hoje", eligible.length ? (eligible.length - missing.length) + " de " + eligible.length : "0", "fa-user-check", "#1baf7a", "#e2f5ec"),
       kpi("Sinalizados Pendentes", String(flaggedPending), "fa-triangle-exclamation", "#c0392b", "#fbe3e0"),
       kpi("Solicitações de Ajuste", String(requestsPending), "fa-clock-rotate-left", "#7a4fc9", "#ece4f8"),
-      kpi("Funcionários no Ponto", String(eligible.length), "fa-users", "#b8923f", "#f6ecd3")
+      kpi("Funcionários no Ponto", String(eligible.length), "fa-users", "#6d5efc", "#ece9ff")
     ].join("");
 
     var missingCard = document.getElementById("pg-missing-card");

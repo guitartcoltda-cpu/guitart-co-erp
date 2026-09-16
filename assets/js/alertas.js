@@ -557,7 +557,7 @@
       { label: "Clientes Faltosos", value: String(r.noShow.rows.length), sub: r.noShow.distinctClientCount + " cliente(s) distintos (" + r.noShow.windowDays + "d)", icon: "fa-user-slash", color: "#c23b3b", bg: "#fbe6e6" },
       { label: "Clientes Inativos", value: String(r.inactive.rows.length), sub: r.inactive.threshold + "+ dias sem retorno", icon: "fa-user-clock", color: "#b7791f", bg: "#fdf2df" },
       { label: "Profissionais Abaixo da Média", value: String(r.lowProd.rows.length), sub: "produção do mês atual", icon: "fa-arrow-trend-down", color: "#c23b3b", bg: "#fbe6e6" },
-      { label: "Horário Mais Ocioso", value: idleValue, sub: idleSub, icon: "fa-clock", color: "#2a78d6", bg: "#e3eefb" },
+      { label: "Horário Mais Ocioso", value: idleValue, sub: idleSub, icon: "fa-clock", color: "#0eb8d9", bg: "#dbf7fc" },
       { label: "Recorrências Previstas", value: String(r.recurrence.rows.length), sub: "retorno em breve/vencido", icon: "fa-rotate", color: "#6f4fa0", bg: "#ece3f7" },
       { label: "Retornos Sugeridos", value: String(r.followup.rows.length), sub: "serviços de ciclo longo", icon: "fa-comment-dots", color: "#6f4fa0", bg: "#ece3f7" },
       { label: "Receita vs Mês Anterior", value: salesValue, sub: salesSub, icon: "fa-magnifying-glass-chart", color: salesColor, bg: salesBg }

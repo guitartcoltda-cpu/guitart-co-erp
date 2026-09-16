@@ -57,8 +57,8 @@
     var kpis = [
       { key: "receita", label: "Receita do Período", value: Utils.fmtMoney(revenueThis), delta: dRevenue, icon: "fa-arrow-trend-up", color: "#1baf7a", bg: "#e2f5ec" },
       { key: "despesa", label: "Despesas do Período", value: Utils.fmtMoney(expenseThis), delta: dExpense, icon: "fa-arrow-trend-down", color: "#c23b3b", bg: "#fbe6e6" },
-      { key: "saldo", label: "Saldo do Período", value: Utils.fmtMoney(saldoThis), delta: dSaldo, icon: "fa-scale-balanced", color: "#2a78d6", bg: "#e3eefb" },
-      { key: "ticket", label: "Ticket Médio", value: Utils.fmtMoney(ticketMedio), sub: concludedInRange.length + " atendimento(s)", icon: "fa-receipt", color: "#b8923f", bg: "#f6ecd3" },
+      { key: "saldo", label: "Saldo do Período", value: Utils.fmtMoney(saldoThis), delta: dSaldo, icon: "fa-scale-balanced", color: "#0eb8d9", bg: "#dbf7fc" },
+      { key: "ticket", label: "Ticket Médio", value: Utils.fmtMoney(ticketMedio), sub: concludedInRange.length + " atendimento(s)", icon: "fa-receipt", color: "#6d5efc", bg: "#ece9ff" },
       { key: "pendentes", label: "Despesas Pendentes", value: Utils.fmtMoney(pendenteAmount), sub: pendentes.length + " lançamento(s)", icon: "fa-hourglass-half", color: "#b7791f", bg: "#fdf2df" },
       { key: "estoque", label: "Estoque Baixo", value: String(lowStock.length), sub: "produto(s) no mínimo ou abaixo", icon: "fa-triangle-exclamation", color: "#c23b3b", bg: "#fbe6e6" }
     ];
@@ -96,9 +96,9 @@
     var agCanceledMonth = appointments.filter(function (a) { return Utils.monthKey(a.date) === agMonthKey && a.status === "cancelado"; }).length;
     var agUpcoming7 = appointments.filter(function (a) { return a.status === "agendado" && a.date >= agToday && a.date <= Utils.addDays(agToday, 7); }).length;
     var agendaKpis = [
-      { label: "Agendamentos Hoje", value: String(agTodayCount), icon: "fa-calendar-day", color: "#2a78d6", bg: "#e3eefb" },
+      { label: "Agendamentos Hoje", value: String(agTodayCount), icon: "fa-calendar-day", color: "#0eb8d9", bg: "#dbf7fc" },
       { label: "Concluídos Hoje", value: String(agConcludedToday), icon: "fa-circle-check", color: "#1baf7a", bg: "#e2f5ec" },
-      { label: "Próximos 7 dias", value: String(agUpcoming7), icon: "fa-calendar-week", color: "#b8923f", bg: "#f6ecd3" },
+      { label: "Próximos 7 dias", value: String(agUpcoming7), icon: "fa-calendar-week", color: "#6d5efc", bg: "#ece9ff" },
       { label: "Cancelados no Mês", value: String(agCanceledMonth), icon: "fa-calendar-xmark", color: "#c23b3b", bg: "#fbe6e6" }
     ];
     var agGrid = document.getElementById("agenda-kpi-grid");

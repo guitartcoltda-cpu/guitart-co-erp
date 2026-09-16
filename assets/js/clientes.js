@@ -68,9 +68,9 @@
     var aniversariantes = all.filter(function (c) { return c.birthday && parseInt(c.birthday.split("-")[1], 10) === curMonthNum; }).length;
 
     document.getElementById("cli-summary").innerHTML = [
-      kpi("Total de Clientes", String(all.length), "fa-users", "#2a78d6", "#e3eefb"),
+      kpi("Total de Clientes", String(all.length), "fa-users", "#0eb8d9", "#dbf7fc"),
       kpi("Novos no Mês", String(novosNoMes), "fa-user-plus", "#1baf7a", "#e2f5ec"),
-      kpi("Gasto Médio (histórico)", Utils.fmtMoney(ticketMedio), "fa-sack-dollar", "#b8923f", "#f6ecd3"),
+      kpi("Gasto Médio (histórico)", Utils.fmtMoney(ticketMedio), "fa-sack-dollar", "#6d5efc", "#ece9ff"),
       kpi("Aniversariantes do Mês", String(aniversariantes), "fa-cake-candles", "#e87ba4", "#fbe9f0", "kpi-bday")
     ].join("");
     var bdayCard = document.getElementById("kpi-bday");

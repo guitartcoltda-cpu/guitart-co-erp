@@ -78,7 +78,7 @@
     Utils.qs("#cham-summary").innerHTML = [
       kpi("Total de Chamados", String(all.length), "fa-headset", "#4a3aa7", "#ece8f8"),
       kpi("Aguardando Análise", String(abertos.length), "fa-inbox", "#b7791f", "#fdf2df"),
-      kpi("Em Andamento", String(andamento.length), "fa-screwdriver-wrench", "#2a78d6", "#e3eefb"),
+      kpi("Em Andamento", String(andamento.length), "fa-screwdriver-wrench", "#0eb8d9", "#dbf7fc"),
       kpi("Concluídos", String(concluidos.length), "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Recusados", String(recusados.length), "fa-circle-xmark", "#8a8a8a", "#efefef")
     ].join("");

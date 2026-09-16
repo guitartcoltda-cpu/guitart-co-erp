@@ -367,7 +367,7 @@
     var pct = allSlip.length ? (matchedCount / allSlip.length * 100) : 0;
 
     document.getElementById("mqr-summary").innerHTML = [
-      kpi("Linhas do Slip Importadas", String(allSlip.length), "fa-receipt", "#2a78d6", "#e3eefb"),
+      kpi("Linhas do Slip Importadas", String(allSlip.length), "fa-receipt", "#0eb8d9", "#dbf7fc"),
       kpi("Linhas do Extrato Importadas", String(allBank.length), "fa-building-columns", "#4a3aa7", "#ece8f8"),
       kpi("Conciliadas", matchedCount + " (" + pct.toFixed(0) + "%)", "fa-circle-check", "#1baf7a", "#e2f5ec"),
       kpi("Pendentes de Conciliação", String(unmatchedSlip.length + unmatchedBank.length), "fa-triangle-exclamation", "#b7791f", "#fdf2df")

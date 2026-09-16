@@ -84,9 +84,9 @@
     var ticketMedio = sales.length ? total / sales.length : 0;
 
     document.getElementById("rv-summary").innerHTML = [
-      kpi("Total de Vendas", Utils.fmtMoney(total), "fa-cash-register", "#2a78d6", "#e3eefb"),
+      kpi("Total de Vendas", Utils.fmtMoney(total), "fa-cash-register", "#0eb8d9", "#dbf7fc"),
       kpi("Nº de Vendas", String(sales.length), "fa-receipt", "#4a3aa7", "#ece8f8"),
-      kpi("Ticket Médio", Utils.fmtMoney(ticketMedio), "fa-tags", "#b8923f", "#f6ecd3"),
+      kpi("Ticket Médio", Utils.fmtMoney(ticketMedio), "fa-tags", "#6d5efc", "#ece9ff"),
       kpi("Serviços x Produtos", Utils.fmtMoney(servicoTotal) + " / " + Utils.fmtMoney(produtoTotal), "fa-scale-balanced", "#1baf7a", "#e2f5ec")
     ].join("");
 

@@ -1001,7 +1001,7 @@
       '<div class="form-field full"><label>Nome</label><input type="text" id="cat-name" value="' + (c ? Utils.escapeHtml(c.name) : "") + '"></div>' +
       '<div class="form-field"><label>Tipo</label><select id="cat-type"><option value="receita"' + (c && c.type === "receita" ? " selected" : "") + '>Receita</option><option value="despesa"' + (c && c.type === "despesa" ? " selected" : "") + '>Despesa</option></select></div>' +
       '<div class="form-field"><label>Centro de Custo Padrão</label><select id="cat-cc">' + costCenters.map(function (cc) { return '<option value="' + cc.id + '"' + (c && c.costCenterId === cc.id ? " selected" : "") + '>' + Utils.escapeHtml(cc.name) + '</option>'; }).join("") + '</select></div>' +
-      '<div class="form-field"><label>Cor</label><input type="color" id="cat-color" value="' + (c ? c.color : "#52525a") + '" style="height:38px;"></div>' +
+      '<div class="form-field"><label>Cor</label><input type="color" id="cat-color" value="' + (c ? c.color : "#1f3a63") + '" style="height:38px;"></div>' +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cat-save">Salvar</button>';
     var box = Modal.open({ title: c ? "Editar Categoria" : "Nova Categoria", bodyHtml: body, footHtml: foot });
