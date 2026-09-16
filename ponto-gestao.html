@@ -26,7 +26,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <link rel="icon" href="assets/img/logo-guitart.png">
 <link rel="stylesheet" href="assets/css/style.css">
-<script>window.PAGE_META = { title: "Gestão de Ponto", subtitle: "Pontos batidos pela equipe, com selfie de conferência" };</script>
+<script>window.PAGE_META = { title: "Gestão de Ponto", subtitle: "Como está a jornada da equipe hoje" };</script>
 </head>
 <body data-page="ponto-gestao">
   <div id="page-loading-overlay" class="page-loading-overlay">
@@ -48,59 +48,132 @@
         <div class="toolbar">
           <div class="toolbar-title">
             <h2>Gestão de Ponto</h2>
-            <p>Confira os pontos batidos pela equipe e as selfies de cada registro</p>
+            <p>Como está a jornada da equipe hoje</p>
           </div>
           <div class="toolbar-actions">
-            <button class="btn btn-outline" id="btn-folha-ponto"><i class="fa-solid fa-file-pdf"></i> Gerar Folha de Ponto</button>
             <button class="btn btn-primary" id="btn-new-manual-entry"><i class="fa-solid fa-pen"></i> Lançar Ponto Manual</button>
           </div>
         </div>
 
-        <div class="kpi-grid" id="pg-summary" style="margin-bottom:16px;"></div>
-
-        <div id="pg-requests-card" class="card mb-16" style="display:none;">
-          <div class="card-header"><h3>Solicitações de Ajuste de Ponto</h3><div class="card-header-sub">Pedidas pelo próprio funcionário na tela de Ponto</div></div>
-          <div class="card-body"><div id="pg-requests-list"></div></div>
+        <div class="tabs" id="pg-tabs">
+          <button class="tab-btn active" data-panel="pg-p-geral">Visão Geral</button>
+          <button class="tab-btn" data-panel="pg-p-controle">Controle de Ponto</button>
+          <button class="tab-btn" data-panel="pg-p-colaboradores">Colaboradores</button>
+          <button class="tab-btn" data-panel="pg-p-solicitacoes" id="pg-tab-btn-solicitacoes">Solicitações</button>
+          <button class="tab-btn" data-panel="pg-p-ocorrencias">Ocorrências</button>
+          <button class="tab-btn" data-panel="pg-p-banco">Banco de Horas</button>
+          <button class="tab-btn" data-panel="pg-p-relatorios">Relatórios</button>
         </div>
 
-        <div id="pg-occorrencias-card" class="card mb-16" style="display:none;">
-          <div class="card-header"><h3>Ocorrências Recentes</h3><div class="card-header-sub">Faltas justificadas, atestados, folgas/abonos já aprovados</div></div>
-          <div class="card-body"><div id="pg-occorrencias-list"></div></div>
+        <!-- ===== Visão Geral ===== -->
+        <div class="tab-panel active" id="pg-p-geral">
+          <div id="pg-status-bar"></div>
+          <div class="card mb-16">
+            <div class="card-header"><h3>O que precisa da sua atenção</h3><div class="card-header-sub" id="pg-alerts-sub"></div></div>
+            <div class="card-body" id="pg-alerts-list"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div><h3>Impacto do período</h3><div class="card-header-sub" id="pg-impact-sub"></div></div>
+              <div class="pg-quick-filters" id="pg-impact-range"></div>
+            </div>
+            <div class="card-body" id="pg-impact-body"></div>
+          </div>
         </div>
 
-        <div id="pg-missing-card" class="card mb-16" style="display:none;">
-          <div class="card-header"><h3>Ainda não bateram entrada hoje</h3></div>
-          <div class="card-body"><div id="pg-missing-list"></div></div>
+        <!-- ===== Controle de Ponto ===== -->
+        <div class="tab-panel" id="pg-p-controle">
+          <div class="filters-bar">
+            <div class="form-field"><label>Funcionário</label><select id="pg-employee"><option value="">Todos</option></select></div>
+            <div class="form-field"><label>De</label><input type="date" id="pg-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="pg-end"></div>
+            <div class="form-field"><label>Tipo</label><select id="pg-type">
+              <option value="">Todos</option>
+              <optgroup label="Batida de Ponto">
+                <option value="entrada">Entrada</option>
+                <option value="saida_almoco">Saída para Almoço</option>
+                <option value="volta_almoco">Volta do Almoço</option>
+                <option value="saida">Saída</option>
+              </optgroup>
+              <optgroup label="Ocorrência">
+                <option value="falta_justificada">Falta Justificada</option>
+                <option value="atestado">Atestado Médico</option>
+                <option value="folga_abono">Folga / Abono</option>
+                <option value="outro">Outra Ocorrência</option>
+              </optgroup>
+            </select></div>
+            <button class="btn btn-secondary btn-sm" id="pg-clear-filters">Limpar Filtros</button>
+          </div>
+
+          <div class="pg-quick-filters" id="pg-quick-filters"></div>
+
+          <div id="pg-missing-card" class="card mb-16" style="display:none;">
+            <div class="card-header"><h3>Ainda não bateram entrada hoje</h3></div>
+            <div class="card-body"><div id="pg-missing-list"></div></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header"><div><h3>Registros</h3><div class="card-header-sub" id="pg-count-sub"></div></div></div>
+            <div class="table-wrap"><table class="data-table" id="tbl-ponto"></table></div>
+          </div>
         </div>
 
-        <div class="filters-bar">
-          <div class="form-field"><label>Funcionário</label><select id="pg-employee"><option value="">Todos</option></select></div>
-          <div class="form-field"><label>De</label><input type="date" id="pg-start"></div>
-          <div class="form-field"><label>Até</label><input type="date" id="pg-end"></div>
-          <div class="form-field"><label>Tipo</label><select id="pg-type">
-            <option value="">Todos</option>
-            <optgroup label="Batida de Ponto">
-              <option value="entrada">Entrada</option>
-              <option value="saida_almoco">Saída para Almoço</option>
-              <option value="volta_almoco">Volta do Almoço</option>
-              <option value="saida">Saída</option>
-            </optgroup>
-            <optgroup label="Ocorrência">
-              <option value="falta_justificada">Falta Justificada</option>
-              <option value="atestado">Atestado Médico</option>
-              <option value="folga_abono">Folga / Abono</option>
-              <option value="outro">Outra Ocorrência</option>
-            </optgroup>
-          </select></div>
-          <div class="form-field checkbox-wrap" style="align-self:flex-end;"><input type="checkbox" id="pg-only-flagged"><label for="pg-only-flagged" style="font-weight:600;">Só sinalizados</label></div>
-          <button class="btn btn-secondary btn-sm" id="pg-clear-filters">Limpar Filtros</button>
+        <!-- ===== Colaboradores ===== -->
+        <div class="tab-panel" id="pg-p-colaboradores">
+          <div class="filters-bar">
+            <div class="form-field"><label>Buscar</label><input type="text" id="pg-col-search" placeholder="Nome do funcionário..."></div>
+            <div class="form-field"><label>Cargo</label><select id="pg-col-role"><option value="">Todos</option></select></div>
+            <div class="form-field"><label>Status</label><select id="pg-col-status"><option value="">Todos</option><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><h3>Colaboradores</h3><div class="card-header-sub" id="pg-col-sub"></div></div></div>
+            <div class="table-wrap"><table class="data-table" id="tbl-colaboradores"></table></div>
+          </div>
         </div>
 
-        <div id="pg-espelho-card" class="card mb-16" style="display:none;"></div>
+        <!-- ===== Solicitações ===== -->
+        <div class="tab-panel" id="pg-p-solicitacoes">
+          <div class="card mb-16">
+            <div class="card-header"><h3>Pendentes de decisão</h3><div class="card-header-sub">Ajustes de ponto, faltas justificadas, atestados e abonos pedidos pela equipe</div></div>
+            <div class="card-body" id="pg-requests-list"></div>
+          </div>
+          <div class="card" id="pg-requests-history-card" style="display:none;">
+            <div class="card-header"><h3>Últimas decisões</h3></div>
+            <div class="card-body" id="pg-requests-history-list"></div>
+          </div>
+        </div>
 
-        <div class="card">
-          <div class="card-header"><div><h3>Registros</h3><div class="card-header-sub" id="pg-count-sub"></div></div></div>
-          <div class="table-wrap"><table class="data-table" id="tbl-ponto"></table></div>
+        <!-- ===== Ocorrências ===== -->
+        <div class="tab-panel" id="pg-p-ocorrencias">
+          <div class="filters-bar">
+            <div class="form-field"><label>De</label><input type="date" id="pg-occ-start"></div>
+            <div class="form-field"><label>Até</label><input type="date" id="pg-occ-end"></div>
+          </div>
+          <div class="pg-quick-filters" id="pg-occ-quick-filters"></div>
+          <div class="card">
+            <div class="card-header"><div><h3>Exceções do período</h3><div class="card-header-sub" id="pg-occ-sub">Ordenadas pelo que precisa de atenção primeiro</div></div></div>
+            <div class="card-body" id="pg-occ-list"></div>
+          </div>
+        </div>
+
+        <!-- ===== Banco de Horas ===== -->
+        <div class="tab-panel" id="pg-p-banco">
+          <div id="pg-banco-range" class="mb-16"></div>
+          <div class="kpi-grid mb-16" id="pg-banco-kpis"></div>
+          <div class="card">
+            <div class="card-header"><div><h3>Saldo por Colaborador</h3><div class="card-header-sub" id="pg-banco-sub"></div></div></div>
+            <div class="table-wrap"><table class="data-table" id="tbl-banco"></table></div>
+          </div>
+        </div>
+
+        <!-- ===== Relatórios ===== -->
+        <div class="tab-panel" id="pg-p-relatorios">
+          <div class="card">
+            <div class="card-header"><h3>Folha de Ponto</h3><div class="card-header-sub">PDF por funcionário, pronto para impressão e assinatura, com todas as batidas e ocorrências do mês</div></div>
+            <div class="card-body">
+              <button class="btn btn-primary" id="btn-folha-ponto"><i class="fa-solid fa-file-pdf"></i> Gerar Folha de Ponto</button>
+            </div>
+          </div>
         </div>
 
       </main>
@@ -114,6 +187,7 @@
   <script src="assets/js/db.js"></script>
   <script src="assets/js/auth.js"></script>
   <script src="assets/js/utils.js"></script>
+  <script src="assets/js/period-filter.js"></script>
   <script src="assets/js/ponto-calc.js"></script>
   <script src="assets/js/approvals.js"></script>
   <script src="assets/js/ponto-ajustes.js"></script>
