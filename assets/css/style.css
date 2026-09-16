@@ -907,6 +907,79 @@ body.modal-open-lock { overflow: hidden; }
   .ponto-step-label { font-size: 10px; }
 }
 
+/* ---- Drawer (painel lateral — ver Utils.Drawer em utils.js) ---- */
+.drawer-overlay {
+  position: fixed; inset: 0; background: rgba(25,25,27,.5);
+  display: none; align-items: stretch; justify-content: flex-end;
+  z-index: 100;
+}
+.drawer-overlay.open { display: flex; }
+.drawer-box {
+  background: var(--bg-card); width: 100%; max-width: 460px; height: 100%;
+  overflow-y: auto; overscroll-behavior: contain; box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column;
+  animation: drawer-slide-in .16s ease-out;
+}
+@keyframes drawer-slide-in { from { transform: translateX(24px); opacity: .4; } to { transform: translateX(0); opacity: 1; } }
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 18px 20px; border-bottom: 1px solid var(--border-color);
+  position: sticky; top: 0; background: var(--bg-card); z-index: 2;
+}
+.drawer-head-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.drawer-body { padding: 20px; flex: 1 1 auto; }
+.drawer-foot {
+  padding: 14px 20px; border-top: 1px solid var(--border-color);
+  display: flex; justify-content: flex-end; gap: 8px;
+  position: sticky; bottom: 0; background: var(--bg-card);
+}
+@media (max-width: 640px) { .drawer-box { max-width: 100%; } }
+
+/* ---- Linha do tempo de marcações (timeline) ---- */
+.ponto-timeline { position: relative; padding-left: 6px; }
+.ponto-timeline-item { position: relative; display: flex; gap: 14px; padding: 0 0 22px 26px; border-left: 2px solid var(--border-color); }
+.ponto-timeline-item:last-child { border-left-color: transparent; padding-bottom: 0; }
+.ponto-timeline-dot {
+  position: absolute; left: -8px; top: 2px; width: 14px; height: 14px; border-radius: 999px;
+  background: var(--bg-card); border: 3px solid var(--color-accent);
+}
+.ponto-timeline-item.tl-saida .ponto-timeline-dot { border-color: var(--gray-500); }
+.ponto-timeline-item.tl-intervalo .ponto-timeline-dot { border-color: #b7791f; }
+.ponto-timeline-thumb {
+  width: 46px; height: 46px; border-radius: var(--radius-sm); flex-shrink: 0;
+  background-size: cover; background-position: center; border: 1px solid var(--border-color); cursor: zoom-in;
+}
+.ponto-timeline-thumb-empty { display: flex; align-items: center; justify-content: center; background: var(--gray-100); color: var(--gray-500); font-size: 15px; }
+.ponto-timeline-time { font-family: var(--font-mono); font-weight: 700; font-size: 15px; }
+.ponto-timeline-type { font-weight: 700; font-size: 13px; }
+.ponto-timeline-meta { font-size: 11.5px; color: var(--gray-500); }
+
+/* ---- Gestão de Ponto — Visão Geral (dashboard) ---- */
+.pg-status-bar {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: var(--radius-md);
+  font-weight: 700; font-size: 13.5px; margin-bottom: 16px;
+}
+.pg-status-bar.ok { background: var(--color-success-bg); color: var(--color-success); }
+.pg-status-bar.warn { background: #fdf2df; color: #7a5313; }
+.pg-status-bar.danger { background: #fbe3e0; color: #c0392b; }
+.pg-alert-row { display: flex; align-items: center; gap: 14px; border-top: 1px solid var(--border-color); padding: 11px 0; }
+.pg-alert-row:first-child { border-top: none; }
+.pg-alert-dot { width: 9px; height: 9px; border-radius: 999px; flex-shrink: 0; }
+.pg-alert-dot.sev-high { background: #c0392b; }
+.pg-alert-dot.sev-med { background: #b7791f; }
+.pg-alert-dot.sev-low { background: var(--gray-400); }
+.pg-alert-body { flex: 1 1 auto; min-width: 0; }
+.pg-impact-row { display: flex; gap: 24px; flex-wrap: wrap; }
+.pg-impact-item { flex: 1 1 160px; }
+.pg-impact-label { font-size: 11.5px; font-weight: 700; color: var(--gray-600); text-transform: uppercase; letter-spacing: .06em; }
+.pg-impact-value { font-family: var(--font-mono); font-size: 21px; font-weight: 700; margin-top: 4px; }
+.pg-impact-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; margin-top: 10px; background: var(--gray-100); }
+.pg-impact-bar-extra { background: var(--color-success); }
+.pg-impact-bar-missing { background: #c0392b; }
+
+/* ---- Gestão de Ponto — Controle de Ponto / Colaboradores (filtros rápidos) ---- */
+.pg-quick-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+
 /* ---- NameCombo (campo de nome com digitação livre + sugestões) ---- */
 .name-combo-item:hover { background: var(--gray-100, #f2f2f2); }
 .name-combo-input:focus { border-color: var(--color-accent, #0eb8d9); }
