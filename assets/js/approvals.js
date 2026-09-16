@@ -71,7 +71,7 @@
   // `onApply(payload)` roda só quando aprovada, contendo a lógica específica
   // de cada tipo (ex.: atualizar o agendamento, aplicar o desconto). Se
   // `onApply` lançar um erro, a aprovação não é marcada como decidida.
-  function approve(id, onApply) {
+  function approve(id, onApply, note) {
     var a = DB.get("approvals", id);
     if (!a || a.status !== "pendente") return null;
     if (typeof onApply === "function") onApply(a.payload, a);
@@ -79,9 +79,10 @@
       status: "aprovada",
       decidedBy: (global.CurrentUser && global.CurrentUser.get()) ? global.CurrentUser.get().id : null,
       decidedByName: currentUserLabel(),
-      decidedAt: DB.nowISO()
+      decidedAt: DB.nowISO(),
+      reviewerNote: note || null
     });
-    DB.log("Aprovação", "Aprovou: " + a.summary);
+    DB.log("Aprovação", "Aprovou: " + a.summary + (note ? " — Nota: " + note : ""));
     return updated;
   }
 

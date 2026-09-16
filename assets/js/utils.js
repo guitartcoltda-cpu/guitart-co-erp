@@ -660,6 +660,7 @@
     _overlay: null,
     open: function (opts) {
       this.close();
+      if (global.Drawer) global.Drawer.close();
       var overlay = document.createElement("div");
       overlay.className = "modal-overlay open";
       overlay.id = "active-modal-overlay";
@@ -705,7 +706,51 @@
     }
   };
 
+  // ---------------- Drawer (painel lateral) ----------------
+  // Mesmo padrão do Modal acima (overlay, trava de scroll, Esc fecha), mas
+  // deslizando da direita e ocupando a altura inteira — pensado para
+  // detalhe de um registro (ex.: um funcionário) que o usuário abre e
+  // fecha em sequência, mantendo a lista de fundo visível/com o filtro
+  // intacto. Criado para a Gestão de Ponto (16/09/2026), mas é genérico —
+  // qualquer tela pode usar. Só um Drawer (ou um Modal) fica aberto por
+  // vez: abrir um novo fecha o anterior, igual ao Modal.
+  var Drawer = {
+    _overlay: null,
+    open: function (opts) {
+      this.close();
+      Modal.close();
+      var overlay = document.createElement("div");
+      overlay.className = "drawer-overlay open";
+      overlay.id = "active-drawer-overlay";
+      var box = document.createElement("div");
+      box.className = "drawer-box";
+      box.innerHTML =
+        '<div class="drawer-head"><div class="drawer-head-title">' + (opts.titleHtml || Utils.escapeHtml(opts.title || "")) + '</div>' +
+        '<button class="modal-close-btn" data-close-drawer>&times;</button></div>' +
+        '<div class="drawer-body">' + (opts.bodyHtml || "") + '</div>' +
+        (opts.footHtml ? '<div class="drawer-foot">' + opts.footHtml + '</div>' : '');
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      overlay.addEventListener("click", function (e) {
+        if (e.target === overlay || e.target.hasAttribute("data-close-drawer")) Drawer.close();
+      });
+      this._overlay = overlay;
+      if (opts.onMount) opts.onMount(box);
+      document.addEventListener("keydown", Drawer._escHandler);
+      document.body.classList.add("modal-open-lock");
+      return box;
+    },
+    close: function () {
+      var ex = document.getElementById("active-drawer-overlay");
+      if (ex) ex.remove();
+      document.removeEventListener("keydown", Drawer._escHandler);
+      if (!document.getElementById("active-modal-overlay")) document.body.classList.remove("modal-open-lock");
+    },
+    _escHandler: function (e) { if (e.key === "Escape") Drawer.close(); }
+  };
+
   global.Utils = Utils;
   global.Toast = Toast;
   global.Modal = Modal;
+  global.Drawer = Drawer;
 })(window);
