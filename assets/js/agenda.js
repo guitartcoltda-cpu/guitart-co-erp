@@ -818,9 +818,14 @@
   }
 
   // Linha de "Insumo/Produto" opcional ao concluir um atendimento: ou é
-  // consumo interno durante o serviço (custo dividido 50/50 com o
-  // profissional — ver assets/js/consumo.js) ou é um produto que o cliente
-  // leva para casa (vira uma venda normal, gera receita).
+  // consumo interno durante o serviço (custo dividido com o profissional —
+  // ver assets/js/consumo.js) ou é um produto que o cliente leva para casa
+  // (vira uma venda normal, gera receita). O percentual da divisão
+  // profissional/salão é editável aqui mesmo, item a item (16/09/2026 — a
+  // pedido do usuário, mesmo campo já usado em Estoque → "Lançar Consumo de
+  // Insumos", agora também nas telas da Agenda que geram consumo: concluir
+  // atendimento avulso, Fechar Conta, sessão de pacote e lançamento
+  // retroativo num atendimento já concluído).
   var _insumoRowSeq = 0;
   function insumoRowHtml() {
     var id = "ir" + (++_insumoRowSeq);
@@ -829,7 +834,7 @@
       '<button type="button" class="btn btn-icon btn-ghost si-remove ir-remove" title="Remover item"><i class="fa-solid fa-xmark"></i></button>' +
       '<div class="form-grid">' +
         '<div class="form-field full"><label>Tipo</label><select class="ir-tipo">' +
-          '<option value="consumo">Consumo interno (custo dividido 50/50)</option>' +
+          '<option value="consumo">Consumo interno (custo dividido com o profissional)</option>' +
           '<option value="levado">Produto levado pelo cliente (venda)</option>' +
         '</select></div>' +
         '<div class="form-field"><label>Produto</label><select class="ir-produto">' +
@@ -839,7 +844,10 @@
           '<input type="number" class="ir-qtd" step="0.1" min="0" placeholder="Qtd.">' +
           '<span class="small text-muted ir-unit" style="min-width:24px;"></span>' +
         '</div></div>' +
+        '<div class="form-field full ir-pct-wrap"><label>% do custo para o Profissional (o restante fica com o salão)</label>' +
+          '<input type="number" class="ir-pct" step="1" min="0" max="100" value="50"></div>' +
       '</div>' +
+      '<div class="small ir-split-preview"></div>' +
       '</div>';
   }
 
@@ -847,22 +855,48 @@
     var tipoSel = row.querySelector(".ir-tipo");
     var prodSel = row.querySelector(".ir-produto");
     var unitEl = row.querySelector(".ir-unit");
+    var qtdEl = row.querySelector(".ir-qtd");
+    var pctWrapEl = row.querySelector(".ir-pct-wrap");
+    var pctEl = row.querySelector(".ir-pct");
+    var previewEl = row.querySelector(".ir-split-preview");
     function refillProducts() {
       var list = tipoSel.value === "consumo"
         ? (window.Consumo ? Consumo.produtosElegiveis() : [])
         : DB.all("products").filter(function (p) { return p.type === "revenda"; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
       prodSel.innerHTML = list.map(function (p) { return '<option value="' + p.id + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("");
       updateUnit();
+      updateVisibilityAndPreview();
     }
     function updateUnit() {
       var p = DB.get("products", prodSel.value);
       if (!p) { unitEl.textContent = ""; return; }
       unitEl.textContent = tipoSel.value === "consumo" && window.Consumo ? Consumo.unitLabelOf(p) : (p.unit || "un");
     }
+    // O percentual só faz sentido para "Consumo interno" — "Produto levado
+    // pelo cliente" é uma venda normal, sem divisão de custo com ninguém.
+    function updateVisibilityAndPreview() {
+      var isConsumo = tipoSel.value === "consumo";
+      pctWrapEl.style.display = isConsumo ? "" : "none";
+      previewEl.style.display = isConsumo ? "" : "none";
+      if (!isConsumo) { previewEl.innerHTML = ""; return; }
+      var p = DB.get("products", prodSel.value);
+      var qty = parseFloat(qtdEl.value) || 0;
+      if (!p || qty <= 0 || !window.Consumo) { previewEl.innerHTML = ""; return; }
+      var total = round2(Consumo.unitCostOf(p) * qty);
+      var pct = parseFloat(pctEl.value);
+      if (isNaN(pct)) pct = 50;
+      pct = Math.max(0, Math.min(100, pct));
+      var empShare = round2(total * (pct / 100));
+      var compShare = round2(total - empShare);
+      previewEl.innerHTML = 'Custo total: <b>' + Utils.fmtMoney(total) + '</b> — Profissional: <b class="text-danger">' + Utils.fmtMoney(empShare) + '</b> (' + pct + '%) · Salão: <b>' + Utils.fmtMoney(compShare) + '</b> (' + round2(100 - pct) + '%)';
+    }
     tipoSel.addEventListener("change", refillProducts);
-    prodSel.addEventListener("change", updateUnit);
+    prodSel.addEventListener("change", function () { updateUnit(); updateVisibilityAndPreview(); });
+    qtdEl.addEventListener("input", updateVisibilityAndPreview);
+    pctEl.addEventListener("input", updateVisibilityAndPreview);
     row.querySelector(".ir-remove").addEventListener("click", function () { row.remove(); });
     updateUnit();
+    updateVisibilityAndPreview();
   }
 
   // Ponto de entrada de "Concluir": quando o cliente tem só um atendimento
@@ -1312,7 +1346,7 @@
         '<button type="button" class="btn btn-sm btn-outline" id="ps-add-insumo"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
       '</div>' +
       '<div id="ps-insumo-rows"></div>' +
-      '<div class="small text-muted mb-16">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
+      '<div class="small text-muted mb-16">Consumo interno divide o custo com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + ' (percentual ajustável em cada item). "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
       '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ps-pay">' + methods.filter(function (p) { return !p.isPackage; }).map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ps-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Sessão de Pacote", wide: true, bodyHtml: body, footHtml: foot });
@@ -1347,8 +1381,10 @@
           if (!productId || qtd <= 0) return;
           if (tipo === "consumo") {
             if (window.Consumo) {
+              var pctRaw = parseFloat(row.querySelector(".ir-pct").value);
+              var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
               try {
-                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "" });
+                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "", employeeSharePercent: employeeSharePercent });
               } catch (err) { Toast.show(String(err), "danger"); }
             }
           } else {
@@ -1439,7 +1475,7 @@
         '<button type="button" class="btn btn-sm btn-outline" id="cc-add-insumo"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
       '</div>' +
       '<div id="cc-insumo-rows"></div>' +
-      '<div class="small text-muted">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal.</div>';
+      '<div class="small text-muted">Consumo interno divide o custo com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + ' (percentual ajustável em cada item). "Levado pelo cliente" gera uma venda normal.</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cc-save">Confirmar Conclusão</button>';
     var box = Modal.open({ title: "Concluir Atendimento", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#cc-amount"), isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price);
@@ -1604,8 +1640,10 @@
           if (!productId || qtd <= 0) return;
           if (tipo === "consumo") {
             if (window.Consumo) {
+              var pctRaw = parseFloat(row.querySelector(".ir-pct").value);
+              var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
               try {
-                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service.name });
+                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service.name, employeeSharePercent: employeeSharePercent });
               } catch (err) { Toast.show(String(err), "danger"); }
             }
           } else {
@@ -1826,8 +1864,10 @@
             insumoCount++;
             if (tipo === "consumo") {
               if (window.Consumo) {
+                var pctRaw = parseFloat(row.querySelector(".ir-pct").value);
+                var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
                 try {
-                  Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "" });
+                  Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "", employeeSharePercent: employeeSharePercent });
                 } catch (err) { Toast.show(String(err), "danger"); }
               }
             } else {
@@ -1902,7 +1942,7 @@
         '<button type="button" class="btn btn-sm btn-outline" id="ai-add-insumo"><i class="fa-solid fa-plus"></i> Adicionar item</button>' +
       '</div>' +
       '<div id="ai-insumo-rows"></div>' +
-      '<div class="small text-muted mb-16">Consumo interno divide o custo 50/50 com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + '. "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
+      '<div class="small text-muted mb-16">Consumo interno divide o custo com ' + Utils.escapeHtml(employee ? employee.name : "o profissional") + ' (percentual ajustável em cada item). "Levado pelo cliente" gera uma venda normal (usa a forma de pagamento abaixo).</div>' +
       '<div class="form-grid"><div class="form-field"><label>Forma de Pagamento (só para produto levado pelo cliente)</label><select id="ai-pay">' + methods.filter(function (p) { return !p.isPackage; }).map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div></div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="ai-save">Salvar</button>';
     var box = Modal.open({ title: "Lançar Insumo/Produto", wide: true, bodyHtml: body, footHtml: foot });
@@ -1931,8 +1971,10 @@
           registeredCount++;
           if (tipo === "consumo") {
             if (window.Consumo) {
+              var pctRaw = parseFloat(row.querySelector(".ir-pct").value);
+              var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
               try {
-                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "" });
+                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "", employeeSharePercent: employeeSharePercent });
               } catch (err) { Toast.show(String(err), "danger"); }
             }
           } else {
@@ -2044,7 +2086,6 @@
           '<div style="flex:1;">' + NameCombo.html({ id: "am-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }), value: a ? a.clientId : "", placeholder: "Nome e sobrenome do cliente" }) + '</div>' +
           (window.ClientesQuick ? '<button type="button" class="btn btn-sm btn-outline" id="am-new-client" style="white-space:nowrap;"><i class="fa-solid fa-user-plus"></i> Criar novo cliente</button>' : "") +
         '</div>' +
-        (window.ClientesQuick ? '<div id="am-new-client-panel" style="display:none;border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-top:8px;background:var(--gray-50);">' + ClientesQuick.inlinePanelHtml("am-nc") + '</div>' : "") +
       '</div>' +
       (!a ?
         '<div class="form-field full"><label>Tipo de Atendimento</label><select id="am-appt-mode">' +
@@ -2151,9 +2192,14 @@
     var servicesById = {};
     services.forEach(function (s) { servicesById[s.id] = s; });
 
-    // Preenche Valor (R$)/Duração a partir do serviço escolhido — só em
-    // "Novo Agendamento" (nunca sobrescreve os valores já salvos de um
-    // agendamento em edição, mesmo que o serviço mude).
+    // Preenche Valor (R$)/Duração a partir do serviço escolhido — a pedido
+    // do usuário (16/09/2026), agora sempre que o campo Serviço MUDA
+    // (onChange abaixo), inclusive editando um agendamento já existente
+    // (antes só acontecia em "Novo Agendamento"; trocar o serviço numa
+    // edição deixava o Valor antigo, do serviço anterior, parado ali). O
+    // preenchimento inicial ao ABRIR o modal (mais abaixo) continua só em
+    // "Novo Agendamento" — abrir para editar não deve mexer em nada antes
+    // de qualquer ação do usuário.
     function fillFromService(svc) {
       Utils.setMoneyMaskValue(box.querySelector("#am-price"), svc ? svc.price : 0);
       var durInput = box.querySelector("#am-duration");
@@ -2162,7 +2208,7 @@
     var amServiceCombo = NameCombo.wire(box, {
       id: "am-service",
       items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }),
-      onChange: function (item) { if (!a) fillFromService(item ? servicesById[item.id] : null); }
+      onChange: function (item) { fillFromService(item ? servicesById[item.id] : null); }
     });
     fillEmployeesFor();
     // Sem nenhum serviço cadastrado (Configurações → Serviços) o campo de
@@ -2267,27 +2313,20 @@
     var asstSelEl = box.querySelector("#am-assistant");
     if (asstSelEl) asstSelEl.addEventListener("change", updateDefaultAssistantCommission);
 
+    // Popup "Novo Cliente" (16/09/2026): só o campo Nome, fecha sozinho ao
+    // salvar — ver ClientesQuick.openQuickNamePopup (clientes-quick.js) para
+    // o motivo de não usar Modal.open aqui (destruiria este modal de
+    // Agendamento, que só suporta um modal ativo por vez).
     var newClientBtn = box.querySelector("#am-new-client");
-    var newClientPanel = box.querySelector("#am-new-client-panel");
-    if (newClientBtn && newClientPanel) {
+    if (newClientBtn) {
       newClientBtn.addEventListener("click", function () {
-        newClientPanel.style.display = "";
-        newClientBtn.style.display = "none";
-      });
-      ClientesQuick.wireInlinePanel(newClientPanel, "am-nc",
-        function (client) {
+        ClientesQuick.openQuickNamePopup(function (client) {
           // insere o cliente recém-criado na lista de sugestões e já o deixa selecionado
           clients.push(client);
           amClientCombo.setItems(clients.map(function (c) { return { id: c.id, label: c.name }; }));
           amClientCombo.setValue(client.id);
-          newClientPanel.style.display = "none";
-          newClientBtn.style.display = "";
-        },
-        function () {
-          newClientPanel.style.display = "none";
-          newClientBtn.style.display = "";
-        }
-      );
+        });
+      });
     }
 
     // Solicitação de alteração de comissão do profissional principal
