@@ -2141,6 +2141,28 @@
           '<div class="form-field"><label>Assistente</label>' + NameCombo.html({ id: "am-assistant", items: allActiveEmployees.map(function (e) { return { id: e.id, label: e.name }; }), value: a ? a.assistantId : "", placeholder: "Nome e sobrenome do assistente" }) + '</div>' +
           commissionFieldHtml({ id: "am-assistant-pct", label: "Comissão do Assistente (%)", currentValue: a && a.assistantCommissionPercent != null ? a.assistantCommissionPercent : 10, defaultRate: currentAssistant ? currentAssistant.commissionRate : null, forceEditable: true }) +
         '</div>' +
+      '</div>' +
+      '<div class="divider" style="margin:14px 0;"></div>' +
+      // Outros serviços da mesma visita (16/09/2026, continuação) — a
+      // pedido do usuário: cliente que faz mais de um serviço na mesma
+      // visita (ex.: alisamento e depois corte), cada um podendo ter um
+      // profissional diferente. Cada serviço adicionado aqui vira um
+      // atendimento (linha) próprio, do mesmo cliente/data — o MESMO
+      // modelo que o sistema já usa para "Fechar Conta" (múltiplos
+      // atendimentos "agendado" do mesmo cliente no mesmo dia, ver
+      // concludeAppointment/openConcludeChoiceModal acima). Nenhuma
+      // mudança na estrutura de dados de appointments: isso só oferece uma
+      // forma mais rápida de criar vários de uma vez. Fica sempre visível
+      // (não depende de Tipo de Atendimento nem de sessão de pacote) — o
+      // serviço extra é sempre um atendimento avulso independente.
+      '<div class="form-field full" id="am-extra-wrap">' +
+        '<label class="flex items-center justify-between" style="width:100%;">' +
+          '<span>Outros serviços desta visita</span>' +
+          '<button type="button" class="btn btn-sm btn-outline" id="am-add-service"><i class="fa-solid fa-plus"></i> Adicionar outro serviço</button>' +
+        '</label>' +
+        '<div class="small text-muted" style="margin:4px 0 10px;">Use quando o cliente fizer mais de um serviço na mesma visita (ex.: alisamento e depois corte) — cada serviço vira um atendimento próprio, podendo ter um profissional diferente. Comissão, assistente ou outros detalhes desse serviço extra ficam para editar depois, abrindo aquele atendimento.</div>' +
+        '<div id="am-extra-existing"></div>' +
+        '<div id="am-extra-services"></div>' +
       '</div>';
 
     var extraActions = "";
@@ -2287,6 +2309,86 @@
       refreshPackageSellInfo();
     }
 
+    // ---------------- Outros serviços da mesma visita (16/09/2026, continuação) ----------------
+    // Ver comentário no HTML acima (#am-extra-wrap). Cada linha adicionada
+    // aqui vira um NameCombo de Serviço + um de Profissional + Horário/
+    // Duração/Valor, com ids únicos por linha (am-extra-1, am-extra-2...).
+    // A leitura/gravação de verdade acontece no clique de "Salvar
+    // Agendamento" (#am-save), mais abaixo.
+    var extraRows = []; // ids das linhas ainda ativas (não removidas)
+    var extraRowSeq = 0;
+    var extraContainerEl = box.querySelector("#am-extra-services");
+
+    function computeExtraDefaultTime() {
+      var lastTime, lastDurationMin;
+      if (extraRows.length) {
+        var lastRowId = extraRows[extraRows.length - 1];
+        lastTime = box.querySelector("#" + lastRowId + "-time").value;
+        lastDurationMin = parseInt(box.querySelector("#" + lastRowId + "-duration").value, 10) || 30;
+      } else {
+        lastTime = box.querySelector("#am-time").value;
+        lastDurationMin = parseInt(box.querySelector("#am-duration").value, 10) || 30;
+      }
+      return minToTime(timeToMin(lastTime) + lastDurationMin);
+    }
+
+    function addExtraServiceRow() {
+      extraRowSeq++;
+      var rowId = "am-extra-" + extraRowSeq;
+      var idx = extraRows.length;
+      var defaultTime = computeExtraDefaultTime();
+      var rowHtml = '<div class="am-extra-row" data-row-id="' + rowId + '" style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;margin-bottom:10px;position:relative;">' +
+        '<button type="button" class="btn btn-sm btn-icon btn-ghost am-extra-remove" data-remove-row="' + rowId + '" style="position:absolute;top:8px;right:8px;color:var(--color-danger);" title="Remover"><i class="fa-solid fa-xmark"></i></button>' +
+        '<div class="small font-bold" style="margin-bottom:8px;">Serviço adicional ' + (idx + 1) + '</div>' +
+        '<div class="form-grid">' +
+          '<div class="form-field full"><label>Serviço</label>' + NameCombo.html({ id: rowId + "-service", items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }), value: "", placeholder: "Nome do serviço" }) + '</div>' +
+          '<div class="form-field"><label>Profissional</label>' + NameCombo.html({ id: rowId + "-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }), value: "", placeholder: "Nome e sobrenome do profissional" }) + '</div>' +
+          '<div class="form-field"><label>Valor (R$)</label><input type="text" id="' + rowId + '-price"></div>' +
+          '<div class="form-field"><label>Horário</label><input type="time" id="' + rowId + '-time" value="' + defaultTime + '"></div>' +
+          '<div class="form-field"><label>Duração (min)</label><input type="number" id="' + rowId + '-duration" min="5" step="5" value="30"></div>' +
+        '</div>' +
+      '</div>';
+      extraContainerEl.insertAdjacentHTML("beforeend", rowHtml);
+      extraRows.push(rowId);
+
+      function fillExtraFromService(svc) {
+        Utils.setMoneyMaskValue(box.querySelector("#" + rowId + "-price"), svc ? svc.price : 0);
+        var durEl = box.querySelector("#" + rowId + "-duration");
+        if (durEl) durEl.value = svc ? (svc.durationMin || 30) : 30;
+      }
+      NameCombo.wire(box, {
+        id: rowId + "-service",
+        items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }),
+        onChange: function (item) { fillExtraFromService(item ? servicesById[item.id] : null); }
+      });
+      NameCombo.wire(box, { id: rowId + "-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
+      Utils.wireMoneyMask(box.querySelector("#" + rowId + "-price"), 0);
+
+      box.querySelector('[data-remove-row="' + rowId + '"]').addEventListener("click", function () {
+        var rowEl = box.querySelector('.am-extra-row[data-row-id="' + rowId + '"]');
+        if (rowEl) rowEl.remove();
+        extraRows = extraRows.filter(function (id) { return id !== rowId; });
+      });
+    }
+    box.querySelector("#am-add-service").addEventListener("click", addExtraServiceRow);
+
+    // Em edição, mostra (só leitura) os outros atendimentos JÁ existentes
+    // do mesmo cliente no mesmo dia — mesmo agrupamento que "Fechar Conta"
+    // usa (ver concludeAppointment acima). Para editar um deles é preciso
+    // fechar este modal e abrir aquele atendimento na agenda.
+    if (a) {
+      var siblingAppts = DB.all("appointments").filter(function (x) { return x.id !== a.id && x.clientId === a.clientId && x.date === a.date; }).sort(function (x, y) { return x.time.localeCompare(y.time); });
+      if (siblingAppts.length) {
+        var employeesByIdForSiblings = {};
+        DB.all("employees").forEach(function (e) { employeesByIdForSiblings[e.id] = e; });
+        box.querySelector("#am-extra-existing").innerHTML = '<div class="small text-muted" style="margin-bottom:8px;">Já existem outros atendimentos deste cliente neste dia:</div>' +
+          siblingAppts.map(function (g) {
+            var s = DB.get("services", g.serviceId), e = employeesByIdForSiblings[g.employeeId];
+            return '<div class="small" style="padding:3px 0;">' + g.time + ' — ' + Utils.escapeHtml(s ? s.name : "Serviço") + ' (' + Utils.escapeHtml(e ? e.name : "-") + ')</div>';
+          }).join("");
+      }
+    }
+
     box.querySelector("#am-employee").addEventListener("change", updateDefaultCommission);
 
     box.querySelector("#am-has-assistant").addEventListener("change", function (e) {
@@ -2427,6 +2529,25 @@
     }
 
     box.querySelector("#am-save").addEventListener("click", function () {
+      // Valida as linhas de "Outros serviços desta visita" ANTES de
+      // gravar qualquer coisa — uma linha com só Serviço ou só
+      // Profissional preenchido barra o salvamento (evita criar um
+      // atendimento extra incompleto); uma linha totalmente vazia
+      // (deixada em branco depois de clicar "+ Adicionar" e não usada) é
+      // simplesmente ignorada.
+      var extraServiceRowsData = [];
+      for (var exi = 0; exi < extraRows.length; exi++) {
+        var exRowId = extraRows[exi];
+        var exServiceId = box.querySelector("#" + exRowId + "-service").value;
+        var exEmployeeId = box.querySelector("#" + exRowId + "-employee").value;
+        if (!exServiceId && !exEmployeeId) continue;
+        if (!exServiceId || !exEmployeeId) {
+          Toast.show("Preencha Serviço e Profissional do \"Serviço adicional " + (exi + 1) + "\", ou remova essa linha", "danger");
+          return;
+        }
+        extraServiceRowsData.push({ rowId: exRowId, serviceId: exServiceId, employeeId: exEmployeeId });
+      }
+
       var hasAsst = box.querySelector("#am-has-assistant").checked;
       // Os campos de comissão só ficam editáveis de verdade para
       // Administrador (ver commissionFieldHtml acima) — para os demais
@@ -2567,6 +2688,28 @@
         // formulário (fora do fluxo dedicado de concludeAppointment acima).
         Notificacoes.queueReviewRequest(savedAppt);
       }
+      // Cria um atendimento próprio para cada "Serviço adicional" desta
+      // visita (ver #am-extra-wrap/extraServiceRowsData acima) — mesmo
+      // cliente e data do atendimento principal, cada um com seu próprio
+      // profissional, já como "agendado". Detalhes que esse serviço extra
+      // possa precisar (comissão diferente do padrão, assistente, etc.)
+      // ficam para editar depois, abrindo aquele atendimento.
+      extraServiceRowsData.forEach(function (row) {
+        var exDurRaw = parseInt(box.querySelector("#" + row.rowId + "-duration").value, 10);
+        var exSvc = servicesById[row.serviceId];
+        var exDefaultDuration = (exSvc && exSvc.durationMin) ? exSvc.durationMin : 30;
+        var exPatch = {
+          clientId: patch.clientId, serviceId: row.serviceId, employeeId: row.employeeId,
+          price: round2(Utils.moneyMaskToFloat(box.querySelector("#" + row.rowId + "-price"))),
+          date: patch.date, time: box.querySelector("#" + row.rowId + "-time").value || patch.time,
+          durationMin: (!isNaN(exDurRaw) && exDurRaw > 0 && exDurRaw !== exDefaultDuration) ? exDurRaw : null,
+          status: "agendado", commissionPercent: null, assistantId: null, assistantCommissionPercent: null
+        };
+        var exSaved = DB.insert("appointments", exPatch);
+        DB.log("Agenda", "Criou um atendimento adicional (" + (exSvc ? exSvc.name : "serviço") + ") para " + exPatch.date + " " + exPatch.time + ", na mesma visita de " + exPatch.date + " " + patch.time);
+        if (window.Notificacoes) Notificacoes.queueBookingConfirmation(exSaved);
+      });
+      if (extraServiceRowsData.length) Toast.show(extraServiceRowsData.length + " serviço(s) adicional(is) criado(s) para esta visita", "success");
       Modal.close();
       selectedDate = patch.date;
       render();

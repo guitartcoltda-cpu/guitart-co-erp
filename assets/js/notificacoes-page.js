@@ -1,7 +1,14 @@
 (function () {
   "use strict";
 
-  var filters = { type: "", status: "pendente" };
+  // Filtro de data (De/Até): sobre createdDate (quando a notificação foi
+  // gerada) — a pedido do usuário (16/09/2026, continuação), para
+  // conseguir restringir a lista só ao que é relevante enviar, num salão
+  // com muita notificação pendente acumulada. Fica vazio por padrão (sem
+  // filtrar por data, igual ao comportamento de antes desta mudança) —
+  // preencher De/Até é uma escolha explícita de quem estiver usando a
+  // tela, não algo que já vem escondendo notificações pendentes sozinho.
+  var filters = { type: "", status: "pendente", dateStart: "", dateEnd: "" };
   var selected = {}; // id -> true, only tracks pending items currently checked
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
@@ -13,7 +20,28 @@
     // robôs já colocaram na fila (e, para confirmação/lembrete, dispara o
     // envio manual via wa.me).
 
-    Utils.qs("#nt-type").addEventListener("change", function (e) { filters.type = e.target.value; render(); });
+    Utils.qs("#nt-date-start").addEventListener("change", function (e) { filters.dateStart = e.target.value; render(); });
+    Utils.qs("#nt-date-end").addEventListener("change", function (e) { filters.dateEnd = e.target.value; render(); });
+    Utils.qs("#btn-clear-nt-filters").addEventListener("click", function () {
+      filters.dateStart = ""; filters.dateEnd = "";
+      Utils.qs("#nt-date-start").value = ""; Utils.qs("#nt-date-end").value = "";
+      render();
+    });
+
+    // Abas por categoria de mensagem (16/09/2026, continuação) — substitui
+    // o antigo <select> de "Tipo" por abas visuais (mesmo padrão já usado
+    // em Conciliação Bancária/Gestão de Ponto), no lugar em que a tela
+    // ficava com um espaço vazio entre o cabeçalho do card e a barra de
+    // seleção em lote.
+    Utils.qsa(".tab-btn", Utils.qs("#nt-tabs")).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        Utils.qsa(".tab-btn", Utils.qs("#nt-tabs")).forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        filters.type = btn.getAttribute("data-type");
+        render();
+      });
+    });
+
     Utils.qs("#nt-status").addEventListener("change", function (e) { filters.status = e.target.value; selected = {}; render(); });
 
     Utils.qs("#nt-select-all").addEventListener("change", function (e) {
@@ -66,6 +94,8 @@
     return DB.all("notifications").filter(function (n) {
       if (filters.type && n.type !== filters.type) return false;
       if (filters.status && n.status !== filters.status) return false;
+      if (filters.dateStart && (n.createdDate || "") < filters.dateStart) return false;
+      if (filters.dateEnd && (n.createdDate || "") > filters.dateEnd) return false;
       return true;
     }).sort(function (a, b) {
       return (b.createdDate || "").localeCompare(a.createdDate || "") || (b.createdAt || "").localeCompare(a.createdAt || "");
