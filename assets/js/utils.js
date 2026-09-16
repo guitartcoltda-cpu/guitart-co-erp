@@ -749,8 +749,65 @@
     _escHandler: function (e) { if (e.key === "Escape") Drawer.close(); }
   };
 
+  // ---------------- ActionMenu (menu de "mais opções", 3 pontinhos) ----------------
+  // Menu flutuante posicionado perto do botão que o abriu — para ações por
+  // linha numa lista/tabela (ex.: "..." em cada item da Conciliação
+  // Bancária) sem precisar abrir um modal cheio só para escolher uma opção.
+  // Fecha ao clicar fora, no Esc, ou ao escolher uma opção. Só um
+  // ActionMenu fica aberto por vez; abrir um novo fecha o anterior.
+  var ActionMenu = {
+    open: function (anchorEl, items) {
+      this.close();
+      var backdrop = document.createElement("div");
+      backdrop.className = "action-menu-backdrop";
+      backdrop.id = "active-action-menu-backdrop";
+      var menu = document.createElement("div");
+      menu.className = "action-menu";
+      menu.id = "active-action-menu";
+      menu.innerHTML = items.map(function (it, i) {
+        if (it.divider) return '<div class="action-menu-divider"></div>';
+        return '<button type="button" class="action-menu-item' + (it.danger ? " danger" : "") + '" data-action-idx="' + i + '">' +
+          (it.icon ? '<i class="fa-solid ' + it.icon + '"></i>' : '<span class="action-menu-item-spacer"></span>') +
+          '<span>' + Utils.escapeHtml(it.label) + '</span></button>';
+      }).join("");
+      document.body.appendChild(backdrop);
+      document.body.appendChild(menu);
+
+      var rect = anchorEl.getBoundingClientRect();
+      var menuRect = menu.getBoundingClientRect();
+      var left = rect.right - menuRect.width;
+      if (left < 8) left = 8;
+      if (left + menuRect.width > window.innerWidth - 8) left = window.innerWidth - menuRect.width - 8;
+      var top = rect.bottom + 6;
+      if (top + menuRect.height > window.innerHeight - 8) top = rect.top - menuRect.height - 6;
+      if (top < 8) top = 8;
+      menu.style.left = left + "px";
+      menu.style.top = top + "px";
+
+      backdrop.addEventListener("click", function () { ActionMenu.close(); });
+      Utils.qsa("[data-action-idx]", menu).forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var item = items[parseInt(btn.getAttribute("data-action-idx"), 10)];
+          ActionMenu.close();
+          if (item && item.onClick) item.onClick();
+        });
+      });
+      document.addEventListener("keydown", ActionMenu._escHandler);
+    },
+    close: function () {
+      var b = document.getElementById("active-action-menu-backdrop");
+      if (b) b.remove();
+      var m = document.getElementById("active-action-menu");
+      if (m) m.remove();
+      document.removeEventListener("keydown", ActionMenu._escHandler);
+    },
+    _escHandler: function (e) { if (e.key === "Escape") ActionMenu.close(); }
+  };
+
   global.Utils = Utils;
   global.Toast = Toast;
   global.Modal = Modal;
   global.Drawer = Drawer;
+  global.ActionMenu = ActionMenu;
 })(window);

@@ -1,7 +1,16 @@
+/* ============================================================
+   Salão ERP — Conciliação Bancária
+   Importa o extrato (CSV) e concilia manualmente com os lançamentos
+   pagos do sistema — Entradas e Saídas em abas separadas. Toda
+   conciliação é uma ação explícita da pessoa (escolher o par,
+   conferir os dados lado a lado e confirmar) — não há sugestão
+   automática que já venha marcada/aplicada: dados reais de produção
+   exigem revisão deliberada, não um "match" cego por proximidade.
+   ============================================================ */
 (function () {
   "use strict";
 
-  var selectedBankId = null, selectedTxnId = null;
+  var state = { dir: "receita" }; // "receita" = Entradas, "despesa" = Saídas
   var rfilter = { start: "", end: "" };
   var histSortState = { field: null, dir: "asc" }; // clique no rótulo da coluna para ordenar
 
@@ -19,8 +28,16 @@
       rfilter.start = ""; rfilter.end = ""; Utils.qs("#rf-start").value = ""; Utils.qs("#rf-end").value = ""; render();
     });
 
+    Utils.qsa(".tab-btn", Utils.qs("#recon-tabs")).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        Utils.qsa(".tab-btn", Utils.qs("#recon-tabs")).forEach(function (b) { b.classList.remove("active"); });
+        btn.classList.add("active");
+        state.dir = btn.getAttribute("data-dir");
+        render();
+      });
+    });
+
     Utils.qs("#btn-sample-csv").addEventListener("click", downloadSampleCSV);
-    Utils.qs("#btn-auto-match").addEventListener("click", autoMatchAll);
 
     var zone = Utils.qs("#upload-zone");
     var fileInput = Utils.qs("#file-input");
@@ -38,6 +55,11 @@
 
     render();
   }
+
+  // Direção (Entradas/Saídas) de uma linha do extrato: pelo sinal do valor
+  // (positivo = entrada, negativo = saída — mesma convenção já usada na
+  // importação e no gerador de extrato de exemplo).
+  function dirOfBankLine(b) { return b.amount >= 0 ? "receita" : "despesa"; }
 
   // ---------------- Import ----------------
   function handleFile(file) {
@@ -162,62 +184,7 @@
     Toast.show("Extrato de exemplo gerado — importe-o para testar a conciliação", "success");
   }
 
-  // ---------------- Matching ----------------
-  // moneyKey(): valor em centavos (inteiro), usado só para AGRUPAR candidatos
-  // por faixa de valor e assim evitar varrer a lista inteira a cada linha do
-  // extrato (era o gargalo O(n×m) deste módulo). A comparação de valor em si
-  // continua sendo a MESMA de antes — "Math.abs(expected - bankLine.amount) <
-  // 0.01" — aplicada apenas dentro do balde (e dos baldes vizinhos, ±1
-  // centavo: por causa de arredondamento de ponto flutuante, dois valores que
-  // diferem em exatamente 1 centavo às vezes também passam nesse teste de
-  // tolerância hoje, então preservamos esse comportamento exatamente igual em
-  // vez de "corrigi-lo" por conta própria).
-  function moneyKey(n) { return Math.round(n * 100); }
-
-  // Indexa as transações por valor esperado (sinal já ajustado por
-  // receita/despesa), guardando também o índice original em "txns" para poder
-  // reproduzir o mesmo desempate por ordem que o Array.sort estável de antes
-  // fazia quando duas datas empatam em distância.
-  function buildTxnAmountIndex(txns) {
-    var idx = {};
-    txns.forEach(function (t, i) {
-      var expected = t.type === "receita" ? t.amount : -t.amount;
-      var key = moneyKey(expected);
-      (idx[key] || (idx[key] = [])).push({ t: t, i: i });
-    });
-    return idx;
-  }
-
-  // txnIndex: resultado de buildTxnAmountIndex(). usedTxn (opcional): mapa
-  // id->true de transações já usadas em outra sugestão da mesma rodada
-  // (usado pelo autoMatchAll, que vai "consumindo" candidatos).
-  function findSuggestion(bankLine, txnIndex, usedTxn) {
-    var baseKey = moneyKey(bankLine.amount);
-    var candidates = [];
-    for (var dk = -1; dk <= 1; dk++) {
-      var bucket = txnIndex[baseKey + dk];
-      if (!bucket) continue;
-      for (var j = 0; j < bucket.length; j++) {
-        var entry = bucket[j], t = entry.t;
-        if (usedTxn && usedTxn[t.id]) continue;
-        var expected = t.type === "receita" ? t.amount : -t.amount;
-        if (Math.abs(expected - bankLine.amount) >= 0.01) continue;
-        candidates.push(entry);
-      }
-    }
-    if (!candidates.length) return null;
-    candidates.sort(function (a, b) {
-      var da = Math.abs(Utils.daysBetween(a.t.date, bankLine.date));
-      var db = Math.abs(Utils.daysBetween(b.t.date, bankLine.date));
-      return da !== db ? da - db : a.i - b.i;
-    });
-    var best = candidates[0].t;
-    if (Math.abs(Utils.daysBetween(best.date, bankLine.date)) <= 6) return best;
-    return null;
-  }
-
-  // Computes the verification data used by the side-by-side comparison views:
-  // how far apart the bank line and the transaction actually are in value/date.
+  // ---------------- Comparação lado a lado ----------------
   function computeMatchDiff(bankLine, txn) {
     var expectedAmount = txn.type === "receita" ? txn.amount : -txn.amount;
     var amountDiff = round2(bankLine.amount - expectedAmount);
@@ -243,9 +210,9 @@
     return '<span class="badge ' + cls + '">' + Math.abs(diff.dayDiff) + ' dia(s) de diferença</span>';
   }
 
-  // Full "Extrato x Lançamento" comparison table used before confirming a single
-  // suggested match — this is the "fazer uma análise de fato" step: every field
-  // available on both records is placed side by side instead of a blind "Confirmar".
+  // Tabela "Extrato x Lançamento" lado a lado, usada antes de confirmar
+  // qualquer conciliação manual — nenhuma conciliação é gravada sem essa
+  // conferência explícita.
   function buildComparisonTableHtml(bankLine, txn) {
     var client = txn.clientId ? DB.get("clients", txn.clientId) : null;
     var cat = txn.categoryId ? DB.get("categories", txn.categoryId) : null;
@@ -273,232 +240,190 @@
     return html;
   }
 
-  // Opens the mandatory review step for a single auto-suggested match: shows the
-  // side-by-side comparison and only writes the reconciliation if the user
-  // explicitly confirms — replaces the old one-click "Confirmar" button.
-  function openSuggestionCompareModal(bankId, txnId) {
+  // Passo final, obrigatório, antes de gravar qualquer conciliação: mostra
+  // o comparativo lado a lado e só grava se a pessoa confirmar
+  // explicitamente — nunca é chamado automaticamente.
+  function openConfirmCompareModal(bankId, txnId) {
     var b = DB.get("bankLines", bankId);
     var t = DB.get("transactions", txnId);
     if (!b || !t) { Toast.show("Registro não encontrado ou já conciliado", "danger"); render(); return; }
     var body =
-      '<p class="small text-muted mb-16"><i class="fa-solid fa-wand-magic-sparkles"></i> Esta é a sugestão automática encontrada pelo sistema para esta linha do extrato. Confira os dados abaixo antes de confirmar a conciliação.</p>' +
+      '<p class="small text-muted mb-16">Confira os dados abaixo antes de confirmar a conciliação.</p>' +
       buildComparisonTableHtml(b, t);
-    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="btn-confirm-suggestion"><i class="fa-solid fa-check"></i> Confirmar Conciliação</button>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="btn-confirm-match"><i class="fa-solid fa-check"></i> Confirmar Conciliação</button>';
     var box = Modal.open({ title: "Comparar e Confirmar Conciliação", bodyHtml: body, footHtml: foot, wide: true });
-    box.querySelector("#btn-confirm-suggestion").addEventListener("click", function () {
+    box.querySelector("#btn-confirm-match").addEventListener("click", function () {
       Modal.close();
-      matchPair(bankId, txnId, "sugestao");
+      matchPair(bankId, txnId);
     });
   }
 
-  // Bulk "Conciliar sugestões automáticas" now only *proposes* matches — it no
-  // longer writes anything to the DB by itself. The user reviews every proposed
-  // pair (with the same value/date/description comparison) and can uncheck any
-  // pair before confirming, so nothing is conciliated blindly.
-  function autoMatchAll() {
-    var bankLines = DB.all("bankLines").filter(function (b) { return !b.matched; });
-    var txns = DB.all("transactions").filter(function (t) { return t.status === "pago" && !t.reconciled; });
-    var txnIndex = buildTxnAmountIndex(txns);
-    var usedTxn = {};
-    var suggestions = [];
-    bankLines.forEach(function (b) {
-      var s = findSuggestion(b, txnIndex, usedTxn);
-      if (s) { usedTxn[s.id] = true; suggestions.push({ bank: b, txn: s }); }
-    });
-    if (!suggestions.length) { Toast.show("Nenhuma correspondência automática encontrada", "info"); return; }
-    openAutoMatchReviewModal(suggestions);
-  }
-
-  function openAutoMatchReviewModal(suggestions) {
-    var rowsHtml = suggestions.map(function (s, idx) {
-      var client = s.txn.clientId ? DB.get("clients", s.txn.clientId) : null;
-      var diff = computeMatchDiff(s.bank, s.txn);
-      return '<tr>' +
-        '<td><label class="checkbox-wrap"><input type="checkbox" class="review-check" data-idx="' + idx + '" checked></label></td>' +
-        '<td><div class="ri-desc">' + Utils.escapeHtml(s.bank.description) + '</div><div class="ri-meta">' + Utils.fmtDate(s.bank.date) + ' · ' + Utils.fmtMoney(s.bank.amount) + '</div></td>' +
-        '<td><div class="ri-desc">' + Utils.escapeHtml(s.txn.description) + (client ? ' · ' + Utils.escapeHtml(client.name) : '') + '</div><div class="ri-meta">' + Utils.fmtDate(s.txn.date) + ' · ' + Utils.fmtMoney(s.txn.amount) + '</div></td>' +
-        '<td>' + amountDiffBadge(diff) + '<br>' + dateDiffBadge(diff) + '</td>' +
-        '</tr>';
-    }).join("");
-
-    var body =
-      '<p class="small text-muted mb-16">O sistema encontrou <strong>' + suggestions.length + '</strong> possível(is) correspondência(s) entre o extrato e os lançamentos. Revise valor, data, cliente/descrição de cada par e desmarque as que não devem ser conciliadas.</p>' +
-      '<div class="table-wrap"><table class="data-table compare-review-table"><thead><tr><th></th><th>Extrato do Banco</th><th>Lançamento do Sistema</th><th>Diferença</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
-    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="btn-confirm-bulk"><i class="fa-solid fa-check-double"></i> Confirmar Selecionadas</button>';
-    var box = Modal.open({ title: "Revisar Sugestões Automáticas", bodyHtml: body, footHtml: foot, wide: true });
-
-    box.querySelector("#btn-confirm-bulk").addEventListener("click", function () {
-      var checked = Utils.qsa(".review-check", box).filter(function (c) { return c.checked; })
-        .map(function (c) { return suggestions[parseInt(c.getAttribute("data-idx"), 10)]; });
-      if (!checked.length) { Toast.show("Nenhuma conciliação selecionada", "info"); return; }
-      DB.batch(function () {
-        checked.forEach(function (s) {
-          DB.update("bankLines", s.bank.id, { matched: true, matchedTransactionId: s.txn.id });
-          DB.update("transactions", s.txn.id, { reconciled: true, bankLineId: s.bank.id });
-        });
-      });
-      DB.log("Conciliação", "Revisou e confirmou " + checked.length + " conciliação(ões) automática(s) com o extrato bancário");
-      Modal.close();
-      Toast.show(checked.length + " conciliação(ões) confirmada(s)", "success");
-      render();
-    });
-  }
-
-  function matchPair(bankId, txnId, source) {
+  function matchPair(bankId, txnId) {
     DB.update("bankLines", bankId, { matched: true, matchedTransactionId: txnId });
     DB.update("transactions", txnId, { reconciled: true, bankLineId: bankId });
-    var msg = source === "sugestao"
-      ? "Conferiu os dados e confirmou uma sugestão automática de conciliação"
-      : "Conciliou manualmente um lançamento com uma linha do extrato bancário";
-    DB.log("Conciliação", msg);
-    selectedBankId = null; selectedTxnId = null;
+    DB.log("Conciliação", "Conciliou manualmente um lançamento com uma linha do extrato bancário");
     Toast.show("Conciliado com sucesso", "success");
     render();
   }
 
-  function unmatch(bankId) {
-    var line = DB.get("bankLines", bankId);
-    if (line && line.matchedTransactionId) DB.update("transactions", line.matchedTransactionId, { reconciled: false, bankLineId: null });
-    DB.update("bankLines", bankId, { matched: false, matchedTransactionId: null });
+  // ---------------- Menu "..." (3 pontinhos) por linha ----------------
+  function openBankLineMenu(anchorEl, b) {
+    ActionMenu.open(anchorEl, [
+      { label: "Conciliar com um lançamento…", icon: "fa-link", onClick: function () { openMatchPicker("bank", b); } },
+      { label: "Conciliação manual justificada…", icon: "fa-pen-to-square", onClick: function () { openManualReconcileModal("bank", b); } },
+      { divider: true },
+      { label: "Criar lançamento a partir desta linha", icon: "fa-plus", onClick: function () { createTxnFromBankLine(b.id); } },
+      { label: "Ignorar esta linha", icon: "fa-eye-slash", danger: true, onClick: function () { ignoreBankLine(b.id); } }
+    ]);
+  }
+
+  function openTxnMenu(anchorEl, t) {
+    ActionMenu.open(anchorEl, [
+      { label: "Conciliar com uma linha do extrato…", icon: "fa-link", onClick: function () { openMatchPicker("txn", t); } },
+      { label: "Conciliação manual justificada…", icon: "fa-pen-to-square", onClick: function () { openManualReconcileModal("txn", t); } },
+      { divider: true },
+      { label: "Ignorar este lançamento", icon: "fa-eye-slash", danger: true, onClick: function () { ignoreTxn(t.id); } }
+    ]);
+  }
+
+  // Lista candidatos do outro lado (mesma direção Entrada/Saída, ainda em
+  // aberto) para a pessoa ESCOLHER manualmente qual concilia com o registro
+  // clicado — ordenados por proximidade de valor/data só para facilitar
+  // achar o candidato certo mais rápido (igual a qualquer sistema de
+  // conciliação bancária do mercado), nunca aplicando nada sozinho: a
+  // escolha final é sempre um clique explícito, seguido da comparação lado
+  // a lado antes de confirmar.
+  function openMatchPicker(fromType, record) {
+    var isBank = fromType === "bank";
+    var dir = isBank ? dirOfBankLine(record) : record.type;
+    var refDate = record.date;
+    var refAmount = isBank ? record.amount : (record.type === "receita" ? record.amount : -record.amount);
+
+    var candidates = isBank
+      ? DB.all("transactions").filter(function (t) { return t.type === dir && t.status === "pago" && !t.reconciled; })
+      : DB.all("bankLines").filter(function (b) { return !b.matched && dirOfBankLine(b) === dir; });
+
+    if (!candidates.length) {
+      Toast.show("Não há " + (isBank ? "lançamentos do sistema" : "linhas do extrato") + " em aberto para conciliar nesta direção", "info");
+      return;
+    }
+
+    candidates = candidates.slice().sort(function (x, y) {
+      var xAmt = isBank ? (x.type === "receita" ? x.amount : -x.amount) : x.amount;
+      var yAmt = isBank ? (y.type === "receita" ? y.amount : -y.amount) : y.amount;
+      var xOk = Math.abs(xAmt - refAmount) < 0.01, yOk = Math.abs(yAmt - refAmount) < 0.01;
+      if (xOk !== yOk) return xOk ? -1 : 1;
+      var xDiff = Math.abs(Utils.daysBetween(x.date, refDate));
+      var yDiff = Math.abs(Utils.daysBetween(y.date, refDate));
+      return xDiff - yDiff;
+    });
+
+    var CAP = 100;
+    var toShow = candidates.slice(0, CAP);
+    var rowsHtml = toShow.map(function (c, i) {
+      var cAmt = isBank ? (c.type === "receita" ? c.amount : -c.amount) : c.amount;
+      var amtOk = Math.abs(cAmt - refAmount) < 0.01;
+      return '<tr>' +
+        '<td class="text-num">' + Utils.fmtDate(c.date) + '</td>' +
+        '<td>' + Utils.escapeHtml(c.description) + '</td>' +
+        '<td class="text-right ' + (amtOk ? "text-success font-bold" : "") + '">' + Utils.fmtMoney(Math.abs(cAmt)) + '</td>' +
+        '<td><button type="button" class="btn btn-sm btn-outline" data-pick="' + i + '">Selecionar</button></td>' +
+        '</tr>';
+    }).join("");
+    var capNote = candidates.length > CAP ? '<div class="small text-muted mt-8">Mostrando ' + CAP + ' de ' + candidates.length + '. Reduza o período no filtro de data para ver os demais.</div>' : "";
+
+    var body =
+      '<p class="small text-muted mb-16">Registro selecionado: <strong>' + Utils.escapeHtml(record.description) + '</strong> · ' + Utils.fmtDate(refDate) + ' · ' + Utils.fmtMoney(Math.abs(refAmount)) + '</p>' +
+      '<p class="small text-muted mb-16">Escolha ' + (isBank ? "o lançamento do sistema" : "a linha do extrato") + ' correspondente. Você vai conferir os dados lado a lado antes de confirmar.</p>' +
+      '<div class="table-wrap"><table class="data-table"><thead><tr><th>Data</th><th>Descrição</th><th class="text-right">Valor</th><th></th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' + capNote;
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button>';
+    var box = Modal.open({ title: "Conciliar — Escolher Correspondente", bodyHtml: body, footHtml: foot, wide: true });
+    Utils.qsa("[data-pick]", box).forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var c = toShow[parseInt(btn.getAttribute("data-pick"), 10)];
+        Modal.close();
+        if (isBank) openConfirmCompareModal(record.id, c.id);
+        else openConfirmCompareModal(c.id, record.id);
+      });
+    });
+  }
+
+  // Conciliação manual justificada: para quando não existe (e não vai
+  // existir) um registro correspondente do outro lado — ex. uma tarifa
+  // bancária cobrada direto na conta, sem lançamento no sistema; ou um
+  // lançamento do sistema que nunca aparece isolado no extrato (pagamento
+  // agrupado/lote). Exige justificativa por escrito, fica registrada e
+  // visível no Histórico, e pode ser desfeita a qualquer momento.
+  function openManualReconcileModal(fromType, record) {
+    var isBank = fromType === "bank";
+    var label = isBank
+      ? Utils.escapeHtml(record.description) + " · " + Utils.fmtDate(record.date) + " · " + Utils.fmtMoney(record.amount)
+      : Utils.escapeHtml(record.description) + " · " + Utils.fmtDate(record.date) + " · " + (record.type === "receita" ? "+ " : "- ") + Utils.fmtMoney(record.amount);
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><label>Registro</label><input type="text" value="' + label + '" disabled></div>' +
+      '<div class="form-field full"><label>Justificativa <span class="text-danger">*</span></label>' +
+      '<textarea id="mr-note" rows="3" placeholder="Ex.: tarifa bancária cobrada direto na conta, pagamento agrupado com outros lançamentos, etc."></textarea></div>' +
+      '</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="mr-confirm"><i class="fa-solid fa-check"></i> Confirmar Conciliação Manual</button>';
+    var box = Modal.open({ title: "Conciliação Manual Justificada", bodyHtml: body, footHtml: foot });
+    box.querySelector("#mr-confirm").addEventListener("click", function () {
+      var note = box.querySelector("#mr-note").value.trim();
+      if (!note) { Toast.show("Informe a justificativa antes de confirmar", "danger"); return; }
+      if (isBank) {
+        DB.update("bankLines", record.id, { matched: true, matchedTransactionId: null, manualNote: note });
+      } else {
+        DB.update("transactions", record.id, { reconciled: true, bankLineId: null, manualReconcileNote: note });
+      }
+      DB.log("Conciliação", "Conciliação manual justificada: \"" + record.description + "\" — " + note);
+      Modal.close();
+      Toast.show("Conciliação manual registrada", "success");
+      render();
+    });
+  }
+
+  function ignoreBankLine(id) {
+    Modal.confirm({
+      title: "Ignorar linha do extrato",
+      message: "Esta linha sai da lista de pendentes sem virar uma conciliação. Dá para reverter depois pelo Histórico. Confirmar?",
+      confirmLabel: "Ignorar",
+      onConfirm: function () {
+        DB.update("bankLines", id, { matched: true, matchedTransactionId: null, ignored: true });
+        DB.log("Conciliação", "Ignorou uma linha do extrato bancário");
+        Toast.show("Linha ignorada", "info");
+        render();
+      }
+    });
+  }
+
+  function ignoreTxn(id) {
+    Modal.confirm({
+      title: "Ignorar lançamento",
+      message: "Este lançamento sai da lista de pendentes de conciliação sem vincular a uma linha do extrato. Dá para reverter depois pelo Histórico. Confirmar?",
+      confirmLabel: "Ignorar",
+      onConfirm: function () {
+        DB.update("transactions", id, { reconciled: true, bankLineId: null, ignoredReconciliation: true });
+        DB.log("Conciliação", "Ignorou um lançamento na conciliação bancária");
+        Toast.show("Lançamento ignorado", "info");
+        render();
+      }
+    });
+  }
+
+  // Desfaz qualquer item do Histórico — par conciliado, manual ou ignorado,
+  // de qualquer um dos dois lados.
+  function undoHistoryItem(item) {
+    if (item.source === "bank") {
+      DB.update("bankLines", item.bankId, { matched: false, matchedTransactionId: null, manualNote: null, ignored: false });
+      if (item.txn) DB.update("transactions", item.txn.id, { reconciled: false, bankLineId: null });
+    } else {
+      DB.update("transactions", item.txnId, { reconciled: false, bankLineId: null, manualReconcileNote: null, ignoredReconciliation: false });
+    }
     DB.log("Conciliação", "Desfez uma conciliação bancária");
     Toast.show("Conciliação desfeita", "info");
     render();
   }
 
   function round2(n) { return Math.round(n * 100) / 100; }
-
-  // ---------------- Render ----------------
-  function render() {
-    var bankLines = DB.all("bankLines");
-    var txns = DB.all("transactions");
-
-    var unmatchedBank = bankLines.filter(function (b) { return !b.matched; })
-      .filter(function (b) { return (!rfilter.start || b.date >= rfilter.start) && (!rfilter.end || b.date <= rfilter.end); })
-      .sort(function (a, b) { return b.date.localeCompare(a.date); });
-    var unmatchedTxn = txns.filter(function (t) { return t.status === "pago" && !t.reconciled; })
-      .filter(function (t) { return (!rfilter.start || t.date >= rfilter.start) && (!rfilter.end || t.date <= rfilter.end); })
-      .sort(function (a, b) { return b.date.localeCompare(a.date); });
-
-    var matchedCount = bankLines.filter(function (b) { return b.matched; }).length;
-    var totalBankLines = bankLines.length;
-    var pct = totalBankLines ? (matchedCount / totalBankLines * 100) : 0;
-
-    document.getElementById("recon-summary").innerHTML = [
-      kpi("Linhas Importadas", String(totalBankLines), "fa-file-lines", "#0eb8d9", "#dbf7fc"),
-      kpi("Conciliadas", matchedCount + " (" + pct.toFixed(0) + "%)", "fa-circle-check", "#1baf7a", "#e2f5ec"),
-      kpi("Extrato sem correspondência", String(unmatchedBank.length), "fa-triangle-exclamation", "#b7791f", "#fdf2df"),
-      kpi("Lançamentos sem conciliar", String(unmatchedTxn.length), "fa-file-invoice", "#c23b3b", "#fbe6e6")
-    ].join("");
-
-    document.getElementById("bank-col-sub").textContent = unmatchedBank.length + " linha(s) em aberto";
-    document.getElementById("txn-col-sub").textContent = unmatchedTxn.length + " lançamento(s) pagos em aberto";
-
-    var RENDER_CAP = 60;
-    var bankToRender = unmatchedBank.slice(0, RENDER_CAP);
-    var txnToRender = unmatchedTxn.slice(0, RENDER_CAP);
-    var bankCapNote = unmatchedBank.length > RENDER_CAP ? '<div class="small text-muted mt-8">Mostrando as ' + RENDER_CAP + ' mais recentes de ' + unmatchedBank.length + '. Reduza o período no filtro para ver as demais.</div>' : "";
-    var txnCapNote = unmatchedTxn.length > RENDER_CAP ? '<div class="small text-muted mt-8">Mostrando ' + RENDER_CAP + ' de ' + unmatchedTxn.length + '. Reduza o período no filtro para ver os demais.</div>' : "";
-
-    var bankEl = document.getElementById("bank-lines-list");
-    if (!unmatchedBank.length) {
-      bankEl.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-circle-check"></i></div><h4>Nada pendente no extrato</h4><p>Importe um novo extrato para continuar conciliando.</p></div>';
-    } else {
-      var txnIndexForRender = buildTxnAmountIndex(unmatchedTxn);
-      bankEl.innerHTML = bankToRender.map(function (b) {
-        var suggestion = findSuggestion(b, txnIndexForRender);
-        return '<div class="recon-item' + (b.id === selectedBankId ? " selected" : "") + '" data-bank="' + b.id + '">' +
-          '<div>' +
-            '<div class="ri-desc">' + Utils.escapeHtml(b.description) + '</div>' +
-            '<div class="ri-meta">' + Utils.fmtDate(b.date) + (suggestion ? ' · <span class="text-success"><i class="fa-solid fa-wand-magic-sparkles"></i> sugestão encontrada</span>' : '') + '</div>' +
-          '</div>' +
-          '<div class="flex items-center gap-6">' +
-            '<span class="font-bold ' + (b.amount >= 0 ? "text-success" : "text-danger") + '">' + Utils.fmtMoney(b.amount) + '</span>' +
-            (suggestion ? '<button class="btn btn-sm btn-outline" data-quick-match="' + b.id + '|' + suggestion.id + '" title="Comparar os dois registros antes de confirmar"><i class="fa-solid fa-magnifying-glass-chart"></i> Comparar e Confirmar</button>' :
-              '<button class="btn btn-sm btn-ghost" data-create-from="' + b.id + '" title="Criar lançamento a partir desta linha"><i class="fa-solid fa-plus"></i></button>') +
-          '</div></div>';
-      }).join("") + bankCapNote;
-
-      Utils.qsa("[data-bank]", bankEl).forEach(function (el) {
-        el.addEventListener("click", function (e) {
-          if (e.target.closest("[data-quick-match]") || e.target.closest("[data-create-from]")) return;
-          selectedBankId = selectedBankId === el.getAttribute("data-bank") ? null : el.getAttribute("data-bank");
-          tryMatchSelection();
-          render();
-        });
-      });
-      Utils.qsa("[data-quick-match]", bankEl).forEach(function (btn) {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          var parts = btn.getAttribute("data-quick-match").split("|");
-          openSuggestionCompareModal(parts[0], parts[1]);
-        });
-      });
-      Utils.qsa("[data-create-from]", bankEl).forEach(function (btn) {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          createTxnFromBankLine(btn.getAttribute("data-create-from"));
-        });
-      });
-    }
-
-    var txnEl = document.getElementById("system-txn-list");
-    var categories = DB.all("categories");
-    if (!unmatchedTxn.length) {
-      txnEl.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-circle-check"></i></div><h4>Tudo conciliado</h4><p>Todos os lançamentos pagos já foram batidos com o extrato.</p></div>';
-    } else {
-      txnEl.innerHTML = txnToRender.map(function (t) {
-        var cat = categories.find(function (c) { return c.id === t.categoryId; });
-        return '<div class="recon-item' + (t.id === selectedTxnId ? " selected" : "") + '" data-txn="' + t.id + '">' +
-          '<div>' +
-            '<div class="ri-desc">' + Utils.escapeHtml(t.description) + '</div>' +
-            '<div class="ri-meta">' + Utils.fmtDate(t.date) + ' · ' + (cat ? Utils.escapeHtml(cat.name) : "") + '</div>' +
-          '</div>' +
-          '<span class="font-bold ' + (t.type === "receita" ? "text-success" : "text-danger") + '">' + (t.type === "receita" ? "+" : "-") + " " + Utils.fmtMoney(t.amount) + '</span>' +
-          '</div>';
-      }).join("") + txnCapNote;
-      Utils.qsa("[data-txn]", txnEl).forEach(function (el) {
-        el.addEventListener("click", function () {
-          selectedTxnId = selectedTxnId === el.getAttribute("data-txn") ? null : el.getAttribute("data-txn");
-          tryMatchSelection();
-          render();
-        });
-      });
-    }
-
-    // history
-    var historyPairs = bankLines.filter(function (b) { return b.matched; }).sort(function (a, b) { return b.date.localeCompare(a.date); }).slice(0, 40);
-    var histTbl = document.getElementById("tbl-history");
-    if (!historyPairs.length) {
-      Utils.emptyTable(histTbl, "fa-clock", "Nenhuma conciliação realizada ainda");
-    } else {
-      historyPairs = Utils.sortBy(historyPairs, histSortState);
-      histTbl.innerHTML = '<thead><tr>' +
-        Utils.thSort("Data Extrato", "date", histSortState) +
-        Utils.thSort("Descrição Banco", "description", histSortState) +
-        Utils.thSort("Valor", "amount", histSortState, { className: "text-right" }) +
-        '<th>Lançamento do Sistema</th><th></th></tr></thead><tbody>' +
-        historyPairs.map(function (b) {
-          var t = txns.find(function (x) { return x.id === b.matchedTransactionId; });
-          return '<tr><td class="text-num">' + Utils.fmtDate(b.date) + '</td><td>' + Utils.escapeHtml(b.description) + '</td>' +
-            '<td class="text-right text-num">' + Utils.fmtMoney(b.amount) + '</td>' +
-            '<td>' + (t ? Utils.escapeHtml(t.description) : '<span class="text-muted">registro removido</span>') + '</td>' +
-            '<td><button class="btn btn-sm btn-ghost" data-unmatch="' + b.id + '">Desfazer</button></td></tr>';
-        }).join("") + '</tbody>';
-      Utils.wireSortHeaders(histTbl, histSortState, render);
-      Utils.qsa("[data-unmatch]", histTbl).forEach(function (btn) {
-        btn.addEventListener("click", function () { unmatch(btn.getAttribute("data-unmatch")); });
-      });
-    }
-  }
-
-  function tryMatchSelection() {
-    if (selectedBankId && selectedTxnId) matchPair(selectedBankId, selectedTxnId);
-  }
-
-  function kpi(label, value, icon, color, bg) {
-    return '<div class="kpi-card"><div class="kpi-icon" style="background:' + bg + ';color:' + color + ';"><i class="fa-solid ' + icon + '"></i></div>' +
-      '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
-  }
 
   function createTxnFromBankLine(bankId) {
     var b = DB.get("bankLines", bankId);
@@ -517,9 +442,6 @@
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cf-save">Criar e Conciliar</button>';
     var box = Modal.open({ title: "Criar Lançamento a partir do Extrato", bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#cf-amount"), Math.abs(b.amount));
-    box.querySelector("#cf-cat").addEventListener("change", function () {
-      var c = categories.find(function (x) { return x.id === this.value; }.bind(this));
-    });
     box.querySelector("#cf-save").addEventListener("click", function () {
       var cat = categories.find(function (c) { return c.id === box.querySelector("#cf-cat").value; });
       var txn = DB.insert("transactions", {
@@ -537,5 +459,179 @@
       Toast.show("Lançamento criado e conciliado", "success");
       render();
     });
+  }
+
+  // ---------------- Render ----------------
+  function render() {
+    var dir = state.dir;
+    var bankLines = DB.all("bankLines");
+    var txns = DB.all("transactions");
+
+    var unmatchedBankDir = bankLines.filter(function (b) { return !b.matched && dirOfBankLine(b) === dir; });
+    var unmatchedTxnDir = txns.filter(function (t) { return t.status === "pago" && !t.reconciled && t.type === dir; });
+
+    var unmatchedBank = unmatchedBankDir
+      .filter(function (b) { return (!rfilter.start || b.date >= rfilter.start) && (!rfilter.end || b.date <= rfilter.end); })
+      .sort(function (a, b) { return b.date.localeCompare(a.date); });
+    var unmatchedTxn = unmatchedTxnDir
+      .filter(function (t) { return (!rfilter.start || t.date >= rfilter.start) && (!rfilter.end || t.date <= rfilter.end); })
+      .sort(function (a, b) { return b.date.localeCompare(a.date); });
+
+    // "Linhas Importadas"/"Conciliadas" refletem TODO o histórico da
+    // direção ativa (não só o período filtrado) — o período filtra apenas
+    // as duas colunas de pendências abaixo, igual ao comportamento já
+    // existente antes desta rodada.
+    var bankLinesDirAll = bankLines.filter(function (b) { return dirOfBankLine(b) === dir; });
+    var matchedCount = bankLinesDirAll.filter(function (b) { return b.matched; }).length;
+    var totalBankLines = bankLinesDirAll.length;
+    var pct = totalBankLines ? (matchedCount / totalBankLines * 100) : 0;
+
+    document.getElementById("recon-summary").innerHTML = [
+      kpi("Linhas Importadas", String(totalBankLines), "fa-file-lines", "#0eb8d9", "#dbf7fc"),
+      kpi("Conciliadas", matchedCount + " (" + pct.toFixed(0) + "%)", "fa-circle-check", "#1baf7a", "#e2f5ec"),
+      kpi("Extrato sem correspondência", String(unmatchedBank.length), "fa-triangle-exclamation", "#b7791f", "#fdf2df"),
+      kpi("Lançamentos sem conciliar", String(unmatchedTxn.length), "fa-file-invoice", "#c23b3b", "#fbe6e6")
+    ].join("");
+
+    document.getElementById("bank-col-sub").textContent = unmatchedBank.length + " linha(s) em aberto — " + (dir === "receita" ? "Entradas" : "Saídas");
+    document.getElementById("txn-col-sub").textContent = unmatchedTxn.length + " lançamento(s) pagos em aberto — " + (dir === "receita" ? "Entradas" : "Saídas");
+    document.getElementById("hist-col-sub").textContent = "Pares já conciliados — " + (dir === "receita" ? "Entradas" : "Saídas");
+
+    var RENDER_CAP = 60;
+    var bankToRender = unmatchedBank.slice(0, RENDER_CAP);
+    var txnToRender = unmatchedTxn.slice(0, RENDER_CAP);
+    var bankCapNote = unmatchedBank.length > RENDER_CAP ? '<div class="small text-muted mt-8">Mostrando as ' + RENDER_CAP + ' mais recentes de ' + unmatchedBank.length + '. Reduza o período no filtro para ver as demais.</div>' : "";
+    var txnCapNote = unmatchedTxn.length > RENDER_CAP ? '<div class="small text-muted mt-8">Mostrando ' + RENDER_CAP + ' de ' + unmatchedTxn.length + '. Reduza o período no filtro para ver os demais.</div>' : "";
+
+    var bankEl = document.getElementById("bank-lines-list");
+    if (!unmatchedBank.length) {
+      bankEl.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-circle-check"></i></div><h4>Nada pendente no extrato</h4><p>Importe um novo extrato para continuar conciliando.</p></div>';
+    } else {
+      bankEl.innerHTML = bankToRender.map(function (b) {
+        return '<div class="recon-item" data-bank="' + b.id + '">' +
+          '<div>' +
+            '<div class="ri-desc">' + Utils.escapeHtml(b.description) + '</div>' +
+            '<div class="ri-meta">' + Utils.fmtDate(b.date) + '</div>' +
+          '</div>' +
+          '<div class="flex items-center gap-6">' +
+            '<span class="font-bold ' + (b.amount >= 0 ? "text-success" : "text-danger") + '">' + Utils.fmtMoney(b.amount) + '</span>' +
+            '<button type="button" class="ri-kebab-btn" data-bank-menu="' + b.id + '" title="Mais opções"><i class="fa-solid fa-ellipsis-vertical"></i></button>' +
+          '</div></div>';
+      }).join("") + bankCapNote;
+
+      Utils.qsa("[data-bank-menu]", bankEl).forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var b = DB.get("bankLines", btn.getAttribute("data-bank-menu"));
+          if (b) openBankLineMenu(btn, b);
+        });
+      });
+    }
+
+    var txnEl = document.getElementById("system-txn-list");
+    var categories = DB.all("categories");
+    if (!unmatchedTxn.length) {
+      txnEl.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-circle-check"></i></div><h4>Tudo conciliado</h4><p>Todos os lançamentos pagos já foram batidos com o extrato.</p></div>';
+    } else {
+      txnEl.innerHTML = txnToRender.map(function (t) {
+        var cat = categories.find(function (c) { return c.id === t.categoryId; });
+        return '<div class="recon-item" data-txn="' + t.id + '">' +
+          '<div>' +
+            '<div class="ri-desc">' + Utils.escapeHtml(t.description) + '</div>' +
+            '<div class="ri-meta">' + Utils.fmtDate(t.date) + ' · ' + (cat ? Utils.escapeHtml(cat.name) : "") + '</div>' +
+          '</div>' +
+          '<div class="flex items-center gap-6">' +
+            '<span class="font-bold ' + (t.type === "receita" ? "text-success" : "text-danger") + '">' + (t.type === "receita" ? "+" : "-") + " " + Utils.fmtMoney(t.amount) + '</span>' +
+            '<button type="button" class="ri-kebab-btn" data-txn-menu="' + t.id + '" title="Mais opções"><i class="fa-solid fa-ellipsis-vertical"></i></button>' +
+          '</div></div>';
+      }).join("") + txnCapNote;
+      Utils.qsa("[data-txn-menu]", txnEl).forEach(function (btn) {
+        btn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var t = DB.get("transactions", btn.getAttribute("data-txn-menu"));
+          if (t) openTxnMenu(btn, t);
+        });
+      });
+    }
+
+    renderHistory(dir);
+  }
+
+  // Monta a lista unificada do Histórico para a direção ativa: pares
+  // conciliados (bankLine + lançamento), conciliações manuais justificadas
+  // e itens ignorados — de qualquer um dos dois lados (extrato ou
+  // lançamento), já que "conciliação manual" e "ignorar" podem começar de
+  // qualquer um dos dois.
+  function buildHistoryItems(dir) {
+    var bankLines = DB.all("bankLines");
+    var txns = DB.all("transactions");
+    var items = [];
+
+    bankLines.filter(function (b) { return b.matched && dirOfBankLine(b) === dir; }).forEach(function (b) {
+      var t = b.matchedTransactionId ? txns.find(function (x) { return x.id === b.matchedTransactionId; }) : null;
+      items.push({
+        date: b.date,
+        bankDesc: b.description,
+        amount: b.amount,
+        kind: t ? "pair" : (b.ignored ? "ignored" : "manual"),
+        txn: t,
+        note: b.manualNote,
+        bankId: b.id,
+        source: "bank"
+      });
+    });
+
+    // conciliações manuais/ignoradas iniciadas pelo lado do lançamento, sem
+    // linha do extrato vinculada (senão já estariam cobertas acima).
+    txns.filter(function (t) { return t.reconciled && !t.bankLineId && t.type === dir; }).forEach(function (t) {
+      items.push({
+        date: t.date,
+        bankDesc: null,
+        amount: t.type === "receita" ? t.amount : -t.amount,
+        kind: t.ignoredReconciliation ? "ignored" : "manual",
+        txn: t,
+        note: t.manualReconcileNote,
+        txnId: t.id,
+        source: "txn"
+      });
+    });
+
+    return items.sort(function (a, b) { return b.date.localeCompare(a.date); });
+  }
+
+  function renderHistory(dir) {
+    var items = buildHistoryItems(dir).slice(0, 40);
+    var histTbl = document.getElementById("tbl-history");
+    if (!items.length) {
+      Utils.emptyTable(histTbl, "fa-clock", "Nenhuma conciliação realizada ainda");
+      return;
+    }
+    var sortGetters = { description: function (it) { return it.bankDesc || (it.txn ? it.txn.description : ""); } };
+    items = Utils.sortBy(items, histSortState, sortGetters);
+    histTbl.innerHTML = '<thead><tr>' +
+      Utils.thSort("Data", "date", histSortState) +
+      Utils.thSort("Descrição", "description", histSortState) +
+      Utils.thSort("Valor", "amount", histSortState, { className: "text-right" }) +
+      '<th>Conciliação</th><th></th></tr></thead><tbody>' +
+      items.map(function (it, i) {
+        var desc = it.bankDesc || (it.txn ? it.txn.description : "-");
+        var pairCol;
+        if (it.kind === "pair") pairCol = Utils.escapeHtml(it.txn.description);
+        else if (it.kind === "manual") pairCol = '<span class="recon-manual-note"><i class="fa-solid fa-pen-to-square"></i> ' + Utils.escapeHtml(it.note || "Manual") + '</span>';
+        else pairCol = '<span class="text-muted"><i class="fa-solid fa-eye-slash"></i> Ignorado</span>';
+        return '<tr><td class="text-num">' + Utils.fmtDate(it.date) + '</td><td>' + Utils.escapeHtml(desc) + '</td>' +
+          '<td class="text-right text-num">' + Utils.fmtMoney(it.amount) + '</td>' +
+          '<td>' + pairCol + '</td>' +
+          '<td><button class="btn btn-sm btn-ghost" data-undo="' + i + '">Desfazer</button></td></tr>';
+      }).join("") + '</tbody>';
+    Utils.wireSortHeaders(histTbl, histSortState, render);
+    Utils.qsa("[data-undo]", histTbl).forEach(function (btn) {
+      btn.addEventListener("click", function () { undoHistoryItem(items[parseInt(btn.getAttribute("data-undo"), 10)]); });
+    });
+  }
+
+  function kpi(label, value, icon, color, bg) {
+    return '<div class="kpi-card"><div class="kpi-icon" style="background:' + bg + ';color:' + color + ';"><i class="fa-solid ' + icon + '"></i></div>' +
+      '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
   }
 })();

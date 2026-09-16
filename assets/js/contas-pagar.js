@@ -63,7 +63,7 @@
       render();
     });
     Utils.qs("#btn-cp-export").addEventListener("click", exportCSV);
-    Utils.qs("#btn-cp-bulk-pay").addEventListener("click", bulkMarkAsPaid);
+    Utils.qs("#btn-cp-bulk-pay").addEventListener("click", bulkAction);
 
     render();
   }
@@ -77,13 +77,40 @@
     return "futuro";
   }
 
+  function isPagaView() { return state.bucket === "paga"; }
+
+  // Lista de despesas ainda em aberto (pendente), com o bucket de vencimento
+  // calculado — usada pelos 5 KPIs de situação e pelos gráficos de previsão,
+  // que continuam sempre refletindo o que está em aberto, independente da
+  // aba "Pagas" estar selecionada ou não (ela só troca o conteúdo da tabela
+  // principal, não o resumo/gráficos de previsão).
   function getAll() {
     var today = Utils.todayISO();
     return DB.all("transactions").filter(function (t) { return t.type === "despesa" && t.status === "pendente"; })
       .map(function (t) { return Object.assign({ _bucket: bucketFor(t.date, today) }, t); });
   }
 
+  // Lista de despesas já pagas — usada só quando a aba "Pagas" está ativa.
+  // Nota: ao marcar uma conta como paga (aqui ou em Lançamentos), o campo
+  // `date` passa a guardar a DATA DO PAGAMENTO (não mais o vencimento
+  // original) — por isso os filtros "Vencimento de/até" nesta visão filtram
+  // pela data em que a conta foi paga.
+  function getAllPagas() {
+    return DB.all("transactions").filter(function (t) { return t.type === "despesa" && t.status === "pago"; })
+      .map(function (t) { return Object.assign({ _bucket: "paga" }, t); });
+  }
+
   function getFiltered() {
+    if (isPagaView()) {
+      return getAllPagas().filter(function (t) {
+        if (state.cc && t.costCenterId !== state.cc) return false;
+        if (state.cat && t.categoryId !== state.cat) return false;
+        if (state.dateStart && t.date < state.dateStart) return false;
+        if (state.dateEnd && t.date > state.dateEnd) return false;
+        if (state.search && t.description.toLowerCase().indexOf(state.search) === -1) return false;
+        return true;
+      }).sort(function (a, b) { return b.date.localeCompare(a.date); }); // pagas mais recentes primeiro
+    }
     var list = getAll();
     return list.filter(function (t) {
       if (state.bucket && t._bucket !== state.bucket) return false;
@@ -97,6 +124,21 @@
   }
 
   function render() {
+    var paga = isPagaView();
+    document.getElementById("cp-charts-section").style.display = paga ? "none" : "";
+    document.getElementById("cp-table-title").textContent = paga ? "Contas Pagas" : "Contas a Pagar";
+    document.getElementById("cp-bulk-btn-label").textContent = paga ? "Reverter selecionados para pendente" : "Marcar selecionados como pago";
+    if (paga) {
+      renderPagaSummary();
+      var costCentersPaga = DB.all("costCenters"), categoriesPaga = DB.all("categories");
+      var sortGettersPaga = {
+        category: function (t) { var c = categoriesPaga.find(function (x) { return x.id === t.categoryId; }); return c ? c.name : ""; },
+        costCenter: function (t) { var c = costCentersPaga.find(function (x) { return x.id === t.costCenterId; }); return c ? c.name : ""; }
+      };
+      renderTable(Utils.sortBy(getFiltered(), sortState, sortGettersPaga), costCentersPaga, categoriesPaga, true);
+      return;
+    }
+
     var today = Utils.todayISO();
     var all = getAll();
     var costCenters = DB.all("costCenters"), categories = DB.all("categories");
@@ -168,56 +210,79 @@
       situacao: function (t) { return BUCKET_RANK[t._bucket]; }
     };
     var filtered = Utils.sortBy(filteredForCc, sortState, sortGetters);
+    renderTable(filtered, costCenters, categories, false);
+  }
+
+  // Resumo (KPIs) da aba "Pagas" — total pago e quantidade, respeitando os
+  // filtros de Centro de Custo/Categoria/Data/Busca atualmente aplicados
+  // (a data aqui é a data de pagamento, ver nota em getAllPagas()).
+  function renderPagaSummary() {
+    var filtered = getFiltered();
+    document.getElementById("cp-summary").innerHTML = [
+      kpi("Total Pago", Utils.fmtMoney(sum(filtered)), filtered.length + " conta(s)", "fa-circle-check", "#1baf7a", "#e2f5ec"),
+      kpi("Quantidade de Contas Pagas", String(filtered.length), "no filtro atual", "fa-file-invoice-dollar", "#0eb8d9", "#dbf7fc")
+    ].join("");
+  }
+
+  // Renderiza a tabela principal — compartilhada entre a visão "Contas a
+  // Pagar" (pendente, com Situação/vencimento + "Marcar como pago") e
+  // "Pagas" (com Forma de Pagamento + "Reverter para pendente"), já que as
+  // duas usam a mesma seleção em lote/checkbox por linha.
+  function renderTable(filtered, costCenters, categories, paga) {
     // drop selections that are no longer visible under the current filters
     var visibleIds = {};
     filtered.forEach(function (t) { visibleIds[t.id] = true; });
     Object.keys(selectedIds).forEach(function (id) { if (!visibleIds[id]) delete selectedIds[id]; });
 
-    document.getElementById("cp-count-sub").textContent = filtered.length + " conta(s) a pagar";
+    document.getElementById("cp-count-sub").textContent = filtered.length + (paga ? " conta(s) paga(s)" : " conta(s) a pagar");
     var tbl = document.getElementById("tbl-cp");
     if (!filtered.length) {
-      Utils.emptyTable(tbl, "fa-circle-check", "Nenhuma conta a pagar encontrada", "Ajuste os filtros ou a situação selecionada.");
-    } else {
-      tbl.innerHTML = '<thead><tr><th class="cp-col-check"><input type="checkbox" id="cp-select-all"></th>' +
-        Utils.thSort("Vencimento", "date", sortState) +
-        Utils.thSort("Descrição", "description", sortState) +
-        Utils.thSort("Categoria", "category", sortState) +
-        Utils.thSort("Centro de Custo", "costCenter", sortState) +
-        Utils.thSort("Situação", "situacao", sortState) +
-        Utils.thSort("Valor", "amount", sortState, { className: "text-right" }) +
-        '<th></th></tr></thead><tbody>' +
-        filtered.map(function (t) {
-          var cat = categories.find(function (c) { return c.id === t.categoryId; });
-          var cc = costCenters.find(function (c) { return c.id === t.costCenterId; });
-          return '<tr>' +
-            '<td class="cp-col-check"><input type="checkbox" class="cp-row-check" data-id="' + t.id + '"' + (selectedIds[t.id] ? " checked" : "") + '></td>' +
-            '<td class="text-num">' + Utils.fmtDate(t.date) + '</td>' +
-            '<td>' + Utils.escapeHtml(t.description) + '</td>' +
-            '<td>' + (cat ? '<span class="chip">' + Utils.escapeHtml(cat.name) + '</span>' : "-") + '</td>' +
-            '<td>' + Utils.escapeHtml(cc ? cc.name : "-") + '</td>' +
-            '<td>' + situationBadge(t._bucket) + '</td>' +
-            '<td class="text-right text-num text-danger">' + Utils.fmtMoney(t.amount) + '</td>' +
-            '<td><button class="btn btn-sm btn-primary" data-pay="' + t.id + '">Marcar como pago</button></td>' +
-            '</tr>';
-        }).join("") + '</tbody>';
-      Utils.wireSortHeaders(tbl, sortState, render);
-      Utils.qsa("[data-pay]", tbl).forEach(function (b) { b.addEventListener("click", function () { openPayModal(b.getAttribute("data-pay")); }); });
-      Utils.qsa(".cp-row-check", tbl).forEach(function (cb) {
-        cb.addEventListener("change", function () {
-          var id = cb.getAttribute("data-id");
-          if (cb.checked) selectedIds[id] = true; else delete selectedIds[id];
-          updateSelectAllState(filtered);
-          updateBulkBar();
-        });
-      });
-      var selectAll = document.getElementById("cp-select-all");
-      selectAll.addEventListener("change", function () {
-        filtered.forEach(function (t) { if (selectAll.checked) selectedIds[t.id] = true; else delete selectedIds[t.id]; });
-        Utils.qsa(".cp-row-check", tbl).forEach(function (cb) { cb.checked = selectAll.checked; });
+      Utils.emptyTable(tbl, "fa-circle-check", paga ? "Nenhuma conta paga encontrada" : "Nenhuma conta a pagar encontrada", "Ajuste os filtros ou a situação selecionada.");
+      updateBulkBar();
+      return;
+    }
+    tbl.innerHTML = '<thead><tr><th class="cp-col-check"><input type="checkbox" id="cp-select-all"></th>' +
+      Utils.thSort(paga ? "Data do Pagamento" : "Vencimento", "date", sortState) +
+      Utils.thSort("Descrição", "description", sortState) +
+      Utils.thSort("Categoria", "category", sortState) +
+      Utils.thSort("Centro de Custo", "costCenter", sortState) +
+      (paga ? Utils.thSort("Forma de Pagamento", "paymentMethod", sortState) : Utils.thSort("Situação", "situacao", sortState)) +
+      Utils.thSort("Valor", "amount", sortState, { className: "text-right" }) +
+      '<th></th></tr></thead><tbody>' +
+      filtered.map(function (t) {
+        var cat = categories.find(function (c) { return c.id === t.categoryId; });
+        var cc = costCenters.find(function (c) { return c.id === t.costCenterId; });
+        return '<tr>' +
+          '<td class="cp-col-check"><input type="checkbox" class="cp-row-check" data-id="' + t.id + '"' + (selectedIds[t.id] ? " checked" : "") + '></td>' +
+          '<td class="text-num">' + Utils.fmtDate(t.date) + '</td>' +
+          '<td>' + Utils.escapeHtml(t.description) + '</td>' +
+          '<td>' + (cat ? '<span class="chip">' + Utils.escapeHtml(cat.name) + '</span>' : "-") + '</td>' +
+          '<td>' + Utils.escapeHtml(cc ? cc.name : "-") + '</td>' +
+          '<td>' + (paga ? (t.paymentMethod ? Utils.escapeHtml(t.paymentMethod) : "-") : situationBadge(t._bucket)) + '</td>' +
+          '<td class="text-right text-num text-danger">' + Utils.fmtMoney(t.amount) + '</td>' +
+          '<td>' + (paga ?
+            '<button class="btn btn-sm btn-secondary" data-revert="' + t.id + '">Reverter p/ pendente</button>' :
+            '<button class="btn btn-sm btn-primary" data-pay="' + t.id + '">Marcar como pago</button>') + '</td>' +
+          '</tr>';
+      }).join("") + '</tbody>';
+    Utils.wireSortHeaders(tbl, sortState, render);
+    Utils.qsa("[data-pay]", tbl).forEach(function (b) { b.addEventListener("click", function () { openPayModal(b.getAttribute("data-pay")); }); });
+    Utils.qsa("[data-revert]", tbl).forEach(function (b) { b.addEventListener("click", function () { revertToPendente([b.getAttribute("data-revert")]); }); });
+    Utils.qsa(".cp-row-check", tbl).forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        var id = cb.getAttribute("data-id");
+        if (cb.checked) selectedIds[id] = true; else delete selectedIds[id];
+        updateSelectAllState(filtered);
         updateBulkBar();
       });
-      updateSelectAllState(filtered);
-    }
+    });
+    var selectAll = document.getElementById("cp-select-all");
+    selectAll.addEventListener("change", function () {
+      filtered.forEach(function (t) { if (selectAll.checked) selectedIds[t.id] = true; else delete selectedIds[t.id]; });
+      Utils.qsa(".cp-row-check", tbl).forEach(function (cb) { cb.checked = selectAll.checked; });
+      updateBulkBar();
+    });
+    updateSelectAllState(filtered);
     updateBulkBar();
   }
 
@@ -236,9 +301,16 @@
     document.getElementById("cp-bulk-count").textContent = count + (count === 1 ? " conta selecionada" : " contas selecionadas");
   }
 
-  function bulkMarkAsPaid() {
+  // Botão em lote muda de ação conforme a aba: "Marcar como pago" na visão
+  // pendente, "Reverter para pendente" na visão "Pagas".
+  function bulkAction() {
     var ids = Object.keys(selectedIds);
     if (!ids.length) return;
+    if (isPagaView()) revertToPendente(ids);
+    else bulkMarkAsPaid(ids);
+  }
+
+  function bulkMarkAsPaid(ids) {
     var today = Utils.todayISO();
     var count = 0, total = 0;
     DB.batch(function () {
@@ -254,6 +326,37 @@
     Toast.show(count + " conta(s) marcada(s) como paga(s)", "success");
     selectedIds = {};
     render();
+  }
+
+  // Reverte uma ou mais contas já pagas de volta para "pendente" — usada
+  // tanto pelo botão individual da linha quanto pela ação em lote na aba
+  // "Pagas". Não recalcula o vencimento original (não é guardado em
+  // lugar nenhum depois que a conta é paga); a conta volta a aparecer em
+  // "Contas a Pagar" com a data que estava salva (a de pagamento), como
+  // vencimento — o usuário pode ajustar manualmente se precisar de outra
+  // data, mesmo comportamento já usado em Lançamentos Financeiros ao mudar
+  // o Status de um lançamento de volta para "Pendente".
+  function revertToPendente(ids) {
+    Modal.confirm({
+      title: "Reverter para pendente",
+      message: (ids.length > 1 ? "As " + ids.length + " contas selecionadas vão" : "Esta conta vai") + " voltar para \"Contas a Pagar\" como pendente. Confirmar?",
+      confirmLabel: "Reverter",
+      onConfirm: function () {
+        var count = 0;
+        DB.batch(function () {
+          ids.forEach(function (id) {
+            var t = DB.get("transactions", id);
+            if (!t || t.status !== "pago") return;
+            DB.update("transactions", id, { status: "pendente" });
+            count++;
+          });
+        });
+        DB.log("Contas a Pagar", "Reverteu " + count + " conta(s) paga(s) para pendente");
+        Toast.show(count + " conta(s) revertida(s) para pendente", "success");
+        selectedIds = {};
+        render();
+      }
+    });
   }
 
   function situationBadge(bucket) {
@@ -303,19 +406,23 @@
   function round2(n) { return Math.round(n * 100) / 100; }
 
   function exportCSV() {
+    var paga = isPagaView();
     var filtered = getFiltered();
     var costCenters = DB.all("costCenters"), categories = DB.all("categories");
-    var header = ["Vencimento", "Descrição", "Categoria", "Centro de Custo", "Situação", "Valor"];
+    var header = paga
+      ? ["Data do Pagamento", "Descrição", "Categoria", "Centro de Custo", "Forma de Pagamento", "Valor"]
+      : ["Vencimento", "Descrição", "Categoria", "Centro de Custo", "Situação", "Valor"];
     var rows = filtered.map(function (t) {
       var cat = categories.find(function (c) { return c.id === t.categoryId; });
       var cc = costCenters.find(function (c) { return c.id === t.costCenterId; });
-      return [t.date, t.description, cat ? cat.name : "", cc ? cc.name : "", BUCKET_LABELS[t._bucket] || t._bucket, String(t.amount).replace(".", ",")];
+      var col5 = paga ? (t.paymentMethod || "") : (BUCKET_LABELS[t._bucket] || t._bucket);
+      return [t.date, t.description, cat ? cat.name : "", cc ? cc.name : "", col5, String(t.amount).replace(".", ",")];
     });
     var csv = [header].concat(rows).map(function (r) {
       return r.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(";");
     }).join("\n");
-    Utils.downloadFile("contas_a_pagar_" + Utils.todayISO() + ".csv", "﻿" + csv, "text/csv;charset=utf-8");
-    Toast.show("Contas a pagar exportadas em CSV", "success");
-    DB.log("Contas a Pagar", "Exportou contas a pagar em CSV (" + filtered.length + " conta(s))");
+    Utils.downloadFile((paga ? "contas_pagas_" : "contas_a_pagar_") + Utils.todayISO() + ".csv", "﻿" + csv, "text/csv;charset=utf-8");
+    Toast.show((paga ? "Contas pagas exportadas" : "Contas a pagar exportadas") + " em CSV", "success");
+    DB.log("Contas a Pagar", "Exportou " + (paga ? "contas pagas" : "contas a pagar") + " em CSV (" + filtered.length + " conta(s))");
   }
 })();
