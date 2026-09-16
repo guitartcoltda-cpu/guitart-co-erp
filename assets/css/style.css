@@ -728,9 +728,39 @@ body.modal-open-lock { overflow: hidden; }
   background: var(--bg-card);
 }
 .recon-item.matched { background: var(--color-success-bg); border-color: #b8e0cc; }
-.recon-item.selected { outline: 2px solid var(--color-primary); }
 .recon-item .ri-desc { font-weight: 600; }
 .recon-item .ri-meta { font-size: 11px; color: var(--gray-500); }
+.recon-item .ri-kebab-btn {
+  width: 28px; height: 28px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);
+  background: var(--bg-card); color: var(--gray-600); cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; font-size: 13px;
+}
+.recon-item .ri-kebab-btn:hover { background: var(--gray-100); color: var(--gray-800); }
+
+/* ActionMenu — menu flutuante de "mais opções" (3 pontinhos), ver
+   global.ActionMenu em utils.js. Independente do Modal/Drawer, para poder
+   ser aberto por cima de qualquer tela sem fechar painéis por trás. */
+.action-menu-backdrop { position: fixed; inset: 0; z-index: 260; background: transparent; }
+.action-menu {
+  position: fixed; z-index: 261; min-width: 240px; max-width: 300px;
+  background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg); padding: 6px; display: flex; flex-direction: column;
+  animation: pg-photo-zoom-in .1s ease-out;
+}
+.action-menu-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 10px; border: none; background: none; border-radius: var(--radius-sm);
+  font-size: 13px; color: var(--gray-800); cursor: pointer;
+}
+.action-menu-item i { width: 16px; text-align: center; color: var(--gray-500); }
+.action-menu-item-spacer { width: 16px; display: inline-block; }
+.action-menu-item:hover { background: var(--gray-100); }
+.action-menu-item.danger { color: var(--color-danger, #c23b3b); }
+.action-menu-item.danger i { color: var(--color-danger, #c23b3b); }
+.action-menu-divider { height: 1px; background: var(--border-color); margin: 5px 2px; }
+
+/* Badges de conciliação manual/ignorada no Histórico */
+.recon-manual-note { font-size: 11px; color: var(--gray-600); font-style: italic; }
 
 /* Drag-drop upload */
 .upload-zone {
