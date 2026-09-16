@@ -425,7 +425,14 @@ body.sidebar-collapsed .sidebar-foot { display: none; }
   overflow: hidden;
 }
 .kpi-card .kpi-label { font-size: 12px; color: var(--gray-500); font-weight: 700; font-family: var(--font-display); text-transform: uppercase; letter-spacing: .07em; }
-.kpi-card .kpi-value { font-size: 25px; font-weight: 700; margin-top: 6px; color: var(--gray-900); line-height: 1.2; overflow-wrap: break-word; font-family: var(--font-mono); letter-spacing: -.01em; }
+.kpi-card .kpi-value {
+  /* fonte monoespaçada é mais larga por caractere que a antiga (sans) —
+     tamanho reduzido de 25px para caber sem quebrar linha em valores como
+     "R$ 28.117,17" nos cards de 210px mínimo (achado na verificação ao
+     vivo desta rodada, 16/09/2026) */
+  font-size: 21px; font-weight: 700; margin-top: 6px; color: var(--gray-900);
+  line-height: 1.25; overflow-wrap: break-word; font-family: var(--font-mono); letter-spacing: -.02em;
+}
 .kpi-card .kpi-delta { font-size: 12px; margin-top: 6px; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .kpi-delta.up { color: var(--color-success); }
 .kpi-delta.down { color: var(--color-danger); }
