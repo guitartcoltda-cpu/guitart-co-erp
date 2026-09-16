@@ -80,8 +80,12 @@
         <div class="filters-bar">
           <div class="form-field"><label>De</label><input type="date" id="rf-start"></div>
           <div class="form-field"><label>Até</label><input type="date" id="rf-end"></div>
-          <button class="btn btn-outline btn-sm" id="btn-auto-match"><i class="fa-solid fa-wand-magic-sparkles"></i> Conciliar sugestões automáticas</button>
           <button class="btn btn-ghost btn-sm" id="btn-clear-recon-filters">Limpar filtros</button>
+        </div>
+
+        <div class="tabs" id="recon-tabs">
+          <button type="button" class="tab-btn active" data-dir="receita"><i class="fa-solid fa-arrow-down text-success"></i> Entradas</button>
+          <button type="button" class="tab-btn" data-dir="despesa"><i class="fa-solid fa-arrow-up text-danger"></i> Saídas</button>
         </div>
 
         <div class="recon-cols">
@@ -97,7 +101,7 @@
 
         <div class="card mt-16">
           <div class="card-header">
-            <div><h3>Histórico de Conciliações</h3><div class="card-header-sub">Pares já conciliados</div></div>
+            <div><h3>Histórico de Conciliações</h3><div class="card-header-sub" id="hist-col-sub">Pares já conciliados</div></div>
           </div>
           <div class="table-wrap"><table class="data-table" id="tbl-history"></table></div>
         </div>

@@ -31,6 +31,8 @@
   .cp-bucket-btn { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-color); background: var(--gray-50); color: var(--gray-600); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .cp-bucket-btn:hover { background: var(--gray-100); color: var(--gray-800); }
   .cp-bucket-btn.active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .cp-bucket-btn-paga { margin-left: 6px; border-left: 2px solid var(--border-color); padding-left: 14px; }
+  .cp-bucket-btn-paga.active { background: var(--color-success); border-color: var(--color-success); }
   .cp-bulk-bar {
     display: none; align-items: center; justify-content: space-between; gap: 12px;
     background: var(--color-primary-light); border: 1px solid var(--color-primary);
@@ -72,6 +74,7 @@
               <button class="cp-bucket-btn" data-bucket="7d" type="button">Próx. 7 dias</button>
               <button class="cp-bucket-btn" data-bucket="30d" type="button">8–30 dias</button>
               <button class="cp-bucket-btn" data-bucket="futuro" type="button">Mais de 30 dias</button>
+              <button class="cp-bucket-btn cp-bucket-btn-paga" data-bucket="paga" type="button"><i class="fa-solid fa-circle-check"></i> Pagas</button>
             </div>
           </div>
         </div>
@@ -88,29 +91,31 @@
 
         <div class="kpi-grid" id="cp-summary" style="margin-bottom:16px;"></div>
 
-        <div class="grid-2 mb-16">
-          <div class="card">
-            <div class="card-header"><div><h3>Previsão de Pagamentos</h3><div class="card-header-sub">Total em aberto por situação de vencimento</div></div></div>
-            <div class="card-body"><div id="chart-cp-forecast"></div></div>
+        <div id="cp-charts-section">
+          <div class="grid-2 mb-16">
+            <div class="card">
+              <div class="card-header"><div><h3>Previsão de Pagamentos</h3><div class="card-header-sub">Total em aberto por situação de vencimento</div></div></div>
+              <div class="card-body"><div id="chart-cp-forecast"></div></div>
+            </div>
+            <div class="card">
+              <div class="card-header"><div><h3>Em Aberto por Centro de Custo</h3></div></div>
+              <div class="card-body"><div id="chart-cp-cc"></div></div>
+            </div>
           </div>
-          <div class="card">
-            <div class="card-header"><div><h3>Em Aberto por Centro de Custo</h3></div></div>
-            <div class="card-body"><div id="chart-cp-cc"></div></div>
-          </div>
-        </div>
 
-        <div class="card mb-16">
-          <div class="card-header"><div><h3>Ranking — Maiores Gastos</h3><div class="card-header-sub">Top categorias com mais despesas pendentes</div></div></div>
-          <div class="card-body"><div id="chart-cp-ranking"></div></div>
+          <div class="card mb-16">
+            <div class="card-header"><div><h3>Ranking — Maiores Gastos</h3><div class="card-header-sub">Top categorias com mais despesas pendentes</div></div></div>
+            <div class="card-body"><div id="chart-cp-ranking"></div></div>
+          </div>
         </div>
 
         <div class="cp-bulk-bar" id="cp-bulk-bar">
           <div class="cp-bulk-count" id="cp-bulk-count">0 conta(s) selecionada(s)</div>
-          <button class="btn btn-primary btn-sm" id="btn-cp-bulk-pay" type="button"><i class="fa-solid fa-check-double"></i> Marcar selecionados como pago</button>
+          <button class="btn btn-primary btn-sm" id="btn-cp-bulk-pay" type="button"><i class="fa-solid fa-check-double"></i> <span id="cp-bulk-btn-label">Marcar selecionados como pago</span></button>
         </div>
 
         <div class="card">
-          <div class="card-header"><div><h3>Contas a Pagar</h3><div class="card-header-sub" id="cp-count-sub"></div></div></div>
+          <div class="card-header"><div><h3 id="cp-table-title">Contas a Pagar</h3><div class="card-header-sub" id="cp-count-sub"></div></div></div>
           <div class="table-wrap"><table class="data-table" id="tbl-cp"></table></div>
         </div>
 
