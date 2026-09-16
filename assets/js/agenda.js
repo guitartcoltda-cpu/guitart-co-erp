@@ -2160,7 +2160,7 @@
           '<span>Outros serviços desta visita</span>' +
           '<button type="button" class="btn btn-sm btn-outline" id="am-add-service"><i class="fa-solid fa-plus"></i> Adicionar outro serviço</button>' +
         '</label>' +
-        '<div class="small text-muted" style="margin:4px 0 10px;">Use quando o cliente fizer mais de um serviço na mesma visita (ex.: alisamento e depois corte) — cada serviço vira um atendimento próprio, podendo ter um profissional diferente. Comissão, assistente ou outros detalhes desse serviço extra ficam para editar depois, abrindo aquele atendimento.</div>' +
+        '<div class="small text-muted" style="margin:4px 0 10px;">Use quando o cliente fizer mais de um serviço na mesma visita (ex.: alisamento e depois corte) — cada serviço vira um atendimento próprio, com profissional, comissão e assistente próprios, se precisar. Outros detalhes desse serviço extra ficam para editar depois, abrindo aquele atendimento.</div>' +
         '<div id="am-extra-existing"></div>' +
         '<div id="am-extra-services"></div>' +
       '</div>';
@@ -2318,6 +2318,73 @@
     var extraRows = []; // ids das linhas ainda ativas (não removidas)
     var extraRowSeq = 0;
     var extraContainerEl = box.querySelector("#am-extra-services");
+    // Solicitações de alteração de comissão (usuários não-Administrador)
+    // feitas numa linha de serviço adicional ANTES de esse atendimento
+    // existir de verdade — mesma lógica de `pendingCommissionRequest`
+    // acima, mas uma por linha (rowId), já que cada serviço adicional vira
+    // seu próprio atendimento só no clique de "Salvar Agendamento".
+    var extraPendingCommissionRequests = {};
+
+    // Mesmo auto-preenchimento de `updateDefaultCommission`/
+    // `updateDefaultAssistantCommission` acima, só que parametrizado por
+    // rowId para funcionar em qualquer linha de "Serviço adicional".
+    function updateExtraDefaultCommission(rowId) {
+      var commInput = box.querySelector("#" + rowId + "-comm-pct");
+      if (!commInput) return; // não-Administrador: campo é só leitura (ver commissionFieldHtml)
+      var empSel = box.querySelector("#" + rowId + "-employee");
+      var emp = empSel && empSel.value ? DB.get("employees", empSel.value) : null;
+      var autoVal = emp && emp.commissionRate != null ? String(emp.commissionRate) : "";
+      var lastAuto = commInput.getAttribute("data-auto-value") || "";
+      if (commInput.value === "" || commInput.value === lastAuto) {
+        commInput.value = autoVal;
+        commInput.setAttribute("data-auto-value", autoVal);
+      }
+    }
+    function updateExtraDefaultAssistantCommission(rowId) {
+      var pctInput = box.querySelector("#" + rowId + "-assistant-pct");
+      if (!pctInput) return;
+      var asstSel = box.querySelector("#" + rowId + "-assistant");
+      var asst = asstSel && asstSel.value ? DB.get("employees", asstSel.value) : null;
+      var autoVal = asst && asst.commissionRate != null ? String(asst.commissionRate) : "10";
+      var lastAuto = pctInput.getAttribute("data-auto-value") || "10";
+      if (pctInput.value === "" || pctInput.value === lastAuto) {
+        pctInput.value = autoVal;
+        pctInput.setAttribute("data-auto-value", autoVal);
+      }
+    }
+    // Mesmo fluxo de "Solicitar alteração" (não-Administrador) usado no
+    // profissional principal (ver bloco `if (!canEditCommission)` mais
+    // abaixo), só que por linha — a solicitação fica pendente em
+    // `extraPendingCommissionRequests[rowId]` e só é enviada de fato no
+    // clique de "Salvar Agendamento", já com o id do atendimento adicional
+    // recém-criado (ver forEach de extraServiceRowsData mais abaixo).
+    function wireExtraCommissionRequestFlow(rowId) {
+      if (canEditCommission) return;
+      var fieldId = rowId + "-comm-pct";
+      var link = box.querySelector("#" + fieldId + "-req-link");
+      if (!link) return;
+      var reqRow = box.querySelector("#" + fieldId + "-req-row");
+      var form = box.querySelector("#" + fieldId + "-req-form");
+      link.addEventListener("click", function (e) {
+        e.preventDefault();
+        link.style.display = "none";
+        form.style.display = "flex";
+      });
+      box.querySelector("#" + fieldId + "-req-cancel").addEventListener("click", function () {
+        form.style.display = "none";
+        link.style.display = "";
+      });
+      box.querySelector("#" + fieldId + "-req-send").addEventListener("click", function () {
+        var val = parseFloat(box.querySelector("#" + fieldId + "-req-value").value);
+        if (isNaN(val) || val < 0 || val > 100) { Toast.show("Informe uma comissão válida (0 a 100)", "danger"); return; }
+        var empSel = box.querySelector("#" + rowId + "-employee");
+        var emp = empSel && empSel.value ? DB.get("employees", empSel.value) : null;
+        var who = "profissional (" + (emp ? emp.name : "-") + ") no serviço adicional";
+        extraPendingCommissionRequests[rowId] = { field: "commissionPercent", requestedValue: val, who: who };
+        reqRow.innerHTML = '<span class="small text-muted">Solicitação de ' + val + '% será enviada para aprovação ao salvar o agendamento.</span>';
+        Toast.show("Solicitação registrada — será enviada ao salvar o agendamento", "info");
+      });
+    }
 
     function computeExtraDefaultTime() {
       var lastTime, lastDurationMin;
@@ -2346,6 +2413,12 @@
           '<div class="form-field"><label>Valor (R$)</label><input type="text" id="' + rowId + '-price"></div>' +
           '<div class="form-field"><label>Horário</label><input type="time" id="' + rowId + '-time" value="' + defaultTime + '"></div>' +
           '<div class="form-field"><label>Duração (min)</label><input type="number" id="' + rowId + '-duration" min="5" step="5" value="30"></div>' +
+          commissionFieldHtml({ id: rowId + "-comm-pct", label: "Comissão do Profissional (%)", currentValue: null, defaultRate: null }) +
+        '</div>' +
+        '<div class="form-field full" style="margin-top:6px;"><label class="flex items-center gap-6" style="font-weight:600;"><input type="checkbox" id="' + rowId + '-has-assistant" style="width:auto;"> Incluir assistente neste atendimento</label></div>' +
+        '<div id="' + rowId + '-assistant-fields" class="form-grid" style="display:none;">' +
+          '<div class="form-field"><label>Assistente</label>' + NameCombo.html({ id: rowId + "-assistant", items: allActiveEmployees.map(function (e) { return { id: e.id, label: e.name }; }), value: "", placeholder: "Nome e sobrenome do assistente" }) + '</div>' +
+          commissionFieldHtml({ id: rowId + "-assistant-pct", label: "Comissão do Assistente (%)", currentValue: 10, defaultRate: null, forceEditable: true }) +
         '</div>' +
       '</div>';
       extraContainerEl.insertAdjacentHTML("beforeend", rowHtml);
@@ -2361,13 +2434,29 @@
         items: services.map(function (s) { return { id: s.id, label: s.name + " (" + s.group + ")" }; }),
         onChange: function (item) { fillExtraFromService(item ? servicesById[item.id] : null); }
       });
-      NameCombo.wire(box, { id: rowId + "-employee", items: employees.map(function (e) { return { id: e.id, label: e.name }; }) });
+      NameCombo.wire(box, {
+        id: rowId + "-employee",
+        items: employees.map(function (e) { return { id: e.id, label: e.name }; }),
+        onChange: function () { updateExtraDefaultCommission(rowId); }
+      });
+      NameCombo.wire(box, {
+        id: rowId + "-assistant",
+        items: allActiveEmployees.map(function (e) { return { id: e.id, label: e.name }; }),
+        onChange: function () { updateExtraDefaultAssistantCommission(rowId); }
+      });
       Utils.wireMoneyMask(box.querySelector("#" + rowId + "-price"), 0);
+      wireExtraCommissionRequestFlow(rowId);
+
+      box.querySelector("#" + rowId + "-has-assistant").addEventListener("change", function (e) {
+        box.querySelector("#" + rowId + "-assistant-fields").style.display = e.target.checked ? "grid" : "none";
+        if (e.target.checked) updateExtraDefaultAssistantCommission(rowId);
+      });
 
       box.querySelector('[data-remove-row="' + rowId + '"]').addEventListener("click", function () {
         var rowEl = box.querySelector('.am-extra-row[data-row-id="' + rowId + '"]');
         if (rowEl) rowEl.remove();
         extraRows = extraRows.filter(function (id) { return id !== rowId; });
+        delete extraPendingCommissionRequests[rowId];
       });
     }
     box.querySelector("#am-add-service").addEventListener("click", addExtraServiceRow);
@@ -2540,12 +2629,34 @@
         var exRowId = extraRows[exi];
         var exServiceId = box.querySelector("#" + exRowId + "-service").value;
         var exEmployeeId = box.querySelector("#" + exRowId + "-employee").value;
-        if (!exServiceId && !exEmployeeId) continue;
+        var exHasAsst = box.querySelector("#" + exRowId + "-has-assistant").checked;
+        if (!exServiceId && !exEmployeeId && !exHasAsst) continue;
         if (!exServiceId || !exEmployeeId) {
           Toast.show("Preencha Serviço e Profissional do \"Serviço adicional " + (exi + 1) + "\", ou remova essa linha", "danger");
           return;
         }
-        extraServiceRowsData.push({ rowId: exRowId, serviceId: exServiceId, employeeId: exEmployeeId });
+        var exAssistantId = exHasAsst ? box.querySelector("#" + exRowId + "-assistant").value : null;
+        if (exHasAsst && !exAssistantId) {
+          Toast.show("Selecione o assistente do \"Serviço adicional " + (exi + 1) + "\" ou desmarque a opção", "danger");
+          return;
+        }
+        // Mesma regra do profissional principal: o campo só é gravado
+        // diretamente para Administrador (ver commissionFieldHtml); para os
+        // demais, fica null aqui e a mudança segue pelo fluxo de
+        // solicitação (extraPendingCommissionRequests, disparado após criar
+        // o atendimento, mais abaixo).
+        var exCommPct;
+        if (canEditCommission) {
+          var exCommPctInput = box.querySelector("#" + exRowId + "-comm-pct");
+          var exCommRaw = exCommPctInput ? exCommPctInput.value : "";
+          exCommPct = exCommRaw !== "" ? parseFloat(exCommRaw) : null;
+        } else {
+          exCommPct = null;
+        }
+        // Comissão do assistente sempre editável na hora (mesma regra do
+        // atendimento principal — não passa pelo fluxo de aprovação).
+        var exAssistantPct = exHasAsst ? (parseFloat(box.querySelector("#" + exRowId + "-assistant-pct").value) || 0) : null;
+        extraServiceRowsData.push({ rowId: exRowId, serviceId: exServiceId, employeeId: exEmployeeId, commissionPercent: exCommPct, assistantId: exAssistantId, assistantCommissionPercent: exAssistantPct });
       }
 
       var hasAsst = box.querySelector("#am-has-assistant").checked;
@@ -2703,11 +2814,22 @@
           price: round2(Utils.moneyMaskToFloat(box.querySelector("#" + row.rowId + "-price"))),
           date: patch.date, time: box.querySelector("#" + row.rowId + "-time").value || patch.time,
           durationMin: (!isNaN(exDurRaw) && exDurRaw > 0 && exDurRaw !== exDefaultDuration) ? exDurRaw : null,
-          status: "agendado", commissionPercent: null, assistantId: null, assistantCommissionPercent: null
+          status: "agendado", commissionPercent: row.commissionPercent,
+          assistantId: row.assistantId, assistantCommissionPercent: row.assistantCommissionPercent
         };
         var exSaved = DB.insert("appointments", exPatch);
         DB.log("Agenda", "Criou um atendimento adicional (" + (exSvc ? exSvc.name : "serviço") + ") para " + exPatch.date + " " + exPatch.time + ", na mesma visita de " + exPatch.date + " " + patch.time);
         if (window.Notificacoes) Notificacoes.queueBookingConfirmation(exSaved);
+        // Se uma alteração de comissão foi pedida para esta linha (usuário
+        // não-Administrador — ver wireExtraCommissionRequestFlow acima), só
+        // agora existe um appointmentId de verdade para anexar ao pedido.
+        var exPending = extraPendingCommissionRequests[row.rowId];
+        if (exPending) {
+          var exClient = DB.get("clients", exPatch.clientId);
+          var exSummary = "Comissão do " + exPending.who + " no atendimento de " + Utils.fmtDate(exSaved.date) + " (" + (exClient ? exClient.name : "cliente") + "): padrão → " + exPending.requestedValue + "%";
+          Approvals.request("comissao_agendamento", exSummary, { appointmentId: exSaved.id, field: exPending.field, requestedValue: exPending.requestedValue });
+          Toast.show("Solicitação de alteração de comissão (serviço adicional) enviada para aprovação", "info");
+        }
       });
       if (extraServiceRowsData.length) Toast.show(extraServiceRowsData.length + " serviço(s) adicional(is) criado(s) para esta visita", "success");
       Modal.close();
