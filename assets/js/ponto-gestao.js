@@ -481,13 +481,59 @@
     return t.reviewed ? '<span class="badge badge-success">Conferido</span>' : '<span class="badge badge-gray">Pendente</span>';
   }
 
+  // Checkbox de conferência rápida, direto na timeline — para não precisar
+  // abrir "Ver / conferir" registro por registro só para flegar o que já foi
+  // conferido. Lido em lote por applyTimelineReviewedChecks() ao salvar.
+  function reviewedCheckboxHtml(t) {
+    return '<label class="tl-check-wrap" title="Marcar como conferido">' +
+      '<input type="checkbox" class="tl-check" data-tl-check="' + t.id + '" ' + (t.reviewed ? "checked" : "") + '>' +
+      '</label>';
+  }
+
+  // Roda quando "Salvar Alterações" é clicado na timeline (modal de detalhe
+  // do dia ou aba Marcações do drawer): aplica só o que mudou de fato
+  // (compara com o valor já salvo), sem exigir abrir cada registro.
+  function applyTimelineReviewedChecks(container) {
+    var changed = 0;
+    Utils.qsa("[data-tl-check]", container).forEach(function (el) {
+      var id = el.getAttribute("data-tl-check");
+      var rec = DB.get("timeClockEntries", id);
+      if (rec && !!rec.reviewed !== el.checked) {
+        DB.update("timeClockEntries", id, { reviewed: el.checked });
+        changed++;
+      }
+    });
+    if (changed) DB.log("Ponto", "Atualizou conferência de " + changed + " marcação(ões) em lote");
+    return changed;
+  }
+
+  // Foto ampliada num overlay próprio, independente de Modal/Drawer (não
+  // fecha o Drawer nem o Modal por trás) — clique na fotinha da timeline só
+  // amplia; abrir o registro para editar continua sendo a lupa ao lado.
+  function openPhotoZoom(url, label) {
+    var existing = document.getElementById("pg-photo-zoom-overlay");
+    if (existing) existing.remove();
+    var overlay = document.createElement("div");
+    overlay.id = "pg-photo-zoom-overlay";
+    overlay.className = "pg-photo-zoom-overlay";
+    overlay.innerHTML =
+      '<button type="button" class="pg-photo-zoom-close" aria-label="Fechar"><i class="fa-solid fa-xmark"></i></button>' +
+      '<img src="' + url + '" alt="' + Utils.escapeHtml(label || "Foto") + '">';
+    document.body.appendChild(overlay);
+    function close() { overlay.remove(); document.removeEventListener("keydown", onEsc); }
+    function onEsc(e) { if (e.key === "Escape") close(); }
+    overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+    overlay.querySelector(".pg-photo-zoom-close").addEventListener("click", close);
+    document.addEventListener("keydown", onEsc);
+  }
+
   function renderTimelineBody(employee, date, dayEntries) {
     var employeeName = (employee && employee.name) || (dayEntries[0] && dayEntries[0].employeeName) || "-";
     var d = PontoCalc.computeDay(date, dayEntries, employee);
 
     if (d.occurrence) {
       var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
-      return '<div class="ponto-request-row">' + thumbHtml(d.occurrence) +
+      return '<div class="ponto-request-row">' + reviewedCheckboxHtml(d.occurrence) + thumbHtml(d.occurrence) +
         '<div class="ponto-request-body"><div class="font-bold">' + (k.label || d.occurrence.type) + '</div>' +
         (d.occurrence.note ? '<div class="small text-muted">' + Utils.escapeHtml(d.occurrence.note) + '</div>' : '') +
         (d.occurrence.attachment ? '<div class="mt-4">' + attachmentLinkHtml(d.occurrence.attachment) + '</div>' : '') +
@@ -509,6 +555,7 @@
     var itemsHtml = punches.length ? punches.map(function (t) {
       return '<div class="ponto-timeline-item ' + timelineItemClass(t.type) + '">' +
         '<div class="ponto-timeline-dot"></div>' +
+        reviewedCheckboxHtml(t) +
         thumbHtml(t, "ponto-timeline-thumb") +
         '<div class="ponto-timeline-body" style="flex:1;min-width:0;">' +
           '<div class="flex items-center gap-8"><span class="ponto-timeline-time">' + pgHhmm(t) + '</span><span class="ponto-timeline-type">' + (TYPE_LABELS[t.type] || t.type) + '</span></div>' +
@@ -526,23 +573,42 @@
     Utils.qsa("[data-tl-entry]", box).forEach(function (el) {
       el.addEventListener("click", function () { openReview(el.getAttribute("data-tl-entry")); });
     });
+    // Clique na fotinha só amplia (openPhotoZoom) — abrir para editar/
+    // conferir continua sendo a lupa (data-tl-entry) ao lado, um clique
+    // separado, para não confundir "ver maior" com "editar este registro".
     Utils.qsa("[data-zoom]", box).forEach(function (el) {
-      el.addEventListener("click", function () {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation();
         var t = DB.get("timeClockEntries", el.getAttribute("data-zoom"));
-        if (t && t.selfieDataUrl) openReview(t.id);
+        if (t && t.selfieDataUrl) openPhotoZoom(t.selfieDataUrl, t.employeeName);
       });
     });
   }
 
   function openDayDetailModal(employeeId, date) {
     var employee = DB.get("employees", employeeId);
-    var dayEntries = DB.all("timeClockEntries").filter(function (t) { return t.employeeId === employeeId && t.date === date; })
-      .sort(function (a, b) { return a.timestamp.localeCompare(b.timestamp); });
+    function loadEntries() {
+      return DB.all("timeClockEntries").filter(function (t) { return t.employeeId === employeeId && t.date === date; })
+        .sort(function (a, b) { return a.timestamp.localeCompare(b.timestamp); });
+    }
+    var dayEntries = loadEntries();
     var employeeName = (employee && employee.name) || (dayEntries[0] && dayEntries[0].employeeName) || "-";
-    var body = renderTimelineBody(employee, date, dayEntries);
-    var foot = '<button class="btn btn-secondary" data-close-modal>Fechar</button>';
-    var box = Modal.open({ title: "Marcações — " + employeeName + " — " + Utils.fmtDate(date), wide: true, bodyHtml: body, footHtml: foot });
+    var foot = '<button class="btn btn-secondary" data-close-modal>Fechar</button>' +
+      '<button class="btn btn-primary" id="pg-tl-save"><i class="fa-solid fa-check"></i> Salvar Alterações</button>';
+    var box = Modal.open({ title: "Marcações — " + employeeName + " — " + Utils.fmtDate(date), wide: true, bodyHtml: renderTimelineBody(employee, date, dayEntries), footHtml: foot });
     wireTimelineBody(box);
+    // "Salvar Alterações" aplica as caixinhas de conferência marcadas/
+    // desmarcadas em lote e continua na mesma tela (não fecha o modal) —
+    // só atualiza a timeline no lugar para refletir o que foi salvo.
+    box.querySelector("#pg-tl-save").addEventListener("click", function () {
+      var changed = applyTimelineReviewedChecks(box);
+      Toast.show(changed ? "Alterações salvas" : "Nenhuma alteração para salvar", "success");
+      dayEntries = loadEntries();
+      var bodyEl = box.querySelector(".modal-body");
+      if (bodyEl) bodyEl.innerHTML = renderTimelineBody(employee, date, dayEntries);
+      wireTimelineBody(box);
+      renderAll();
+    });
   }
 
   function confirmDeleteEntry(id) {
@@ -576,7 +642,7 @@
       '</div>' : '';
     var body =
       '<div class="flex items-center gap-16 mb-16">' +
-        (t.selfieDataUrl ? '<img src="' + t.selfieDataUrl + '" style="width:160px;height:160px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);">' : Utils.avatarHtml(t.employeeName, e ? e.photoDataUrl : null, "avatar-lg")) +
+        (t.selfieDataUrl ? '<img src="' + t.selfieDataUrl + '" data-zoom-photo="' + t.selfieDataUrl + '" style="width:160px;height:160px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);cursor:zoom-in;" title="Clique para ampliar">' : Utils.avatarHtml(t.employeeName, e ? e.photoDataUrl : null, "avatar-lg")) +
         '<div>' +
           '<div class="font-bold">' + Utils.escapeHtml(t.employeeName || "-") + '</div>' +
           '<div>' + typeBadge(t.type) + '</div>' +
@@ -601,6 +667,9 @@
       '<button class="btn btn-primary" id="pg-save">Salvar Alterações</button>';
     var box = Modal.open({ title: isOcc ? "Ocorrência de Ponto" : "Registro de Ponto", bodyHtml: body, footHtml: foot });
 
+    var photoEl = box.querySelector("[data-zoom-photo]");
+    if (photoEl) photoEl.addEventListener("click", function () { openPhotoZoom(photoEl.getAttribute("data-zoom-photo"), t.employeeName); });
+
     box.querySelector("#pg-flag").addEventListener("click", function () {
       var note = box.querySelector("#pg-note").value.trim();
       DB.update("timeClockEntries", t.id, { flagged: !t.flagged, note: note || t.note || null });
@@ -608,6 +677,9 @@
       Toast.show(t.flagged ? "Sinalização removida" : "Registro sinalizado", "success");
       Modal.close(); renderAll();
     });
+    // "Salvar Alterações" só salva — fica na mesma tela em vez de fechar,
+    // para não precisar reabrir o registro caso o gestor queira ajustar
+    // mais alguma coisa em seguida (ex.: conferir e só depois sinalizar).
     box.querySelector("#pg-save").addEventListener("click", function () {
       var note = box.querySelector("#pg-note").value.trim();
       var newDate = box.querySelector("#pg-date").value || t.date;
@@ -624,7 +696,9 @@
       DB.update("timeClockEntries", t.id, patch);
       DB.log("Ponto", (timeChanged ? "Ajustou o horário do registro de ponto de " + t.employeeName + " para " + Utils.fmtDate(newDate) + " " + newTime : "Atualizou o registro de ponto de " + t.employeeName));
       Toast.show("Alterações salvas", "success");
-      Modal.close(); renderAll();
+      t = DB.get("timeClockEntries", t.id) || t;
+      hh = newTime;
+      renderAll();
     });
     box.querySelector("#pg-delete").addEventListener("click", function () {
       Modal.close();
@@ -811,7 +885,8 @@
       '<button class="btn btn-icon btn-ghost btn-sm" id="drw-day-prev" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>' +
       '<div class="small font-bold" style="min-width:150px;text-align:center;">' + Utils.fmtDate(pgDrawerDate) + '</div>' +
       '<button class="btn btn-icon btn-ghost btn-sm" id="drw-day-next" title="Próximo dia"><i class="fa-solid fa-chevron-right"></i></button>' +
-      '</div>' + renderTimelineBody(employee, pgDrawerDate, dayEntries);
+      '</div>' + renderTimelineBody(employee, pgDrawerDate, dayEntries) +
+      '<div class="mt-16" style="text-align:right;"><button class="btn btn-primary btn-sm" id="drw-tl-save"><i class="fa-solid fa-check"></i> Salvar Alterações</button></div>';
   }
 
   function wireDrawerMarcacoes(employee) {
@@ -820,6 +895,15 @@
     var prevBtn = document.getElementById("drw-day-prev"), nextBtn = document.getElementById("drw-day-next");
     if (prevBtn) prevBtn.addEventListener("click", function () { pgDrawerDate = Utils.addDays(pgDrawerDate, -1); drawerRenderBody(employee); });
     if (nextBtn) nextBtn.addEventListener("click", function () { pgDrawerDate = Utils.addDays(pgDrawerDate, 1); drawerRenderBody(employee); });
+    // Mesmo comportamento do modal de detalhe do dia: salva em lote e
+    // continua na mesma sub-aba do drawer, sem fechar nada.
+    var saveBtn = document.getElementById("drw-tl-save");
+    if (saveBtn) saveBtn.addEventListener("click", function () {
+      var changed = applyTimelineReviewedChecks(body);
+      Toast.show(changed ? "Alterações salvas" : "Nenhuma alteração para salvar", "success");
+      drawerRenderBody(employee);
+      renderAll();
+    });
   }
 
   function drawerBancoHtml(employee) {
