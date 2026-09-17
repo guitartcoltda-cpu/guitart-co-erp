@@ -260,12 +260,16 @@
           '<td>' + Utils.escapeHtml(cc ? cc.name : "-") + '</td>' +
           '<td>' + (paga ? (t.paymentMethod ? Utils.escapeHtml(t.paymentMethod) : "-") : situationBadge(t._bucket)) + '</td>' +
           '<td class="text-right text-num text-danger">' + Utils.fmtMoney(t.amount) + '</td>' +
-          '<td>' + (paga ?
-            '<button class="btn btn-sm btn-secondary" data-revert="' + t.id + '">Reverter p/ pendente</button>' :
-            '<button class="btn btn-sm btn-primary" data-pay="' + t.id + '">Marcar como pago</button>') + '</td>' +
+          '<td><div class="flex gap-6">' +
+            '<button class="btn btn-icon btn-ghost" data-edit="' + t.id + '" title="Editar"><i class="fa-solid fa-pen"></i></button>' +
+            (paga ?
+              '<button class="btn btn-sm btn-secondary" data-revert="' + t.id + '">Reverter p/ pendente</button>' :
+              '<button class="btn btn-sm btn-primary" data-pay="' + t.id + '">Marcar como pago</button>') +
+          '</div></td>' +
           '</tr>';
       }).join("") + '</tbody>';
     Utils.wireSortHeaders(tbl, sortState, render);
+    Utils.qsa("[data-edit]", tbl).forEach(function (b) { b.addEventListener("click", function () { openEditModal(b.getAttribute("data-edit")); }); });
     Utils.qsa("[data-pay]", tbl).forEach(function (b) { b.addEventListener("click", function () { openPayModal(b.getAttribute("data-pay")); }); });
     Utils.qsa("[data-revert]", tbl).forEach(function (b) { b.addEventListener("click", function () { revertToPendente([b.getAttribute("data-revert")]); }); });
     Utils.qsa(".cp-row-check", tbl).forEach(function (cb) {
@@ -365,6 +369,62 @@
     if (bucket === "7d") return '<span class="badge badge-warning">Próx. 7 dias</span>';
     if (bucket === "30d") return '<span class="badge badge-info">8–30 dias</span>';
     return '<span class="badge badge-gray">+30 dias</span>';
+  }
+
+  // Editar um lançamento direto pela tela de Contas a Pagar (17/09/2026) —
+  // a pedido do usuário: antes, para corrigir algo simples (ex.: mudar o
+  // vencimento de uma pendência) era preciso entrar em Lançamentos
+  // Financeiros e achar aquele lançamento lá. Cobre os campos mais comuns
+  // de correção rápida (descrição, valor, data, categoria, centro de
+  // custo — e, quando a conta já está paga, também a forma de pagamento).
+  // Campos mais avançados do lançamento (parcelas, cliente/funcionário
+  // vinculado, comprovante anexado) continuam só em Lançamentos
+  // Financeiros — não fazem parte do uso típico de uma despesa/conta a
+  // pagar e o `DB.update` abaixo é um PATCH parcial, então eles
+  // continuam intactos mesmo sem aparecer aqui.
+  function openEditModal(id) {
+    var t = DB.get("transactions", id);
+    if (!t) return;
+    var paga = t.status === "pago";
+    var categories = DB.all("categories").filter(function (c) { return c.type === "despesa"; });
+    var costCenters = DB.all("costCenters");
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><label>Descrição</label><input type="text" id="cp-edit-desc" value="' + Utils.escapeHtml(t.description) + '"></div>' +
+      '<div class="form-field"><label>Valor (R$)</label><input type="text" id="cp-edit-amount"></div>' +
+      '<div class="form-field"><label>' + (paga ? "Data do Pagamento" : "Vencimento") + '</label><input type="date" id="cp-edit-date" value="' + t.date + '"></div>' +
+      '<div class="form-field"><label>Categoria</label><select id="cp-edit-cat">' +
+        categories.map(function (c) { return '<option value="' + c.id + '"' + (c.id === t.categoryId ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") +
+      '</select></div>' +
+      '<div class="form-field"><label>Centro de Custo</label><select id="cp-edit-cc">' +
+        costCenters.map(function (c) { return '<option value="' + c.id + '"' + (c.id === t.costCenterId ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") +
+      '</select></div>' +
+      (paga ? '<div class="form-field"><label>Forma de Pagamento</label><select id="cp-edit-pay">' +
+        ["Pix", "Transferência", "Boleto", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"].map(function (p) {
+          return '<option' + (t.paymentMethod === p ? " selected" : "") + '>' + p + '</option>';
+        }).join("") + '</select></div>' : "") +
+      '</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cp-edit-save">Salvar Alterações</button>';
+    var box = Modal.open({ title: "Editar Lançamento", bodyHtml: body, footHtml: foot });
+    Utils.wireMoneyMask(box.querySelector("#cp-edit-amount"), t.amount);
+    box.querySelector("#cp-edit-save").addEventListener("click", function () {
+      var desc = box.querySelector("#cp-edit-desc").value.trim();
+      var amount = Utils.moneyMaskToFloat(box.querySelector("#cp-edit-amount"));
+      var date = box.querySelector("#cp-edit-date").value;
+      if (!desc) { Toast.show("Informe uma descrição", "danger"); return; }
+      if (!date) { Toast.show("Informe a data", "danger"); return; }
+      if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
+      var patch = {
+        description: desc, amount: round2(amount), date: date,
+        categoryId: box.querySelector("#cp-edit-cat").value,
+        costCenterId: box.querySelector("#cp-edit-cc").value
+      };
+      if (paga) patch.paymentMethod = box.querySelector("#cp-edit-pay").value;
+      DB.update("transactions", t.id, patch);
+      DB.log("Contas a Pagar", "Editou o lançamento \"" + desc + "\" (" + Utils.fmtMoney(amount) + ")");
+      Toast.show("Lançamento atualizado", "success");
+      Modal.close();
+      render();
+    });
   }
 
   function openPayModal(id) {
