@@ -64,6 +64,11 @@
     });
     Utils.qs("#btn-cp-export").addEventListener("click", exportCSV);
     Utils.qs("#btn-cp-bulk-pay").addEventListener("click", bulkAction);
+    Utils.qs("#btn-cp-bulk-date").addEventListener("click", function () {
+      var ids = Object.keys(selectedIds);
+      if (!ids.length) return;
+      openBulkDateModal(ids);
+    });
 
     render();
   }
@@ -128,6 +133,10 @@
     document.getElementById("cp-charts-section").style.display = paga ? "none" : "";
     document.getElementById("cp-table-title").textContent = paga ? "Contas Pagas" : "Contas a Pagar";
     document.getElementById("cp-bulk-btn-label").textContent = paga ? "Reverter selecionados para pendente" : "Marcar selecionados como pago";
+    // "Alterar vencimento" em massa só faz sentido para contas ainda
+    // pendentes (a aba "Pagas" guarda a data do PAGAMENTO, não um
+    // vencimento em aberto — ver getAllPagas acima).
+    document.getElementById("btn-cp-bulk-date").style.display = paga ? "none" : "";
     if (paga) {
       renderPagaSummary();
       var costCentersPaga = DB.all("costCenters"), categoriesPaga = DB.all("categories");
@@ -312,6 +321,41 @@
     if (!ids.length) return;
     if (isPagaView()) revertToPendente(ids);
     else bulkMarkAsPaid(ids);
+  }
+
+  // Alterar o vencimento de várias contas pendentes de uma vez só
+  // (17/09/2026) — a pedido do usuário, ao lado de "Marcar selecionados
+  // como pago": útil quando um fornecedor/boleto renegocia o vencimento
+  // de várias contas ao mesmo tempo (ex.: empurrar tudo do dia 20 pro dia
+  // 25), sem precisar abrir "Editar" uma a uma. Só entra aqui quem
+  // continua "pendente" no momento de confirmar — mesma checagem defensiva
+  // já usada em bulkMarkAsPaid/revertToPendente, para o caso raro de a
+  // seleção ter ficado desatualizada.
+  function openBulkDateModal(ids) {
+    var body = '<div class="form-grid">' +
+      '<div class="form-field full"><div class="small text-muted">O novo vencimento abaixo vai ser aplicado às ' + ids.length + ' conta(s) selecionada(s).</div></div>' +
+      '<div class="form-field full"><label>Novo Vencimento</label><input type="date" id="cp-bulk-date-input"></div>' +
+      '</div>';
+    var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cp-bulk-date-save">Alterar Vencimento</button>';
+    var box = Modal.open({ title: "Alterar Vencimento em Massa", bodyHtml: body, footHtml: foot });
+    box.querySelector("#cp-bulk-date-save").addEventListener("click", function () {
+      var date = box.querySelector("#cp-bulk-date-input").value;
+      if (!date) { Toast.show("Informe o novo vencimento", "danger"); return; }
+      var count = 0;
+      DB.batch(function () {
+        ids.forEach(function (id) {
+          var t = DB.get("transactions", id);
+          if (!t || t.status !== "pendente") return;
+          DB.update("transactions", id, { date: date });
+          count++;
+        });
+      });
+      DB.log("Contas a Pagar", "Alterou o vencimento de " + count + " conta(s) em lote para " + Utils.fmtDate(date));
+      Toast.show(count + " conta(s) com vencimento alterado para " + Utils.fmtDate(date), "success");
+      Modal.close();
+      selectedIds = {};
+      render();
+    });
   }
 
   function bulkMarkAsPaid(ids) {
