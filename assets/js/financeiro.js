@@ -747,7 +747,13 @@
         if (!product) return;
         var qty = round2(parseFloat(it.qty) || 0);
         if (qty <= 0) return;
-        DB.update("products", product.id, { currentStock: Math.max(0, round2((Number(product.currentStock) || 0) - qty)) });
+        // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar Estoque"
+        // (ver comentário em db.js/remoteMergeField) — usa DB.mergeFieldUpdate
+        // para o desconto de estoque nunca apagar uma movimentação
+        // concorrente do mesmo produto.
+        DB.mergeFieldUpdate("products", product.id, "currentStock", function (current) {
+          return Math.max(0, round2((Number(current) || 0) - qty));
+        });
         var clientName = clientId ? ((DB.get("clients", clientId) || {}).name || "") : "";
         DB.insert("stockMovements", {
           productId: product.id, type: "saida", reason: "venda", quantity: qty, date: date,

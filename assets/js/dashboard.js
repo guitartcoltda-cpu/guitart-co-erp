@@ -43,7 +43,19 @@
     var saldoPrev = revenuePrev - expensePrev;
 
     var concludedInRange = appointments.filter(function (a) { return inRange(a, range) && a.status === "concluido"; });
-    var ticketMedio = concludedInRange.length ? revenueThis / concludedInRange.length : 0;
+    // BUG CORRIGIDO (18/09/2026): o card e o texto do modal de detalhe
+    // sempre descreveram "Ticket Médio" como "receita de SERVIÇOS
+    // concluídos ÷ nº de atendimentos concluídos" (ver bodyHtml abaixo,
+    // que inclusive lista o preço de cada atendimento), mas o cálculo
+    // usava `revenueThis` — a receita TOTAL do período, que também inclui
+    // venda de produto no balcão e outros lançamentos de receita sem
+    // relação com atendimento nenhum. Num período com vendas de produto
+    // relevantes, isso inflava o Ticket Médio exibido, contrariando a
+    // própria definição da tela. Corrigido para somar o preço só dos
+    // atendimentos concluídos no período (o mesmo valor já listado na
+    // tabela de detalhe), batendo com o que a tela sempre disse calcular.
+    var serviceRevenueInRange = concludedInRange.reduce(function (s, a) { return s + (a.price || 0); }, 0);
+    var ticketMedio = concludedInRange.length ? serviceRevenueInRange / concludedInRange.length : 0;
 
     var pendentes = transactions.filter(function (t) { return t.type === "despesa" && t.status === "pendente" && inRange(t, range); });
     var pendenteAmount = sum(pendentes);

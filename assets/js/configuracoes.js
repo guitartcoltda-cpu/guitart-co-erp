@@ -746,7 +746,13 @@
         if (!product) return;
         var qty = Number(r.saleQty) || 0;
         if (qty <= 0) return;
-        DB.update("products", product.id, { currentStock: Math.max(0, Math.round(((Number(product.currentStock) || 0) - qty) * 100) / 100) });
+        // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar Estoque"
+        // (ver comentário em db.js/remoteMergeField) — usa DB.mergeFieldUpdate
+        // para o desconto de estoque nunca apagar uma movimentação
+        // concorrente do mesmo produto.
+        DB.mergeFieldUpdate("products", product.id, "currentStock", function (current) {
+          return Math.max(0, Math.round(((Number(current) || 0) - qty) * 100) / 100);
+        });
         var clientName = r.clientId ? ((DB.get("clients", r.clientId) || {}).name || "") : "";
         DB.insert("stockMovements", {
           productId: product.id, type: "saida", reason: "venda", quantity: qty, date: r.date,
@@ -829,10 +835,16 @@
         var a = DB.get("approvals", id);
         if (!a) return;
         var handler = APPROVAL_APPLY[a.type];
-        Approvals.approve(id, handler);
-        Toast.show("Solicitação aprovada", "success");
-        renderApprovals();
-        if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+        // BUG CORRIGIDO (18/09/2026): Approvals.approve agora confirma no
+        // servidor antes de aplicar (evita aprovar a mesma solicitação duas
+        // vezes se outra pessoa aprovar quase ao mesmo tempo) — por isso
+        // virou assíncrono; ver comentário em approvals.js.
+        Approvals.approve(id, handler).then(function (result) {
+          if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+          else { Toast.show("Solicitação aprovada", "success"); }
+          renderApprovals();
+          if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+        });
       });
     });
     Utils.qsa("[data-reject]", tbl).forEach(function (b) {
@@ -841,10 +853,12 @@
         Modal.confirm({
           title: "Recusar solicitação", message: "Deseja recusar esta solicitação?", danger: true,
           onConfirm: function () {
-            Approvals.reject(id);
-            Toast.show("Solicitação recusada", "info");
-            renderApprovals();
-            Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+            Approvals.reject(id).then(function (result) {
+              if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+              else { Toast.show("Solicitação recusada", "info"); }
+              renderApprovals();
+              Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+            });
           }
         });
       });

@@ -539,6 +539,93 @@
     }).catch(function (err) { remoteFail(table, "excluir", err); });
   }
 
+  // BUG CORRIGIDO (18/09/2026): usado pelo fluxo de Bater Ponto (ver
+  // ponto.js/saveEntry). Relato real de funcionária: "tiramos a foto,
+  // enviamos, mas não dá baixa" — acontecia porque DB.insert (como em
+  // qualquer tela do sistema) é otimista: grava local na hora e dispara
+  // remoteUpsert em segundo plano ("fire and forget" — ver comentário
+  // acima de remoteUpsert). Se essa sincronização falhasse (rede instável
+  // no tablet/celular da recepção, por exemplo), a tela já tinha mostrado
+  // "Ponto registrado!" — a única pista de que algo deu errado era um
+  // toast de aviso que aparece alguns segundos DEPOIS (esperando a
+  // resposta da rede), quando quem bateu o ponto já tinha devolvido o
+  // aparelho e ido embora. Resultado: para quem confere depois (Gestão de
+  // Ponto, carregado fresco do servidor), a marcação simplesmente nunca
+  // existiu — mesmo a pessoa tendo feito tudo certo.
+  //
+  // Esta função permite ESPERAR e CONFIRMAR de verdade que o registro
+  // chegou no servidor antes de declarar sucesso ao usuário, em vez de
+  // confiar cegamente no otimismo local — só para este fluxo (ponto),
+  // onde a confirmação na hora é crítica; o resto do sistema continua
+  // usando o padrão otimista de sempre (não vale a pena, nem é seguro,
+  // fazer toda tela esperar confirmação de rede para cada gravação).
+  // Tenta algumas vezes com um pequeno intervalo (tolera uma latência
+  // normal de rede sem reportar falha à toa); se todas as tentativas
+  // falharem, resolve como false e quem chamou decide o que fazer.
+  function confirmRemoteSaved(table, id, attemptsLeft) {
+    if (!supa) return Promise.resolve(true); // sem Supabase configurado: nada a confirmar
+    attemptsLeft = attemptsLeft == null ? 4 : attemptsLeft;
+    return supa.from(table).select("data").eq("id", id).then(function (res) {
+      if (res.error) throw res.error;
+      if (res.data && res.data.length) return true;
+      if (attemptsLeft > 1) {
+        return new Promise(function (resolve) { setTimeout(resolve, 900); })
+          .then(function () { return confirmRemoteSaved(table, id, attemptsLeft - 1); });
+      }
+      return false;
+    }).catch(function () {
+      if (attemptsLeft > 1) {
+        return new Promise(function (resolve) { setTimeout(resolve, 900); })
+          .then(function () { return confirmRemoteSaved(table, id, attemptsLeft - 1); });
+      }
+      return false;
+    });
+  }
+
+  // BUG CORRIGIDO (18/09/2026): mesma família do bug de "settings" (ver
+  // remoteMergeSettings abaixo), só que num CAMPO qualquer (array OU
+  // número) de um registro qualquer, em vez do blob inteiro de
+  // configurações. Achados na auditoria pós-incidente:
+  // - assets/js/agenda.js: toda vez que um agendamento consome/cria/libera
+  //   uma sessão de Pacote de Tratamento, o código lia `client.packages` do
+  //   CACHE LOCAL desta aba (`DB.get`, que nunca consulta o servidor — só o
+  //   `_cache` em memória), recalculava o array inteiro trocando/
+  //   adicionando um item, e gravava de volta com `DB.update("clients", id,
+  //   { packages: newPackages })` — um upsert do registro inteiro. Se outra
+  //   aba/recepcionista tivesse mexido nesse MESMO `client.packages`
+  //   enquanto esta aba estava com o cliente já carregado (ex.: vendeu um
+  //   pacote novo, ou concluiu outra sessão), essa gravação apagava
+  //   silenciosamente a mudança da outra pessoa — o mesmo padrão que já
+  //   causou "todos os pacotes de tratamento sumiram" uma vez (lá, no blob
+  //   de settings; aqui, no array de pacotes comprados de um cliente).
+  // - assets/js/estoque.js: "Movimentar Estoque" lia `p.currentStock` só
+  //   quando o modal abria e gravava `currentStock: estoqueDoModal + delta`
+  //   — se outra movimentação do MESMO produto fosse salva enquanto o modal
+  //   estava aberto (ex.: uma entrada de compra e uma saída de venda quase
+  //   juntas), a segunda a salvar apagava o efeito da primeira.
+  //
+  // Esta função resolve de forma genérica (reaproveitável por qualquer
+  // tabela/campo, array ou não): busca o registro mais recente do
+  // SERVIDOR, aplica a mesma função de transformação (`transformFn`) em
+  // cima do valor FRESCO do campo, e grava esse resultado — em vez de
+  // confiar no valor já calculado a partir do cache local, que pode estar
+  // velho. `transformFn` recebe o valor atual do campo tal como está no
+  // servidor (pode ser undefined se o registro nunca teve esse campo) e é
+  // responsável por lidar com esse caso — ver DB.mergeFieldUpdate abaixo.
+  function remoteMergeField(table, id, field, transformFn) {
+    if (!supa) return;
+    supa.from(table).select("data").eq("id", id).then(function (res) {
+      if (res.error) throw res.error;
+      var server = res.data && res.data[0] && res.data[0].data;
+      if (!server) return { error: null }; // registro ainda não existe no servidor — nada a mesclar aqui
+      var merged = Object.assign({}, server);
+      merged[field] = transformFn(server[field]);
+      return supa.from(table).upsert({ id: id, data: merged });
+    }).then(function (res) {
+      if (res && res.error) throw res.error;
+    }).catch(function (err) { remoteFail(table, "salvar", err); });
+  }
+
   // Apaga tudo de uma tabela no Supabase e regrava com a lista atual —
   // usado por setTable/importJSON, que já substituem a tabela inteira de
   // uma vez no cache local.
@@ -646,6 +733,73 @@
       persist(table);
       remoteUpsert(table, record);
       return record;
+    },
+
+    // Confirma se um registro já inserido/atualizado (via insert/update)
+    // realmente chegou no servidor — ver o comentário de confirmRemoteSaved
+    // acima. Retorna uma Promise<boolean>. Usar só onde a confirmação
+    // imediata for importante (ex.: Bater Ponto); no resto do sistema, o
+    // padrão continua sendo otimista (não chamar isto à toa).
+    confirmSaved: function (table, id) {
+      return confirmRemoteSaved(table, id);
+    },
+
+    // Verdadeiro quando há um Supabase configurado e conectado nesta
+    // sessão. Usado para decidir se vale a pena esperar/confirmar uma
+    // sincronização remota (ex.: conciliação em par — ver
+    // conciliacao.js/maquininhas-conciliacao.js) ou se, sem servidor
+    // configurado, é melhor simplesmente confiar no cache local como o
+    // resto do sistema já faz.
+    hasRemote: function () { return !!supa; },
+
+    // Busca um registro direto do SERVIDOR (não do cache local desta aba),
+    // como Promise. Usado quando é preciso confirmar o estado mais recente
+    // de verdade antes de agir — ex.: Approvals.approve/reject, para não
+    // aplicar duas vezes a mesma solicitação se dois aprovadores clicarem
+    // quase juntos em abas/dispositivos diferentes (ver approvals.js).
+    // Resolve como null se não houver Supabase configurado, se o registro
+    // não existir, ou se a busca falhar (rede) — quem chamou decide como
+    // tratar "não deu para confirmar" (normalmente: seguir em frente,
+    // tolerante, como o resto do sistema já faz).
+    fetchFresh: function (table, id) {
+      if (!supa) return Promise.resolve(null);
+      return supa.from(table).select("data").eq("id", id).then(function (res) {
+        if (res.error) throw res.error;
+        return (res.data && res.data[0] && res.data[0].data) || null;
+      }).catch(function () { return null; });
+    },
+
+    // Força uma nova tentativa de sincronização remota de um registro já
+    // existente no cache local, sem alterar nenhum campo (só "toca" o
+    // registro) — usado pelo botão "Tentar Novamente" do fluxo de Ponto
+    // quando a confirmação acima falha, para reenviar sem duplicar.
+    retrySync: function (table, id) {
+      var db = load();
+      var rec = (db[table] || []).find(function (r) { return r.id === id; });
+      if (rec) remoteUpsert(table, rec);
+    },
+
+    // Atualiza UM campo de um registro (array ou número) de forma segura
+    // contra corrida entre abas — ver o comentário de remoteMergeField
+    // acima. Usar em vez de DB.update() sempre que o patch for calculado a
+    // partir do valor ATUAL de um campo que outras pessoas também podem
+    // editar ao mesmo tempo neste mesmo registro (ex.: client.packages,
+    // product.currentStock). `transformFn` recebe o valor atual do campo
+    // (do jeito que está no cache local, ou undefined se nunca existiu) e
+    // devolve o novo valor; roda uma vez em cima do cache local (para a
+    // tela responder na hora) e de novo, em segundo plano, em cima do
+    // valor mais recente do SERVIDOR (para a gravação de verdade nunca
+    // apagar uma mudança concorrente nesse campo).
+    mergeFieldUpdate: function (table, id, field, transformFn) {
+      var db = load();
+      var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
+      if (idx === -1) return null;
+      var patch = {};
+      patch[field] = transformFn(db[table][idx][field]);
+      db[table][idx] = Object.assign({}, db[table][idx], patch, { updatedAt: nowISO() });
+      persist(table);
+      remoteMergeField(table, id, field, transformFn);
+      return db[table][idx];
     },
 
     insertMany: function (table, records) {

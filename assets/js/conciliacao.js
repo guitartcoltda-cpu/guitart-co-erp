@@ -231,6 +231,37 @@
     DB.log("Conciliação", "Conciliou manualmente um lançamento com uma linha do extrato bancário");
     Toast.show("Conciliado com sucesso", "success");
     render();
+    // BUG CORRIGIDO (18/09/2026): a conciliação grava DOIS registros em
+    // tabelas DIFERENTES ("bankLines" e "transactions") de forma
+    // independente — cada DB.update sincroniza em segundo plano, sem
+    // garantia de que as duas terminem juntas. Se a rede caísse no meio,
+    // um lado ficava conciliado no servidor e o outro não (divergência
+    // contábil silenciosa, sem aviso — o Toast de sucesso já tinha
+    // aparecido). Agora confirmamos os dois lados no servidor depois de
+    // gravar; se algum não confirmar mesmo após tentar de novo, a
+    // conciliação é desfeita automaticamente dos dois lados.
+    confirmMatchPairSynced(bankId, txnId);
+  }
+
+  function confirmMatchPairSynced(bankId, txnId, attemptsLeft) {
+    if (!DB.hasRemote()) return; // sem Supabase configurado: nada a confirmar
+    attemptsLeft = attemptsLeft == null ? 3 : attemptsLeft;
+    Promise.all([DB.fetchFresh("bankLines", bankId), DB.fetchFresh("transactions", txnId)]).then(function (r) {
+      var bankOk = r[0] && r[0].matched && r[0].matchedTransactionId === txnId;
+      var txnOk = r[1] && r[1].reconciled && r[1].bankLineId === bankId;
+      if (bankOk && txnOk) return; // confirmado dos dois lados — nada a fazer
+      if (attemptsLeft > 1) {
+        if (!bankOk) DB.retrySync("bankLines", bankId);
+        if (!txnOk) DB.retrySync("transactions", txnId);
+        setTimeout(function () { confirmMatchPairSynced(bankId, txnId, attemptsLeft - 1); }, 1200);
+        return;
+      }
+      DB.update("bankLines", bankId, { matched: false, matchedTransactionId: null });
+      DB.update("transactions", txnId, { reconciled: false, bankLineId: null });
+      DB.log("Conciliação", "Conciliação desfeita automaticamente — não foi possível confirmar a sincronização com o servidor");
+      Toast.show("Não foi possível confirmar a conciliação com o servidor — foi desfeita automaticamente. Verifique sua internet e tente de novo.", "danger", 6500);
+      render();
+    });
   }
 
   // ---------------- Menu "..." (3 pontinhos) por linha ----------------

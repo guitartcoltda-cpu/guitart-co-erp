@@ -194,7 +194,46 @@
     };
     DB.insert("timeClockEntries", record);
     DB.log("Ponto", e.name + " registrou: " + step.label);
-    showDone(e, step);
+    // BUG CORRIGIDO (18/09/2026): "tiramos a foto, enviamos, mas não dá
+    // baixa" — antes, a tela mostrava "Ponto registrado!" na hora (padrão
+    // otimista do DB.insert, ver comentário em db.js), mesmo que a
+    // sincronização com o servidor falhasse silenciosamente em segundo
+    // plano por uma instabilidade de rede. Quem bateu o ponto via a
+    // confirmação de sucesso e ia embora — só quem conferisse depois
+    // (Gestão de Ponto) percebia que a marcação nunca chegou no servidor.
+    // Agora, antes de declarar sucesso, esperamos a confirmação real de
+    // que o registro chegou no Supabase; se não chegar, mostramos um erro
+    // claro com botão de tentar novamente, em vez de fingir que deu certo.
+    confirmAndFinish(e, step, record);
+  }
+
+  function confirmAndFinish(e, step, record) {
+    var savingEl = document.getElementById("ponto-saving");
+    if (savingEl) { savingEl.style.display = ""; savingEl.textContent = "Confirmando envio..."; }
+    DB.confirmSaved("timeClockEntries", record.id).then(function (ok) {
+      if (ok) showDone(e, step);
+      else showSyncFailure(e, step, record);
+    });
+  }
+
+  function showSyncFailure(e, step, record) {
+    var body = document.getElementById("ponto-confirm-body");
+    if (!body) return;
+    body.innerHTML =
+      '<div class="empty-state">' +
+        '<div class="es-icon" style="color:var(--color-danger,#c0392b);"><i class="fa-solid fa-triangle-exclamation"></i></div>' +
+        '<h4>Não foi possível confirmar o envio</h4>' +
+        '<p class="small text-muted">A foto foi tirada, mas não conseguimos confirmar que chegou ao servidor — costuma acontecer quando a internet cai por um instante. ' +
+          '<strong>Não feche esta tela</strong>: toque em "Tentar Novamente".</p>' +
+        '<button class="btn btn-primary mt-16" id="ponto-retry-sync"><i class="fa-solid fa-rotate-right"></i> Tentar Novamente</button>' +
+        '<button class="btn btn-ghost mt-8" id="ponto-retry-back">Voltar</button>' +
+      '</div>';
+    document.getElementById("ponto-retry-sync").addEventListener("click", function () {
+      body.innerHTML = '<div class="empty-state"><div class="es-icon"><i class="fa-solid fa-spinner fa-spin"></i></div><p class="small text-muted">Reenviando...</p></div>';
+      DB.retrySync("timeClockEntries", record.id);
+      confirmAndFinish(e, step, record);
+    });
+    document.getElementById("ponto-retry-back").addEventListener("click", function () { renderDay(); });
   }
 
   function showDone(e, step) {

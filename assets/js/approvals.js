@@ -71,33 +71,56 @@
   // `onApply(payload)` roda só quando aprovada, contendo a lógica específica
   // de cada tipo (ex.: atualizar o agendamento, aplicar o desconto). Se
   // `onApply` lançar um erro, a aprovação não é marcada como decidida.
+  //
+  // BUG CORRIGIDO (18/09/2026): antes, a checagem "ainda está pendente?"
+  // olhava só o cache local desta aba (`DB.get`) — se dois Administradores
+  // (ou alguém com "Pode aprovar") estivessem vendo a mesma solicitação
+  // pendente em abas/dispositivos diferentes e clicassem "Aprovar" quase
+  // ao mesmo tempo, os dois passavam nessa checagem e `onApply` rodava
+  // DUAS vezes (ex.: lançamento financeiro duplicado, estoque baixado duas
+  // vezes, ajuste de ponto duplicado). Agora, antes de aplicar, confirma
+  // no SERVIDOR que a solicitação ainda está "pendente" de verdade — só a
+  // primeira aprovação a chegar aplica; a segunda é rejeitada com aviso
+  // claro em vez de aplicar de novo. Retorna uma Promise (antes retornava
+  // o registro direto) — ver os pontos que chamam Approvals.approve para
+  // como tratar o resultado.
   function approve(id, onApply, note) {
     var a = DB.get("approvals", id);
-    if (!a || a.status !== "pendente") return null;
-    if (typeof onApply === "function") onApply(a.payload, a);
-    var updated = DB.update("approvals", id, {
-      status: "aprovada",
-      decidedBy: (global.CurrentUser && global.CurrentUser.get()) ? global.CurrentUser.get().id : null,
-      decidedByName: currentUserLabel(),
-      decidedAt: DB.nowISO(),
-      reviewerNote: note || null
+    if (!a || a.status !== "pendente") return Promise.resolve({ ok: false, reason: "not_pending_local" });
+    return DB.fetchFresh("approvals", id).then(function (fresh) {
+      if (fresh && fresh.status !== "pendente") {
+        return { ok: false, reason: "already_decided", status: fresh.status };
+      }
+      if (typeof onApply === "function") onApply(a.payload, a);
+      var updated = DB.update("approvals", id, {
+        status: "aprovada",
+        decidedBy: (global.CurrentUser && global.CurrentUser.get()) ? global.CurrentUser.get().id : null,
+        decidedByName: currentUserLabel(),
+        decidedAt: DB.nowISO(),
+        reviewerNote: note || null
+      });
+      DB.log("Aprovação", "Aprovou: " + a.summary + (note ? " — Nota: " + note : ""));
+      return { ok: true, record: updated };
     });
-    DB.log("Aprovação", "Aprovou: " + a.summary + (note ? " — Nota: " + note : ""));
-    return updated;
   }
 
   function reject(id, reason) {
     var a = DB.get("approvals", id);
-    if (!a || a.status !== "pendente") return null;
-    var updated = DB.update("approvals", id, {
-      status: "recusada",
-      decidedBy: (global.CurrentUser && global.CurrentUser.get()) ? global.CurrentUser.get().id : null,
-      decidedByName: currentUserLabel(),
-      decidedAt: DB.nowISO(),
-      rejectReason: reason || ""
+    if (!a || a.status !== "pendente") return Promise.resolve({ ok: false, reason: "not_pending_local" });
+    return DB.fetchFresh("approvals", id).then(function (fresh) {
+      if (fresh && fresh.status !== "pendente") {
+        return { ok: false, reason: "already_decided", status: fresh.status };
+      }
+      var updated = DB.update("approvals", id, {
+        status: "recusada",
+        decidedBy: (global.CurrentUser && global.CurrentUser.get()) ? global.CurrentUser.get().id : null,
+        decidedByName: currentUserLabel(),
+        decidedAt: DB.nowISO(),
+        rejectReason: reason || ""
+      });
+      DB.log("Aprovação", "Recusou: " + a.summary + (reason ? " — Motivo: " + reason : ""));
+      return { ok: true, record: updated };
     });
-    DB.log("Aprovação", "Recusou: " + a.summary + (reason ? " — Motivo: " + reason : ""));
-    return updated;
   }
 
   // Renderiza (e mantém atualizado) um sininho/badge de aprovações

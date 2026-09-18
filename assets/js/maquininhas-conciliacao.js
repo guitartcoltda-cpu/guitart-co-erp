@@ -300,6 +300,11 @@
       Modal.close();
       Toast.show(checked.length + " conciliação(ões) confirmada(s)", "success");
       render();
+      // BUG CORRIGIDO (18/09/2026): mesmo cuidado do matchPair individual
+      // (ver comentário lá) — confirma cada par no servidor depois da
+      // gravação em lote, desfazendo automaticamente qualquer par que não
+      // sincronizar dos dois lados.
+      checked.forEach(function (s) { confirmMatchPairSynced(s.slip.id, s.bank.id); });
     });
   }
 
@@ -313,6 +318,40 @@
     selectedSlipId = null; selectedBankId = null;
     Toast.show("Conciliado com sucesso", "success");
     render();
+    // BUG CORRIGIDO (18/09/2026): a conciliação grava DOIS registros
+    // (cada lado da linha, "bankLines") de forma independente — cada
+    // DB.update dispara sua própria sincronização em segundo plano, sem
+    // nenhuma garantia de que as duas terminem juntas. Se a rede caísse
+    // bem no meio (entre uma gravação e a outra), um lado ficava
+    // conciliado no servidor e o outro não — uma divergência contábil
+    // silenciosa (o Toast de sucesso já tinha aparecido, então ninguém
+    // percebia). Agora confirmamos os dois lados no servidor depois de
+    // gravar; se algum não confirmar mesmo após tentar de novo, a
+    // conciliação inteira é desfeita automaticamente dos dois lados
+    // (nunca fica "meio conciliada") e a pessoa é avisada para tentar de
+    // novo.
+    confirmMatchPairSynced(slipId, bankId);
+  }
+
+  function confirmMatchPairSynced(slipId, bankId, attemptsLeft) {
+    if (!DB.hasRemote()) return; // sem Supabase configurado: nada a confirmar
+    attemptsLeft = attemptsLeft == null ? 3 : attemptsLeft;
+    Promise.all([DB.fetchFresh("bankLines", slipId), DB.fetchFresh("bankLines", bankId)]).then(function (r) {
+      var slipOk = r[0] && r[0].matched && r[0].matchedLineId === bankId;
+      var bankOk = r[1] && r[1].matched && r[1].matchedLineId === slipId;
+      if (slipOk && bankOk) return; // confirmado dos dois lados — nada a fazer
+      if (attemptsLeft > 1) {
+        if (!slipOk) DB.retrySync("bankLines", slipId);
+        if (!bankOk) DB.retrySync("bankLines", bankId);
+        setTimeout(function () { confirmMatchPairSynced(slipId, bankId, attemptsLeft - 1); }, 1200);
+        return;
+      }
+      DB.update("bankLines", slipId, { matched: false, matchedLineId: null });
+      DB.update("bankLines", bankId, { matched: false, matchedLineId: null });
+      DB.log("Maquininhas", "Conciliação desfeita automaticamente — não foi possível confirmar a sincronização com o servidor");
+      Toast.show("Não foi possível confirmar a conciliação com o servidor — foi desfeita automaticamente. Verifique sua internet e tente de novo.", "danger", 6500);
+      render();
+    });
   }
 
   function unmatch(lineId) {

@@ -79,9 +79,30 @@
       return this.toISODate(d);
     },
 
+    // BUG CORRIGIDO (18/09/2026): `Date.setMonth` "estoura" para o mês
+    // seguinte quando o dia atual não existe no mês de destino — ex.: 31 de
+    // maio menos 3 meses deveria cair em fevereiro (28/29 dias), mas
+    // `setMonth` sozinho pulava direto para 3 de março, sem avisar. Isso
+    // fazia o DRE e o gráfico "Receita x Despesa" do Dashboard (que montam
+    // os últimos N meses com `Utils.addMonths(hoje, -i)`) PULAREM o mês de
+    // fevereiro inteiro (nenhuma receita/despesa daquele mês entrava no
+    // total) e DUPLICAREM março (aparecia duas vezes na tabela/gráfico) —
+    // sempre que "hoje" caísse num dia 29, 30 ou 31 e o mês N atrás fosse
+    // mais curto. Mesma causa afetava o comparativo "mês anterior" dos
+    // Alertas (podia incluir um dia do mês atual na base de comparação) e
+    // os períodos prontos "3/6/12 meses" (PeriodFilter), encolhendo o
+    // intervalo sem aviso. Corrigido: muda o mês com o dia travado em 1
+    // (para nunca estourar SÓ por causa da troca de mês) e só depois
+    // aplica o dia original, limitado ao último dia do mês de destino —
+    // mesmo comportamento que outros sistemas de calendário usam para
+    // "3 meses atrás" quando o dia não existe no mês de destino.
     addMonths: function (isoDate, months) {
       var d = this.parseDate(isoDate);
+      var originalDay = d.getDate();
+      d.setDate(1);
       d.setMonth(d.getMonth() + months);
+      var lastDayOfTargetMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+      d.setDate(Math.min(originalDay, lastDayOfTargetMonth));
       return this.toISODate(d);
     },
 

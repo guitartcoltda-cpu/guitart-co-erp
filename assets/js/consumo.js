@@ -114,8 +114,13 @@
         var stockDelta = (packageSize > 0 && (product.packageUnit === "ml" || product.packageUnit === "g"))
           ? quantity / packageSize
           : quantity;
-        var newStock = Math.max(0, Math.round(((Number(product.currentStock) || 0) - stockDelta) * 1000) / 1000);
-        DB.update("products", product.id, { currentStock: newStock });
+        // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar Estoque"
+        // (ver comentário em db.js/remoteMergeField) — usa DB.mergeFieldUpdate
+        // para o desconto de estoque nunca apagar uma movimentação
+        // concorrente do mesmo produto.
+        DB.mergeFieldUpdate("products", product.id, "currentStock", function (current) {
+          return Math.max(0, Math.round(((Number(current) || 0) - stockDelta) * 1000) / 1000);
+        });
 
         DB.insert("stockMovements", {
           productId: product.id, type: "saida", reason: "consumo",
@@ -164,7 +169,12 @@
           var stockDelta = (packageSize > 0 && (product.packageUnit === "ml" || product.packageUnit === "g"))
             ? record.quantity / packageSize
             : record.quantity;
-          DB.update("products", product.id, { currentStock: round2((Number(product.currentStock) || 0) + stockDelta) });
+          // BUG CORRIGIDO (18/09/2026): idem — devolução de estoque ao
+          // excluir um consumo, agora aplicada em cima do valor mais
+          // recente do servidor.
+          DB.mergeFieldUpdate("products", product.id, "currentStock", function (current) {
+            return round2((Number(current) || 0) + stockDelta);
+          });
         }
         DB.removeWhere("stockMovements", function (m) { return m.relatedConsumptionId === id; });
         DB.remove("productConsumptions", id);

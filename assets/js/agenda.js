@@ -1391,7 +1391,13 @@
             var product = DB.get("products", productId);
             if (!product) return;
             var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
-            DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+            // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar
+            // Estoque" (ver comentário em db.js/remoteMergeField) — usa
+            // DB.mergeFieldUpdate para o desconto de estoque nunca apagar
+            // uma movimentação concorrente do mesmo produto.
+            DB.mergeFieldUpdate("products", productId, "currentStock", function (current) {
+              return Math.max(0, round2((current || 0) - qtd));
+            });
             DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
             DB.insert("transactions", {
               type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
@@ -1574,16 +1580,21 @@
           // pacote já comprado" em openApptModal (client.packages[].
           // appointmentIds), só que acontecendo agora, na conclusão de um
           // atendimento normal, em vez de na criação de um agendamento
-          // dedicado. Relê o cliente fresco do banco (não o `client`
-          // capturado na abertura do modal) para não perder nenhuma
-          // atualização concorrente. Nenhum lançamento de receita novo: o
-          // valor já foi cobrado do cliente na venda original do pacote.
-          var freshClientForPkg = DB.get("clients", client.id) || client;
-          var newPackages = (freshClientForPkg.packages || []).map(function (pp) {
-            if (pp.id !== chosenPurchase.id) return pp;
-            return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).concat([appt.id]) });
+          // dedicado. Nenhum lançamento de receita novo: o valor já foi
+          // cobrado do cliente na venda original do pacote.
+          // BUG CORRIGIDO (18/09/2026): usava DB.get (só cache local desta
+          // aba, apesar do comentário antigo dizer "relê fresco do banco")
+          // para montar o novo array de packages e gravava por cima —
+          // podia apagar uma compra/sessão registrada por outra aba
+          // enquanto esta ficava aberta (mesma família do bug de
+          // "settings"). Agora usa DB.mergeFieldUpdate, que aplica esta
+          // mesma transformação em cima do valor mais recente do servidor.
+          DB.mergeFieldUpdate("clients", client.id, "packages", function (packages) {
+            return (packages || []).map(function (pp) {
+              if (pp.id !== chosenPurchase.id) return pp;
+              return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).concat([appt.id]) });
+            });
           });
-          DB.update("clients", client.id, { packages: newPackages });
         } else if (isParceria) {
           // Usa o mesmo cálculo de Utils.apptCommissionSplit já usado pelo
           // Comissionamento (considera assistente, se houver) — a parte do
@@ -1650,7 +1661,13 @@
             var product = DB.get("products", productId);
             if (!product) return;
             var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
-            DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+            // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar
+            // Estoque" (ver comentário em db.js/remoteMergeField) — usa
+            // DB.mergeFieldUpdate para o desconto de estoque nunca apagar
+            // uma movimentação concorrente do mesmo produto.
+            DB.mergeFieldUpdate("products", productId, "currentStock", function (current) {
+              return Math.max(0, round2((current || 0) - qtd));
+            });
             DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
             DB.insert("transactions", {
               type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
@@ -1874,7 +1891,13 @@
               var product = DB.get("products", productId);
               if (!product) return;
               var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
-              DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+              // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar
+            // Estoque" (ver comentário em db.js/remoteMergeField) — usa
+            // DB.mergeFieldUpdate para o desconto de estoque nunca apagar
+            // uma movimentação concorrente do mesmo produto.
+            DB.mergeFieldUpdate("products", productId, "currentStock", function (current) {
+              return Math.max(0, round2((current || 0) - qtd));
+            });
               DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
               DB.insert("transactions", {
                 type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
@@ -1981,7 +2004,13 @@
             var product = DB.get("products", productId);
             if (!product) return;
             var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
-            DB.update("products", productId, { currentStock: Math.max(0, round2((product.currentStock || 0) - qtd)) });
+            // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar
+            // Estoque" (ver comentário em db.js/remoteMergeField) — usa
+            // DB.mergeFieldUpdate para o desconto de estoque nunca apagar
+            // uma movimentação concorrente do mesmo produto.
+            DB.mergeFieldUpdate("products", productId, "currentStock", function (current) {
+              return Math.max(0, round2((current || 0) - qtd));
+            });
             DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + (client ? client.name : "cliente") + " (atendimento)" });
             DB.insert("transactions", {
               type: "receita", description: "Produto - " + product.name + " (" + (client ? client.name : "cliente") + ")", amount: saleAmount, date: appt.date,
@@ -2598,15 +2627,17 @@
             // (remove o id de client.packages[].appointmentIds) antes de
             // excluir — a sessão volta a contar como "disponível" (ver
             // openApptModal → refreshPackageSessionOptions).
-            if (isPackageLinked) {
-              var delClient = DB.get("clients", a.clientId);
-              if (delClient) {
-                var newPackages = (delClient.packages || []).map(function (pp) {
+            // BUG CORRIGIDO (18/09/2026): mesmo padrão do outro ponto acima
+            // — usa DB.mergeFieldUpdate em vez de DB.get + DB.update, para
+            // não apagar uma alteração concorrente de client.packages feita
+            // por outra aba.
+            if (isPackageLinked && DB.get("clients", a.clientId)) {
+              DB.mergeFieldUpdate("clients", a.clientId, "packages", function (packages) {
+                return (packages || []).map(function (pp) {
                   if (pp.id !== a.packagePurchaseId) return pp;
                   return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).filter(function (aid) { return aid !== a.id; }) });
                 });
-                DB.update("clients", a.clientId, { packages: newPackages });
-              }
+              });
             }
             DB.remove("appointments", a.id);
             DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time);
@@ -2756,15 +2787,23 @@
         // Sessão de um pacote já vendido: cria o agendamento e vincula ao
         // registro de compra existente do cliente (client.packages),
         // ocupando mais uma "vaga" de sessão (appointmentIds).
+        // BUG CORRIGIDO (18/09/2026): mesmo padrão dos outros pontos acima —
+        // DB.mergeFieldUpdate em vez de calcular newPackages em cima do
+        // client já carregado (que pode estar velho) e sobrescrever com
+        // DB.update. O número da sessão (packageSessionIndex) continua
+        // calculado a partir do que esta aba já sabia — é só um rótulo
+        // exibido, não afeta quantas vagas do pacote ficam ocupadas (isso é
+        // o array appointmentIds, que agora é mesclado com segurança).
         DB.batch(function () {
           savedAppt = DB.insert("appointments", patch);
           var usedBefore = (pendingPackageSession.purchase.appointmentIds || []).length;
-          var updatedPurchase = Object.assign({}, pendingPackageSession.purchase, {
-            appointmentIds: (pendingPackageSession.purchase.appointmentIds || []).concat([savedAppt.id])
+          DB.mergeFieldUpdate("clients", pendingPackageSession.client.id, "packages", function (packages) {
+            return (packages || []).map(function (pp) {
+              if (pp.id !== pendingPackageSession.purchase.id) return pp;
+              return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).concat([savedAppt.id]) });
+            });
           });
-          var newPackages = (pendingPackageSession.client.packages || []).map(function (pp) { return pp.id === updatedPurchase.id ? updatedPurchase : pp; });
-          DB.update("clients", pendingPackageSession.client.id, { packages: newPackages });
-          DB.update("appointments", savedAppt.id, { packagePurchaseId: updatedPurchase.id, packageSessionIndex: usedBefore + 1 });
+          DB.update("appointments", savedAppt.id, { packagePurchaseId: pendingPackageSession.purchase.id, packageSessionIndex: usedBefore + 1 });
         });
         savedAppt = DB.get("appointments", savedAppt.id);
         DB.log("Agenda", "Criou a sessão " + savedAppt.packageSessionIndex + " do pacote \"" + pendingPackageSession.purchase.packageName + "\" para " + patch.date + " " + patch.time);
@@ -2781,8 +2820,14 @@
             purchaseDate: patch.date, soldByEmployeeId: patch.employeeId,
             linkedServiceId: patch.serviceId, appointmentIds: [savedAppt.id]
           };
-          var sellClient = DB.get("clients", pendingPackageSell.clientId);
-          DB.update("clients", pendingPackageSell.clientId, { packages: (sellClient.packages || []).concat([newPurchase]) });
+          // BUG CORRIGIDO (18/09/2026): idem — venda de um pacote NOVO é
+          // justamente o tipo de gravação que o incidente original perdeu
+          // (pacotes cadastrados que sumiram); agora o pacote novo é
+          // adicionado em cima do array mais recente do servidor, em vez de
+          // substituir o array inteiro a partir do cache local desta aba.
+          DB.mergeFieldUpdate("clients", pendingPackageSell.clientId, "packages", function (packages) {
+            return (packages || []).concat([newPurchase]);
+          });
           DB.update("appointments", savedAppt.id, { packagePurchaseId: newPurchase.id, packageSessionIndex: 1 });
         });
         savedAppt = DB.get("appointments", savedAppt.id);

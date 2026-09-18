@@ -697,7 +697,17 @@
         Toast.show("Quantidade maior que o estoque disponível", "danger"); return;
       }
       var delta = type === "entrada" ? qty : -qty;
-      DB.update("products", p.id, { currentStock: round2(p.currentStock + delta) });
+      // BUG CORRIGIDO (18/09/2026): antes gravava currentStock = (estoque
+      // de quando o modal abriu) + delta — se outra movimentação do MESMO
+      // produto fosse salva enquanto este modal estava aberto (ex.: uma
+      // entrada de compra e uma saída de venda quase juntas, em duas
+      // telas), a segunda a salvar apagava o efeito da primeira. Agora usa
+      // DB.mergeFieldUpdate: o delta é aplicado em cima do valor mais
+      // recente do servidor, não do valor "congelado" de quando o modal
+      // abriu.
+      DB.mergeFieldUpdate("products", p.id, "currentStock", function (current) {
+        return round2((current == null ? 0 : current) + delta);
+      });
       var mvPatch = { productId: p.id, type: type, quantity: qty, reason: reason, date: date, notes: box.querySelector("#mm-notes").value.trim() };
       if (hasPkg) { mvPatch.displayQuantity = qtyRaw; mvPatch.displayUnit = p.packageUnit; }
       var mv = DB.insert("stockMovements", mvPatch);

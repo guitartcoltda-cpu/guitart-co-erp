@@ -1037,10 +1037,17 @@
       btn.addEventListener("click", function () {
         var id = btn.getAttribute("data-approve-req");
         var commentEl = container.querySelector('[data-comment-for="' + id + '"]');
-        Approvals.approve(id, PontoAjustes.apply, commentEl ? commentEl.value.trim() : "");
-        Toast.show("Solicitação aprovada", "success");
-        if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
-        renderAll();
+        // BUG CORRIGIDO (18/09/2026): Approvals.approve agora confirma no
+        // servidor antes de aplicar (evita aprovar/aplicar o mesmo ajuste
+        // de ponto duas vezes se outro gestor aprovar quase ao mesmo
+        // tempo) — por isso virou assíncrono; ver comentário em
+        // approvals.js.
+        Approvals.approve(id, PontoAjustes.apply, commentEl ? commentEl.value.trim() : "").then(function (result) {
+          if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+          else { Toast.show("Solicitação aprovada", "success"); }
+          if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+          renderAll();
+        });
       });
     });
     Utils.qsa("[data-reject-req]", container).forEach(function (btn) {
@@ -1050,10 +1057,12 @@
         Modal.confirm({
           title: "Recusar solicitação", message: "Deseja recusar este pedido de ajuste de ponto?", danger: true,
           onConfirm: function () {
-            Approvals.reject(id, commentEl ? commentEl.value.trim() : "");
-            Toast.show("Solicitação recusada", "info");
-            if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
-            renderAll();
+            Approvals.reject(id, commentEl ? commentEl.value.trim() : "").then(function (result) {
+              if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+              else { Toast.show("Solicitação recusada", "info"); }
+              if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+              renderAll();
+            });
           }
         });
       });

@@ -133,9 +133,16 @@
   // termina dentro desse mesmo mês (seja no fim do mês, seja hoje, no caso
   // do mês corrente ainda em andamento) — ou seja, quando o usuário está
   // vendo "o mês", mesmo sem existir mais um seletor de mês dedicado.
+  // BUG CORRIGIDO (18/09/2026): mesmo bug de comissoes.js (ver comentário
+  // lá) — a checagem só confirmava que `range.end` caía no mesmo mês de
+  // `range.start`, não que fosse de fato o fim do mês (ou hoje). Um
+  // filtro parcial (ex.: só os 10 primeiros dias do mês) era tratado como
+  // "o mês inteiro" e inflava "Pago" no Extrato do Profissional.
   function isWholeMonthPrefix(range) {
     var mk = range.start.slice(0, 7);
-    return range.start === (mk + "-01") && range.end.slice(0, 7) === mk;
+    if (range.start !== (mk + "-01") || range.end.slice(0, 7) !== mk) return false;
+    var today = Utils.todayISO();
+    return range.end === lastDayOfMonth(mk) || (mk === today.slice(0, 7) && range.end === today);
   }
 
   function payoutDateFor(monthKey) {

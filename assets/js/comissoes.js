@@ -62,9 +62,22 @@
   // termina dentro desse mesmo mês (seja no fim do mês, seja hoje, no caso
   // do mês corrente ainda em andamento) — ou seja, quando o usuário está
   // vendo "o mês", mesmo sem existir mais um seletor de mês dedicado.
+  // BUG CORRIGIDO (18/09/2026): a checagem só confirmava que `range.end`
+  // caía no MESMO MÊS de `range.start` — não que fosse de fato o fim do
+  // mês (ou hoje, se em andamento), como o comentário acima sempre disse
+  // que deveria ser. Um filtro De=01/mês Até=10/mês (só os 10 primeiros
+  // dias, para auditoria parcial) era tratado como "o mês inteiro":
+  // "Pago" passava a somar QUALQUER pagamento de comissão com aquele mês
+  // de competência (mesmo um pago no dia 25), enquanto "Devido" só
+  // contava os atendimentos dos 10 dias filtrados — inflando "Pago" e
+  // distorcendo o "Saldo" exibido sem nenhum aviso. Agora só é
+  // considerado "mês inteiro" quando o fim do período é de fato o último
+  // dia do mês, ou hoje (mês em andamento).
   function isWholeMonthPrefix(range) {
     var mk = range.start.slice(0, 7);
-    return range.start === (mk + "-01") && range.end.slice(0, 7) === mk;
+    if (range.start !== (mk + "-01") || range.end.slice(0, 7) !== mk) return false;
+    var today = Utils.todayISO();
+    return range.end === monthLastDay(mk) || (mk === today.slice(0, 7) && range.end === today);
   }
 
   // Intervalo de datas (início/fim, ambos inclusive) que efetivamente
