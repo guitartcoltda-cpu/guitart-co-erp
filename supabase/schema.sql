@@ -58,6 +58,18 @@ begin
       create index if not exists %I on public.%I using gin (data);',
       t || '_data_gin_idx', t);
 
+    -- 18/09/2026 (varredura de "múltiplos usuários em tempo real"): índice
+    -- em updated_at — usado pela checagem periódica "há atualizações
+    -- disponíveis?" (DB.hasRemoteChangesSince em assets/js/db.js, chamada
+    -- por assets/js/layout.js a cada ~45s em toda tela aberta). Sem esse
+    -- índice a checagem ainda funciona (é só um "existe algo mais novo que
+    -- X?"), só faria uma varredura sequencial da tabela a cada consulta —
+    -- este índice deixa essa checagem praticamente instantânea mesmo
+    -- conforme os dados crescem.
+    execute format('
+      create index if not exists %I on public.%I (updated_at desc);',
+      t || '_updated_at_idx', t);
+
     execute format('
       drop trigger if exists set_updated_at on public.%I;', t);
     execute format('
@@ -149,3 +161,43 @@ begin
     execute format('grant select on public.%I to anon, authenticated;', vt || '_boot');
   end loop;
 end $$;
+
+-- ------------------------------------------------------------
+-- (OPCIONAL, não aplicado automaticamente por este script) — Supabase
+-- Realtime, evolução futura do índice de updated_at acima.
+--
+-- 18/09/2026: o app hoje verifica "há algo novo?" perguntando ao
+-- servidor a cada ~45s (polling — ver DB.hasRemoteChangesSince em
+-- assets/js/db.js e o aviso "Há atualizações disponíveis" em
+-- assets/js/layout.js). Isso já resolve o problema de uma aba ficar
+-- horas "desatualizada" sem ninguém perceber, sem precisar de nenhuma
+-- configuração extra no Supabase — funciona com a chave "anon" normal,
+-- do jeito que o projeto já está hoje.
+--
+-- Se no futuro quiser reduzir aquele atraso de até ~45s para
+-- praticamente instantâneo (push em vez de polling), dá para ligar o
+-- Supabase Realtime nas tabelas abaixo. Isso NÃO foi ativado aqui de
+-- propósito — habilitar Realtime é uma mudança de configuração do
+-- projeto Supabase (Database → Replication, ou o comando abaixo),
+-- fora do alcance de uma chave "anon"/deste script, e não é
+-- necessária para o polling atual funcionar. Para ativar, rode isto no
+-- SQL Editor do Supabase:
+--
+--   do $$
+--   declare t text;
+--   begin
+--     foreach t in array array[
+--       'employees','clients','costCenters','categories','services',
+--       'products','stockMovements','transactions','appointments',
+--       'bankLines','commissionPayouts','settings','users','activityLog',
+--       'commissionBonuses','occurrences','cardMachines',
+--       'productConsumptions','notifications','approvals','chamados',
+--       'timeClockEntries'
+--     ] loop
+--       execute format('alter publication supabase_realtime add table public.%I;', t);
+--     end loop;
+--   end $$;
+--
+-- (e, do lado do app, trocar o polling por `supa.channel(...).on(
+-- "postgres_changes", ...)` em db.js) — fica registrado aqui como
+-- caminho pronto, caso um dia o atraso de ~45s deixe de ser aceitável.
