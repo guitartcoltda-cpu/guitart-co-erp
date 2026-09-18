@@ -145,9 +145,27 @@
       // seja processado antes de fecharmos a lista/validarmos o texto
       setTimeout(function () {
         listEl.style.display = "none";
+        // BUG CRÍTICO CORRIGIDO (18/09/2026): quando dois cadastros têm
+        // exatamente o mesmo nome (ex.: dois clientes "Rayssa Carvalho" —
+        // acontece na prática, cadastro duplicado), o código antigo abaixo
+        // resolvia o texto digitado por NOME (`items.filter(...)[0]`, sempre
+        // o primeiro cadastro daquele nome na lista), mesmo que o campo já
+        // estivesse corretamente resolvido para OUTRO cadastro do mesmo nome
+        // por causa do clique numa sugestão (pick(), acima). Resultado: ao
+        // sair do campo (blur), a seleção certa era silenciosamente trocada
+        // pelo cadastro errado — causando agendamentos/edições gravados no
+        // cliente/funcionário errado (telefone "trocado", histórico
+        // fragmentado entre os dois cadastros). Por isso, primeiro checamos
+        // se o campo já está resolvido para um item cujo nome bate com o
+        // texto atual — nesse caso, não mexe em mais nada, preservando a
+        // seleção feita pelo usuário mesmo havendo homônimos.
+        var currentItem = hiddenEl.value ? items.filter(function (it) { return it.id === hiddenEl.value; })[0] : null;
+        if (currentItem && normName(currentItem.label) === normName(textEl.value)) {
+          return;
+        }
         var exact = items.filter(function (it) { return normName(it.label) === normName(textEl.value); })[0];
         if (exact) {
-          if (hiddenEl.value !== exact.id) { textEl.value = exact.label; setResolved(exact); }
+          textEl.value = exact.label; setResolved(exact);
         } else if (!textEl.value) {
           if (hiddenEl.value) setResolved(null);
         }

@@ -554,11 +554,58 @@
     }).catch(function (err) { remoteFail(table, "sincronizar", err); });
   }
 
+  // Substitui o registro "settings" inteiro no Supabase pelo objeto
+  // informado — uso deliberado: só para importJSON (restaurar um backup é
+  // "que fique exatamente assim", inclusive apagando o que não estiver no
+  // arquivo). Para qualquer alteração incremental (editar um Cargo, uma
+  // Forma de Pagamento, um Pacote de Tratamento, um Grupo de Acesso etc.),
+  // usar remoteMergeSettings abaixo — NUNCA esta função, ver o comentário
+  // dela para o motivo.
   function remoteReplaceSettings(settingsObj) {
     if (!supa) return;
     supa.from("settings").delete().neq("id", "__none__").then(function (delRes) {
       if (delRes.error) throw delRes.error;
       return supa.from("settings").upsert({ id: "settings", data: settingsObj });
+    }).then(function (res) {
+      if (res && res.error) throw res.error;
+    }).catch(function (err) { remoteFail("settings", "sincronizar", err); });
+  }
+
+  // BUG CRÍTICO CORRIGIDO (18/09/2026): todo o conteúdo de Configurações
+  // que não tem tabela própria no Supabase (Cargos, Formas de Pagamento,
+  // Pacotes de Tratamento, Grupos de Acesso, nome da empresa, config. de
+  // e-mail — tudo dentro de um único registro "settings") era gravado
+  // assim: cada alteração incremental (ex.: editar um Cargo) pegava o
+  // `db.settings` da MEMÓRIA desta aba, mesclava só o campo mudado nele, e
+  // gravava esse objeto INTEIRO no servidor por cima de tudo que já
+  // estivesse lá (remoteReplaceSettings acima). Numa aba aberta há um
+  // tempo (ex.: recepção, ligada o dia todo), esse `db.settings` em memória
+  // fica desatualizado assim que QUALQUER outra pessoa, em outra aba, salva
+  // qualquer outra coisa em Configurações — e a próxima gravação feita
+  // nesta aba antiga sobrescreve o servidor com a versão velha, apagando
+  // silenciosamente o que a outra pessoa tinha acabado de salvar. Foi assim
+  // que "todos os cadastros de pacotes de serviço sumiram" (relatado pelo
+  // usuário): alguém, numa aba com o settings desatualizado (sem os
+  // pacotes que tinham acabado de ser cadastrados em outra aba), salvou uma
+  // alteração incremental sem relação nenhuma com Pacotes (um Cargo, uma
+  // Forma de Pagamento, um Grupo de Acesso...) e isso apagou os pacotes no
+  // servidor sem ninguém perceber na hora.
+  //
+  // Correção: em vez de mesclar o patch em cima do settings desta aba (que
+  // pode estar velho) e gravar isso por cima de tudo, busca-se o settings
+  // MAIS RECENTE direto do servidor, mescla-se o patch em cima DELE, e só
+  // então grava — assim uma alteração incremental nunca apaga um campo que
+  // outra pessoa salvou depois que esta aba carregou os dados. Ainda existe
+  // uma janela de corrida mínima (entre essa busca e essa gravação, poucos
+  // milissegundos), mas ela é de rede, não mais de "a aba ficou horas
+  // aberta" — no volume de uso desta equipe, isso já resolve o problema.
+  function remoteMergeSettings(patch) {
+    if (!supa) return;
+    supa.from("settings").select("data").eq("id", "settings").then(function (res) {
+      if (res.error) throw res.error;
+      var serverSettings = (res.data && res.data[0] && res.data[0].data) || {};
+      var merged = Object.assign({}, serverSettings, patch);
+      return supa.from("settings").upsert({ id: "settings", data: merged });
     }).then(function (res) {
       if (res && res.error) throw res.error;
     }).catch(function (err) { remoteFail("settings", "sincronizar", err); });
@@ -664,7 +711,7 @@
       var db = load();
       db.settings = Object.assign({}, db.settings, patch);
       persist("settings");
-      remoteReplaceSettings(db.settings);
+      remoteMergeSettings(patch);
       return db.settings;
     },
 
@@ -680,7 +727,7 @@
         current = DEFAULT_ROLES.slice();
         db.settings = Object.assign({}, db.settings, { roles: current });
         persist("settings");
-        remoteReplaceSettings(db.settings);
+        remoteMergeSettings({ roles: current });
       }
       return current;
     },
@@ -688,7 +735,7 @@
       var db = load();
       db.settings = Object.assign({}, db.settings, { roles: list });
       persist("settings");
-      remoteReplaceSettings(db.settings);
+      remoteMergeSettings({ roles: list });
       return db.settings.roles;
     },
 
@@ -718,7 +765,7 @@
       if (changed) {
         db.settings = Object.assign({}, db.settings, { paymentMethods: current });
         persist("settings");
-        remoteReplaceSettings(db.settings);
+        remoteMergeSettings({ paymentMethods: current });
       }
       return current;
     },
@@ -726,7 +773,7 @@
       var db = load();
       db.settings = Object.assign({}, db.settings, { paymentMethods: list });
       persist("settings");
-      remoteReplaceSettings(db.settings);
+      remoteMergeSettings({ paymentMethods: list });
       return db.settings.paymentMethods;
     },
 
@@ -741,7 +788,7 @@
       var db = load();
       db.settings = Object.assign({}, db.settings, { treatmentPackages: list });
       persist("settings");
-      remoteReplaceSettings(db.settings);
+      remoteMergeSettings({ treatmentPackages: list });
       return db.settings.treatmentPackages;
     },
 
