@@ -2718,12 +2718,26 @@
       var defaultDurationMin = packageDurationToUse || ((selectedServiceObj && selectedServiceObj.durationMin) ? selectedServiceObj.durationMin : 30);
       var durRaw = parseInt(box.querySelector("#am-duration").value, 10);
       if (isNaN(durRaw) || durRaw <= 0) durRaw = defaultDurationMin;
+      // Marcar "Concluído" direto pelo Status deste formulário (em vez de
+      // usar o botão dedicado "Concluir") precisa passar pelas mesmas
+      // perguntas obrigatórias daquele fluxo (forma de pagamento, consumo
+      // de insumos, gorjeta, comissão etc.) — então uma transição de
+      // verdade para "Concluído" aqui NÃO grava esse status ainda: grava
+      // como "agendado" (mesmo status que o botão "Concluir" espera dos
+      // agendamentos irmãos, para a detecção de "Fechar Conta" em grupo
+      // funcionar igual) e, mais abaixo, depois de salvar o restante do
+      // formulário normalmente, abre o mesmo popup de conclusão do botão.
+      // Reabrir o mesmo formulário com o status já "Concluído" (edição de
+      // um atendimento que já está concluído) não é uma transição nova e
+      // segue o caminho normal, sem reabrir o popup.
+      var statusValue = box.querySelector("#am-status").value;
+      var enteringConcluido = statusValue === "concluido" && (!a || a.status !== "concluido");
       var patch = {
         clientId: box.querySelector("#am-client").value, serviceId: packageServiceIdToUse || box.querySelector("#am-service").value,
         employeeId: box.querySelector("#am-employee").value, price: packagePriceToUse != null ? packagePriceToUse : round2(Utils.moneyMaskToFloat(box.querySelector("#am-price"))),
         date: box.querySelector("#am-date").value, time: box.querySelector("#am-time").value,
         durationMin: (durRaw !== defaultDurationMin) ? durRaw : null,
-        status: box.querySelector("#am-status").value,
+        status: enteringConcluido ? "agendado" : statusValue,
         commissionPercent: commPct,
         assistantId: hasAsst ? box.querySelector("#am-assistant").value : null,
         assistantCommissionPercent: assistantPct
@@ -2832,9 +2846,20 @@
         }
       });
       if (extraServiceRowsData.length) Toast.show(extraServiceRowsData.length + " serviço(s) adicional(is) criado(s) para esta visita", "success");
-      Modal.close();
       selectedDate = patch.date;
-      render();
+      if (enteringConcluido && savedAppt) {
+        // Atualiza a agenda ao fundo com o que já foi salvo (data/hora/
+        // preço/profissional etc.) antes de abrir o popup de conclusão —
+        // assim, mesmo que o usuário cancele o popup em seguida, o restante
+        // da edição já fica refletido na tela (o status permanece
+        // "agendado" até o popup ser concluído de verdade).
+        render();
+        Modal.close();
+        concludeAppointment(savedAppt.id);
+      } else {
+        Modal.close();
+        render();
+      }
     });
   }
 })();
