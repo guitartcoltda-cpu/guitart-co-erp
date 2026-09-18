@@ -255,7 +255,15 @@
         var id = b.getAttribute("data-toggle-user");
         var u = DB.get("users", id);
         if (!u) return;
-        DB.update("users", id, { active: !u.active });
+        // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+        // tempo real"): negava `u.active` lido do cache local e gravava
+        // via DB.update comum (upsert do registro inteiro) — se outra
+        // aba tivesse acabado de salvar permissões diferentes (allowedPages/
+        // groupId) nesse mesmo usuário, essa gravação reconstruía o
+        // registro inteiro a partir da cópia local desatualizada,
+        // revertendo essa mudança de permissão junto com o toggle.
+        // DB.mergeFieldUpdate mexe só no campo "active".
+        DB.mergeFieldUpdate("users", id, "active", function (current) { return !current; });
         DB.log("Acesso", (u.active ? "Desativou" : "Ativou") + " o acesso de " + u.firstName + " " + u.lastName);
         Toast.show("Status do acesso atualizado", "success");
         renderUsers(); renderLog(); renderPerms();
@@ -1061,7 +1069,7 @@
         var role = list.find(function (r) { return r.id === id; });
         if (role && employees.some(function (e) { return e.role === role.name; })) { Toast.show("Existem funcionários cadastrados com este cargo", "danger"); return; }
         Modal.confirm({ title: "Excluir cargo", message: "Confirma a exclusão?", danger: true, onConfirm: function () {
-          DB.saveRoles(DB.getRoles().filter(function (r) { return r.id !== id; }));
+          DB.mergeSettingsField("roles", function (current) { return (current || []).filter(function (r) { return r.id !== id; }); });
           if (role) DB.log("Configurações", "Excluiu o cargo " + role.name);
           Toast.show("Excluído", "success"); renderRoles();
         } });
@@ -1081,11 +1089,23 @@
       if (!name) { Toast.show("Informe o nome do cargo", "danger"); return; }
       var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!r || x.id !== r.id); });
       if (dup) { Toast.show("Já existe um cargo com este nome", "danger"); return; }
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): `list` é uma foto do cache local de quando o modal
+      // abriu (`DB.getRoles()` só lê essa aba). Salvar a lista inteira
+      // recalculada a partir dela (DB.saveRoles) apagava silenciosamente
+      // qualquer cargo criado/editado por outra pessoa nesse meio tempo —
+      // o mesmo tipo de incidente já documentado em db.js ("todos os
+      // pacotes sumiram"). DB.mergeSettingsField busca a lista mais
+      // recente do SERVIDOR antes de aplicar a mesma transformação.
       if (r) {
-        DB.saveRoles(list.map(function (x) { return x.id === r.id ? Object.assign({}, x, { name: name }) : x; }));
+        DB.mergeSettingsField("roles", function (current) {
+          return (current || []).map(function (x) { return x.id === r.id ? Object.assign({}, x, { name: name }) : x; });
+        });
         DB.log("Configurações", "Atualizou o cargo " + name);
       } else {
-        DB.saveRoles(list.concat([{ id: DB.uid("rol"), name: name }]));
+        DB.mergeSettingsField("roles", function (current) {
+          return (current || []).concat([{ id: DB.uid("rol"), name: name }]);
+        });
         DB.log("Configurações", "Criou o cargo " + name);
       }
       Modal.close(); Toast.show("Cargo salvo", "success"); renderRoles();
@@ -1131,7 +1151,7 @@
         var pm = list.find(function (p) { return p.id === id; });
         if (pm && txns.some(function (t) { return t.paymentMethod === pm.name; })) { Toast.show("Existem lançamentos usando esta forma de pagamento", "danger"); return; }
         Modal.confirm({ title: "Excluir forma de pagamento", message: "Confirma a exclusão?", danger: true, onConfirm: function () {
-          DB.savePaymentMethods(DB.getPaymentMethods().filter(function (p) { return p.id !== id; }));
+          DB.mergeSettingsField("paymentMethods", function (current) { return (current || []).filter(function (p) { return p.id !== id; }); });
           if (pm) DB.log("Configurações", "Excluiu a forma de pagamento " + pm.name);
           Toast.show("Excluída", "success"); renderPaymentMethods();
         } });
@@ -1155,11 +1175,18 @@
       var dup = list.some(function (x) { return x.name.toLowerCase() === name.toLowerCase() && (!p || x.id !== p.id); });
       if (dup) { Toast.show("Já existe uma forma de pagamento com este nome", "danger"); return; }
       var isParceria = box.querySelector("#paymethod-parceria").checked;
+      // BUG CORRIGIDO (18/09/2026): mesmo padrão de Cargos acima — troca
+      // de DB.savePaymentMethods(listaInteiraRecalculadaDoCache) para
+      // DB.mergeSettingsField, que busca a lista mais recente do servidor.
       if (p) {
-        DB.savePaymentMethods(list.map(function (x) { return x.id === p.id ? Object.assign({}, x, { name: name, isParceria: isParceria }) : x; }));
+        DB.mergeSettingsField("paymentMethods", function (current) {
+          return (current || []).map(function (x) { return x.id === p.id ? Object.assign({}, x, { name: name, isParceria: isParceria }) : x; });
+        });
         DB.log("Configurações", "Atualizou a forma de pagamento " + name);
       } else {
-        DB.savePaymentMethods(list.concat([{ id: DB.uid("pmt"), name: name, isParceria: isParceria }]));
+        DB.mergeSettingsField("paymentMethods", function (current) {
+          return (current || []).concat([{ id: DB.uid("pmt"), name: name, isParceria: isParceria }]);
+        });
         DB.log("Configurações", "Criou a forma de pagamento " + name);
       }
       Modal.close(); Toast.show("Forma de pagamento salva", "success"); renderPaymentMethods();
@@ -1217,7 +1244,7 @@
         var pk = list.find(function (x) { return x.id === id; });
         if (pk && pkGetters.count(pk) > 0) { Toast.show("Existem clientes com este pacote comprado", "danger"); return; }
         Modal.confirm({ title: "Excluir pacote", message: "Confirma a exclusão?", danger: true, onConfirm: function () {
-          DB.saveTreatmentPackages(DB.getTreatmentPackages().filter(function (x) { return x.id !== id; }));
+          DB.mergeSettingsField("treatmentPackages", function (current) { return (current || []).filter(function (x) { return x.id !== id; }); });
           if (pk) DB.log("Configurações", "Excluiu o pacote de tratamento " + pk.name);
           Toast.show("Excluído", "success"); renderPacotes();
         } });
@@ -1257,11 +1284,20 @@
       var linkedServiceId = box.querySelector("#pacote-service").value || null;
       var prices = {};
       PACKAGE_SIZES.forEach(function (sz) { prices[sz.key] = Utils.moneyMaskToFloat(box.querySelector("#pacote-price-" + sz.key)); });
+      // BUG CORRIGIDO (18/09/2026): este é literalmente o mesmo dado do
+      // incidente já documentado em db.js ("todos os cadastros de pacotes
+      // de serviço sumiram") — a causa raiz continuava aqui, mesmo depois
+      // da correção em remoteMergeSettings. Trocado para
+      // DB.mergeSettingsField (busca a lista mais recente do servidor).
       if (pk) {
-        DB.saveTreatmentPackages(list.map(function (x) { return x.id === pk.id ? Object.assign({}, x, { name: name, sessionsTotal: sessionsTotal, prices: prices, linkedServiceId: linkedServiceId }) : x; }));
+        DB.mergeSettingsField("treatmentPackages", function (current) {
+          return (current || []).map(function (x) { return x.id === pk.id ? Object.assign({}, x, { name: name, sessionsTotal: sessionsTotal, prices: prices, linkedServiceId: linkedServiceId }) : x; });
+        });
         DB.log("Configurações", "Atualizou o pacote de tratamento " + name);
       } else {
-        DB.saveTreatmentPackages(list.concat([{ id: DB.uid("pkg"), name: name, sessionsTotal: sessionsTotal, prices: prices, linkedServiceId: linkedServiceId }]));
+        DB.mergeSettingsField("treatmentPackages", function (current) {
+          return (current || []).concat([{ id: DB.uid("pkg"), name: name, sessionsTotal: sessionsTotal, prices: prices, linkedServiceId: linkedServiceId }]);
+        });
         DB.log("Configurações", "Criou o pacote de tratamento " + name);
       }
       Modal.close(); Toast.show("Pacote salvo", "success"); renderPacotes();
@@ -1280,8 +1316,22 @@
   function getAccessGroups() {
     return (DB.getSettings() || {}).accessGroups || [];
   }
-  function saveAccessGroups(list) {
-    DB.updateSettings({ accessGroups: list });
+  // BUG CRÍTICO CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+  // tempo real"): recebia a lista de grupos JÁ RECALCULADA (map/filter/
+  // concat feito em cima da cópia local capturada quando a tela/modal
+  // abriu) e gravava com DB.updateSettings — que protege OUTROS campos de
+  // settings (ver remoteMergeSettings), mas não protege essa MESMA lista
+  // sendo editada por duas pessoas ao mesmo tempo. Numa aba de
+  // Configurações aberta o dia todo (comum: computador da gerência), isso
+  // podia apagar silenciosamente um grupo criado por outra pessoa — e como
+  // é a lista que define PERMISSÃO DE ACESSO de quem está vinculado, o
+  // impacto é sério (grupo excluído sem querer = usuários vinculados
+  // perdem o vínculo formal, mesmo mantendo o acesso que já tinham).
+  // Agora recebe uma `transformFn` e usa DB.mergeSettingsField, que busca
+  // a lista mais recente do SERVIDOR antes de aplicar a transformação —
+  // nunca a partir da cópia local capturada na abertura da tela.
+  function saveAccessGroups(transformFn) {
+    return DB.mergeSettingsField("accessGroups", function (current) { return transformFn(current || []); });
   }
 
   // Telas liberadas efetivas de um usuário: se ele estiver num grupo, valem
@@ -1392,7 +1442,7 @@
             if (members.length) {
               DB.batch(function () { members.forEach(function (u) { DB.update("users", u.id, { groupId: null }); }); });
             }
-            saveAccessGroups(list.filter(function (x) { return x.id !== id; }));
+            saveAccessGroups(function (current) { return current.filter(function (x) { return x.id !== id; }); });
             DB.log("Configurações", "Excluiu o grupo de acesso " + (g ? g.name : id) + (members.length ? (" (" + members.length + " acesso(s) desvinculado(s), sem alterar permissões)") : ""));
             Toast.show("Grupo excluído", "success");
             renderGroups(); renderUsers(); renderPerms();
@@ -1475,13 +1525,13 @@
 
       var members = g ? DB.all("users").filter(function (u) { return u.groupId === g.id; }) : [];
       if (g) {
-        saveAccessGroups(list.map(function (x) { return x.id === g.id ? Object.assign({}, x, { name: name, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }) : x; }));
+        saveAccessGroups(function (current) { return current.map(function (x) { return x.id === g.id ? Object.assign({}, x, { name: name, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }) : x; }); });
         if (members.length) {
           DB.batch(function () { members.forEach(function (u) { DB.update("users", u.id, { allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }); }); });
         }
         DB.log("Configurações", "Atualizou o grupo de acesso " + name + (members.length ? (" (" + members.length + " acesso(s) vinculado(s) atualizado(s) automaticamente)") : ""));
       } else {
-        saveAccessGroups(list.concat([{ id: DB.uid("grp"), name: name, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }]));
+        saveAccessGroups(function (current) { return current.concat([{ id: DB.uid("grp"), name: name, allowedPages: allowedPages, allowedConfigTabs: allowedConfigTabs, canApprove: canApproveVal }]); });
         DB.log("Configurações", "Criou o grupo de acesso " + name);
       }
       Modal.close();

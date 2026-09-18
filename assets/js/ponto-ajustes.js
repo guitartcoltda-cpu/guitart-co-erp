@@ -74,11 +74,23 @@
     if (kind === "ponto_corrigir") {
       var entry = DB.get("timeClockEntries", payload.targetEntryId);
       if (!entry) return;
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): "note" era concatenado a partir do valor lido do
+      // CACHE LOCAL e gravado com DB.update (upsert do registro inteiro)
+      // — se essa mesma marcação de ponto tivesse outra observação salva
+      // por outra pessoa (ex.: sinalização em Gestão de Ponto) entre a
+      // leitura e a gravação, essa gravação apagava a observação da outra
+      // pessoa. "note" agora vai por DB.mergeFieldUpdate (busca o valor
+      // mais recente do campo direto do servidor antes de concatenar); os
+      // demais campos são valores fixos (não calculados a partir do
+      // cache), então continuam num DB.update comum.
+      DB.mergeFieldUpdate("timeClockEntries", entry.id, "note", function (currentNote) {
+        return (currentNote ? currentNote + " | " : "") + "Horário corrigido a pedido do funcionário: " + (payload.reason || "-");
+      });
       DB.update("timeClockEntries", entry.id, {
         timestamp: buildTimestamp(entry.date, payload.requestedTime),
         reviewed: true,
-        origin: "ajuste_aprovado",
-        note: (entry.note ? entry.note + " | " : "") + "Horário corrigido a pedido do funcionário: " + (payload.reason || "-")
+        origin: "ajuste_aprovado"
       });
       return;
     }

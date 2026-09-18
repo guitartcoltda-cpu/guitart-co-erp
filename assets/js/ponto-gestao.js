@@ -499,7 +499,16 @@
       var id = el.getAttribute("data-tl-check");
       var rec = DB.get("timeClockEntries", id);
       if (rec && !!rec.reviewed !== el.checked) {
-        DB.update("timeClockEntries", id, { reviewed: el.checked });
+        // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+        // tempo real"): este modal fica aberto enquanto o gestor confere
+        // várias marcações visualmente — se outra pessoa mexeu em
+        // "flagged"/"note" dessa MESMA marcação (ex.: pela lupa, em
+        // openReview) nesse meio tempo, o DB.update antigo (upsert do
+        // registro inteiro a partir do cache local desta aba, que não
+        // sabe da mudança da outra pessoa) apagava essa mudança
+        // silenciosamente. DB.mergeFieldUpdate mexe só no campo
+        // "reviewed", buscando o registro mais recente do servidor antes.
+        DB.mergeFieldUpdate("timeClockEntries", id, "reviewed", function () { return el.checked; });
         changed++;
       }
     });
@@ -670,9 +679,21 @@
     var photoEl = box.querySelector("[data-zoom-photo]");
     if (photoEl) photoEl.addEventListener("click", function () { openPhotoZoom(photoEl.getAttribute("data-zoom-photo"), t.employeeName); });
 
+    // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+    // tempo real"): tanto "Sinalizar" quanto "Salvar Alterações" liam/
+    // gravavam em cima do registro `t` capturado quando este modal abriu
+    // (CACHE LOCAL desta aba). Se outra pessoa tivesse mexido nesse MESMO
+    // registro de ponto nesse meio tempo (ex.: um gestor confere em lote
+    // pela timeline enquanto outro tem esse mesmo registro aberto aqui
+    // pela lupa), a gravação daqui sobrescrevia o registro inteiro a
+    // partir da cópia desatualizada, apagando a mudança da outra pessoa.
+    // Trocado por DB.mergeRecordUpdate: sempre busca o registro mais
+    // recente do SERVIDOR antes de aplicar o patch.
     box.querySelector("#pg-flag").addEventListener("click", function () {
       var note = box.querySelector("#pg-note").value.trim();
-      DB.update("timeClockEntries", t.id, { flagged: !t.flagged, note: note || t.note || null });
+      DB.mergeRecordUpdate("timeClockEntries", t.id, function (fresh) {
+        return { flagged: !fresh.flagged, note: note || fresh.note || null };
+      });
       DB.log("Ponto", (t.flagged ? "Removeu sinalização" : "Sinalizou") + " o registro de ponto de " + t.employeeName);
       Toast.show(t.flagged ? "Sinalização removida" : "Registro sinalizado", "success");
       Modal.close(); renderAll();
@@ -693,7 +714,7 @@
         note: note || null,
         reviewed: reviewed
       };
-      DB.update("timeClockEntries", t.id, patch);
+      DB.mergeRecordUpdate("timeClockEntries", t.id, function () { return patch; });
       DB.log("Ponto", (timeChanged ? "Ajustou o horário do registro de ponto de " + t.employeeName + " para " + Utils.fmtDate(newDate) + " " + newTime : "Atualizou o registro de ponto de " + t.employeeName));
       Toast.show("Alterações salvas", "success");
       t = DB.get("timeClockEntries", t.id) || t;

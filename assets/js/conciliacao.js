@@ -419,6 +419,40 @@
     DB.log("Conciliação", "Desfez uma conciliação bancária");
     Toast.show("Conciliação desfeita", "info");
     render();
+    // BUG CORRIGIDO (18/09/2026): quando o item é um PAR conciliado
+    // (item.kind === "pair" — tem bankLine E transaction vinculadas), os
+    // dois DB.update acima gravam tabelas diferentes de forma
+    // independente, mesmo "par não-atômico" que matchPair já tinha
+    // (ver confirmMatchPairSynced acima), só que aqui ninguém confirmava
+    // o desfazimento nos dois lados. Se a rede caísse no meio, um lado
+    // voltava a "pendente" e o outro ficava preso como "conciliado" sem
+    // par — órfão, invisível nas telas normais. Confirma os dois lados;
+    // se não confirmar, REFAZ o par nos dois lados (desfazer o desfazer)
+    // em vez de deixar pela metade.
+    if (item.source === "bank" && item.txn) {
+      confirmUndoPairSynced(item.bankId, item.txn.id);
+    }
+  }
+
+  function confirmUndoPairSynced(bankId, txnId, attemptsLeft) {
+    if (!DB.hasRemote()) return; // sem Supabase configurado: nada a confirmar
+    attemptsLeft = attemptsLeft == null ? 3 : attemptsLeft;
+    Promise.all([DB.fetchFresh("bankLines", bankId), DB.fetchFresh("transactions", txnId)]).then(function (r) {
+      var bankOk = r[0] && r[0].matched === false && !r[0].matchedTransactionId;
+      var txnOk = r[1] && r[1].reconciled === false && !r[1].bankLineId;
+      if (bankOk && txnOk) return; // desfeito e confirmado dos dois lados
+      if (attemptsLeft > 1) {
+        if (!bankOk) DB.retrySync("bankLines", bankId);
+        if (!txnOk) DB.retrySync("transactions", txnId);
+        setTimeout(function () { confirmUndoPairSynced(bankId, txnId, attemptsLeft - 1); }, 1200);
+        return;
+      }
+      DB.update("bankLines", bankId, { matched: true, matchedTransactionId: txnId });
+      DB.update("transactions", txnId, { reconciled: true, bankLineId: bankId });
+      DB.log("Conciliação", "Não foi possível confirmar o desfazimento com o servidor — a conciliação foi refeita automaticamente");
+      Toast.show("Não foi possível confirmar com o servidor — a conciliação foi refeita automaticamente. Verifique sua internet e tente de novo.", "danger", 6500);
+      render();
+    });
   }
 
   function round2(n) { return Math.round(n * 100) / 100; }
@@ -456,6 +490,19 @@
       Modal.close();
       Toast.show("Lançamento criado e conciliado", "success");
       render();
+      // BUG CORRIGIDO (18/09/2026): DB.insert (a transação nova) e
+      // DB.update (a bankLine apontando pra ela) são duas gravações
+      // independentes, em tabelas diferentes, sem garantia de que as duas
+      // cheguem juntas no servidor — mesmo padrão "par não-atômico" já
+      // corrigido em matchPair. Se a transação nova não sincronizasse
+      // (ex.: falha transitória de rede), a bankLine ficava marcada como
+      // conciliada apontando para um lançamento que nunca existiu fora
+      // deste aparelho — órfã, sem nenhum registro contábil correspondente
+      // em nenhum outro dispositivo. Confirma os dois lados; se não
+      // confirmar, desfaz a marcação da bankLine (a transação local
+      // continua existindo nesta aba — DB.retrySync tenta reenviar) e
+      // avisa quem está usando.
+      confirmMatchPairSynced(b.id, txn.id);
     });
   }
 

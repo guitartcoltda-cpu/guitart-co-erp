@@ -395,6 +395,52 @@
     return '<span class="badge badge-info">Agendado</span>';
   }
 
+  function apptStatusLabel(status) {
+    if (status === "concluido") return "Concluído";
+    if (status === "cancelado") return "Cancelado";
+    if (status === "faltou") return "Faltou";
+    return "Agendado";
+  }
+
+  // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em tempo
+  // real"): as transições de status de agendamento (cancelar, marcar
+  // falta, concluir, fechar conta, editar) gravavam direto por cima do
+  // que a TELA achava que era o status atual — sem checar se, nesse meio
+  // tempo, outra pessoa (em outro aparelho) já tinha mudado esse mesmo
+  // agendamento (ex.: uma recepção cancela enquanto outra está no meio de
+  // "Concluir Atendimento" do mesmo horário — o clique que salvar por
+  // último sobrescrevia silenciosamente a decisão da outra pessoa, com
+  // lançamento financeiro/comissão/estoque incluídos). Esta função
+  // confirma no SERVIDOR, bem antes de gravar, que o agendamento ainda
+  // está num dos status esperados; se não estiver mais, avisa quem está
+  // usando em vez de aplicar a ação por cima de uma decisão que a outra
+  // pessoa já tomou. Sem Supabase configurado (ou se a busca falhar),
+  // segue direto, otimista — mesmo padrão tolerante do resto do sistema
+  // (ver comentário de DB.fetchFresh em db.js).
+  function guardApptTransition(id, expectedStatuses, onOk, onConflict) {
+    if (!DB.hasRemote()) { onOk(); return; }
+    DB.fetchFresh("appointments", id).then(function (fresh) {
+      if (!fresh) { onOk(); return; }
+      if (expectedStatuses.indexOf(fresh.status) === -1) { onConflict(fresh); return; }
+      onOk();
+    });
+  }
+
+  // Mesma ideia de guardApptTransition, para "Fechar Conta" (vários
+  // agendamentos de uma vez): só prossegue se TODOS ainda estiverem no
+  // status esperado — `onConflict` recebe a lista dos que mudaram.
+  function guardApptTransitionAll(ids, expectedStatuses, onOk, onConflict) {
+    if (!DB.hasRemote() || !ids.length) { onOk(); return; }
+    Promise.all(ids.map(function (id) { return DB.fetchFresh("appointments", id); })).then(function (list) {
+      var changed = [];
+      list.forEach(function (fresh, i) {
+        if (fresh && expectedStatuses.indexOf(fresh.status) === -1) changed.push(fresh);
+      });
+      if (changed.length) { onConflict(changed); return; }
+      onOk();
+    });
+  }
+
   // `servicesById`/`employeesById`/`clientsById`: Maps/objetos id→registro
   // (ver renderGeneralList, único chamador desta função).
   function apptItemHtml(a, servicesById, employeesById, clientsById) {
@@ -428,9 +474,14 @@
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-cancel");
         var appt = DB.get("appointments", id);
-        DB.update("appointments", id, { status: "cancelado" });
-        if (appt) DB.log("Agenda", "Cancelou o agendamento de " + appt.date + " " + appt.time);
-        Toast.show("Agendamento cancelado", "info"); render();
+        guardApptTransition(id, ["agendado"], function () {
+          DB.update("appointments", id, { status: "cancelado" });
+          if (appt) DB.log("Agenda", "Cancelou o agendamento de " + appt.date + " " + appt.time);
+          Toast.show("Agendamento cancelado", "info"); render();
+        }, function (fresh) {
+          Toast.show("Este agendamento já foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + "). A tela foi atualizada.", "danger", 6500);
+          render();
+        });
       });
     });
     Utils.qsa("[data-edit]", listEl).forEach(function (b) { b.addEventListener("click", function () { openApptModal(b.getAttribute("data-edit")); }); });
@@ -1177,16 +1228,32 @@
   // (ver Clientes → Histórico).
   function clientCredit(client) { return (client && client.creditBalance) || 0; }
 
-  // Sempre relê o cliente do banco antes de gravar — dentro de um mesmo
-  // Fechar Conta pode haver mais de uma chamada (ex.: usa crédito E ainda
-  // assim paga a mais), e cada uma precisa enxergar o saldo já atualizado
-  // pela chamada anterior, não o valor "congelado" de quando o modal abriu.
+  // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em tempo
+  // real"): esta função já tinha o cuidado de reler `DB.get` antes de
+  // gravar (comentário original), mas DB.get só lê o CACHE LOCAL desta
+  // aba — nunca o servidor — então isso não protegia contra outra
+  // recepção concluindo/lançando crédito para o MESMO cliente quase ao
+  // mesmo tempo (ex.: cliente com dois atendimentos no mesmo dia,
+  // atendidos por pessoas diferentes). Trocado por DB.mergeRecordUpdate:
+  // busca o registro mais recente direto do SERVIDOR e recalcula
+  // creditHistory/creditBalance juntos, numa única gravação — então nunca
+  // apaga um crédito/pendência que outra recepção acabou de lançar para
+  // esse cliente. (Usar os DOIS campos numa única chamada, em vez de dois
+  // DB.mergeFieldUpdate separados, evita também um segundo tipo de
+  // corrida: se este mesmo Fechar Conta chamar applyCreditChange duas
+  // vezes seguidas — ex.: usa crédito existente E ainda assim paga a mais
+  // — duas gravações remotas separadas por campo poderiam se atropelar
+  // entre si; combinadas numa só, cada chamada sempre parte do registro
+  // mais fresco disponível pra ela.)
   function applyCreditChange(client, delta, note, appt) {
     if (!delta) return;
-    var fresh = DB.get("clients", client.id) || client;
-    var history = (fresh.creditHistory || []).slice();
-    history.push({ date: appt ? appt.date : Utils.todayISO(), delta: round2(delta), note: note, appointmentId: appt ? appt.id : null });
-    DB.update("clients", client.id, { creditBalance: round2(clientCredit(fresh) + delta), creditHistory: history });
+    var entry = { date: appt ? appt.date : Utils.todayISO(), delta: round2(delta), note: note, appointmentId: appt ? appt.id : null };
+    DB.mergeRecordUpdate("clients", client.id, function (fresh) {
+      return {
+        creditHistory: (fresh.creditHistory || []).concat([entry]),
+        creditBalance: round2((fresh.creditBalance || 0) + delta)
+      };
+    });
   }
 
   // Bloco de "Valor Recebido"/crédito, reaproveitado pelos dois modais de
@@ -1365,56 +1432,68 @@
       var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#ps-tip-emp")) || 0;
       var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#ps-tip-asst")) || 0) : 0;
 
-      DB.batch(function () {
-        // Forma de pagamento exibida no agendamento: "Pacote" fixo, já que o
-        // valor desta sessão foi cobrado inteiro na venda do pacote (1ª
-        // sessão) — não no #ps-pay acima, que é só para produto levado pelo
-        // cliente (venda avulsa à parte, sem relação com esta sessão).
-        DB.update("appointments", appt.id, { status: "concluido", paymentMethod: "Pacote" });
-        registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: employee ? employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
-        registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: assistant ? assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): este modal fica aberto enquanto a pessoa preenche
+      // insumos/gorjeta — confirma no SERVIDOR que o agendamento ainda
+      // está "agendado" antes de concluir, para não reverter/sobrescrever
+      // silenciosamente um cancelamento (ou outra alteração) que outra
+      // pessoa tenha feito nesse meio tempo (ver guardApptTransition).
+      guardApptTransition(appt.id, ["agendado"], function () {
+        DB.batch(function () {
+          // Forma de pagamento exibida no agendamento: "Pacote" fixo, já que o
+          // valor desta sessão foi cobrado inteiro na venda do pacote (1ª
+          // sessão) — não no #ps-pay acima, que é só para produto levado pelo
+          // cliente (venda avulsa à parte, sem relação com esta sessão).
+          DB.update("appointments", appt.id, { status: "concluido", paymentMethod: "Pacote" });
+          registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: employee ? employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
+          registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: assistant ? assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
 
-        rows.forEach(function (row) {
-          var tipo = row.querySelector(".ir-tipo").value;
-          var productId = row.querySelector(".ir-produto").value;
-          var qtd = parseFloat(row.querySelector(".ir-qtd").value) || 0;
-          if (!productId || qtd <= 0) return;
-          if (tipo === "consumo") {
-            if (window.Consumo) {
-              var pctRaw = parseFloat(row.querySelector(".ir-pct").value);
-              var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
-              try {
-                Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "", employeeSharePercent: employeeSharePercent });
-              } catch (err) { Toast.show(String(err), "danger"); }
+          rows.forEach(function (row) {
+            var tipo = row.querySelector(".ir-tipo").value;
+            var productId = row.querySelector(".ir-produto").value;
+            var qtd = parseFloat(row.querySelector(".ir-qtd").value) || 0;
+            if (!productId || qtd <= 0) return;
+            if (tipo === "consumo") {
+              if (window.Consumo) {
+                var pctRaw = parseFloat(row.querySelector(".ir-pct").value);
+                var employeeSharePercent = isNaN(pctRaw) ? 50 : Math.max(0, Math.min(100, pctRaw));
+                try {
+                  Consumo.register({ productId: productId, employeeId: appt.employeeId, appointmentId: appt.id, clientId: appt.clientId, date: appt.date, quantity: qtd, notes: service ? service.name : "", employeeSharePercent: employeeSharePercent });
+                } catch (err) { Toast.show(String(err), "danger"); }
+              }
+            } else {
+              var product = DB.get("products", productId);
+              if (!product) return;
+              var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
+              // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar
+              // Estoque" (ver comentário em db.js/remoteMergeField) — usa
+              // DB.mergeFieldUpdate para o desconto de estoque nunca apagar
+              // uma movimentação concorrente do mesmo produto.
+              DB.mergeFieldUpdate("products", productId, "currentStock", function (current) {
+                return Math.max(0, round2((current || 0) - qtd));
+              });
+              DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
+              DB.insert("transactions", {
+                type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
+                categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
+                paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+                productId: productId, appointmentId: appt.id, reconciled: false
+              });
             }
-          } else {
-            var product = DB.get("products", productId);
-            if (!product) return;
-            var saleAmount = round2((product.salePrice || product.costPrice || 0) * qtd);
-            // BUG CORRIGIDO (18/09/2026): mesmo padrão do "Movimentar
-            // Estoque" (ver comentário em db.js/remoteMergeField) — usa
-            // DB.mergeFieldUpdate para o desconto de estoque nunca apagar
-            // uma movimentação concorrente do mesmo produto.
-            DB.mergeFieldUpdate("products", productId, "currentStock", function (current) {
-              return Math.max(0, round2((current || 0) - qtd));
-            });
-            DB.insert("stockMovements", { productId: productId, type: "saida", reason: "venda", quantity: qtd, date: appt.date, notes: "Levado por " + client.name + " (atendimento)" });
-            DB.insert("transactions", {
-              type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
-              categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
-              paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
-              productId: productId, appointmentId: appt.id, reconciled: false
-            });
-          }
+          });
         });
-      });
 
-      DB.log("Agenda", "Concluiu a sessão " + appt.packageSessionIndex + " do pacote \"" + (packagePurchase ? packagePurchase.packageName : "") + "\" - " + client.name + " (comissão sobre " + Utils.fmtMoney(appt.price) + ")" +
-        (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
-      if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", appt.id));
-      Modal.close();
-      Toast.show("Sessão de pacote concluída", "success");
-      render();
+        DB.log("Agenda", "Concluiu a sessão " + appt.packageSessionIndex + " do pacote \"" + (packagePurchase ? packagePurchase.packageName : "") + "\" - " + client.name + " (comissão sobre " + Utils.fmtMoney(appt.price) + ")" +
+          (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
+        if (window.Notificacoes) Notificacoes.queueReviewRequest(DB.get("appointments", appt.id));
+        Modal.close();
+        Toast.show("Sessão de pacote concluída", "success");
+        render();
+      }, function (fresh) {
+        Modal.close();
+        Toast.show("Este agendamento foi alterado por outra pessoa enquanto você preenchia esta conclusão (status atual: " + apptStatusLabel(fresh.status) + "). Nada foi lançado — confira a agenda.", "danger", 7000);
+        render();
+      });
     });
   }
 
@@ -1553,6 +1632,15 @@
       var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#cc-tip-emp")) || 0;
       var tipAsst = hasAssistant ? (Utils.moneyMaskToFloat(box.querySelector("#cc-tip-asst")) || 0) : 0;
 
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): este é o modal de conclusão mais demorado de
+      // preencher (forma de pagamento, insumos, gorjeta, reconciliação de
+      // crédito) — confirma no SERVIDOR que o agendamento ainda está
+      // "agendado" antes de lançar qualquer coisa financeira/comissão/
+      // estoque em cima dele (ver guardApptTransition, evita reverter/
+      // sobrescrever silenciosamente uma ação concorrente de outra pessoa
+      // sobre o mesmo agendamento, ex.: um cancelamento).
+      guardApptTransition(appt.id, ["agendado"], function () {
       DB.batch(function () {
         // CRÍTICO: numa venda de pacote (1ª sessão) OU num consumo de
         // pacote via Forma de Pagamento, appt.price precisa ser o valor
@@ -1691,6 +1779,11 @@
       Modal.close();
       Toast.show(isPkgPay ? "Atendimento concluído — sessão do pacote consumida, nenhuma cobrança gerada" : (isParceria ? "Atendimento concluído como Parceria — divisão de custo registrada" : "Atendimento concluído e lançamento financeiro gerado"), "success");
       render();
+      }, function (fresh) {
+        Modal.close();
+        Toast.show("Este agendamento foi alterado por outra pessoa enquanto você preenchia esta conclusão (status atual: " + apptStatusLabel(fresh.status) + "). Nada foi lançado — confira a agenda.", "danger", 7000);
+        render();
+      });
     });
   }
 
@@ -1820,6 +1913,15 @@
       // Cobrado de cada linha (usado na comissão) não é alterado por isso.
       var pendingShortfall = (!isParceria && recRes.diff < -0.004 && recRes.shortfallChoice === "outra_forma") ? round2(Math.abs(recRes.diff)) : 0;
 
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): este modal reúne VÁRIOS agendamentos capturados uma
+      // única vez (`group`, antes mesmo do modal abrir) e pode ficar
+      // aberto um bom tempo (preenchendo valor/insumos/gorjeta de cada
+      // linha) — confirma no SERVIDOR que TODOS ainda estão "agendado"
+      // antes de concluir qualquer um, para não reabrir/reconcluir (com
+      // lançamento financeiro/comissão indevidos) um atendimento que outra
+      // pessoa já cancelou nesse meio tempo (ver guardApptTransitionAll).
+      guardApptTransitionAll(lines.map(function (l) { return l.appt.id; }), ["agendado"], function () {
       DB.batch(function () {
         lines.forEach(function (l) {
           var appt = l.appt, service = l.service;
@@ -1937,6 +2039,11 @@
       Modal.close();
       Toast.show(isParceria ? "Conta fechada como Parceria: " + group.length + " atendimentos concluídos" : "Conta fechada: " + group.length + " atendimentos concluídos", "success");
       render();
+      }, function (changed) {
+        Modal.close();
+        Toast.show((changed.length > 1 ? changed.length + " destes atendimentos foram alterados" : "Um destes atendimentos foi alterado") + " por outra pessoa enquanto você preenchia esta conclusão. Nada foi lançado — confira a agenda.", "danger", 7000);
+        render();
+      });
     });
   }
 
@@ -2604,11 +2711,17 @@
         concludeAppointment(a.id);
       });
       box.querySelector("#am-noshow").addEventListener("click", function () {
-        DB.update("appointments", a.id, { status: "faltou" });
-        DB.log("Agenda", "Marcou falta no agendamento de " + a.date + " " + a.time);
-        Modal.close();
-        Toast.show("Falta registrada", "info");
-        render();
+        guardApptTransition(a.id, ["agendado"], function () {
+          DB.update("appointments", a.id, { status: "faltou" });
+          DB.log("Agenda", "Marcou falta no agendamento de " + a.date + " " + a.time);
+          Modal.close();
+          Toast.show("Falta registrada", "info");
+          render();
+        }, function (fresh) {
+          Modal.close();
+          Toast.show("Este agendamento já foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + "). A tela foi atualizada.", "danger", 6500);
+          render();
+        });
       });
     } else if (a && a.status === "concluido") {
       box.querySelector("#am-add-insumo").addEventListener("click", function () {
@@ -2781,6 +2894,19 @@
       // atendimentos feitos no passado sem precisar passar por "Concluído"
       // primeiro. Removido o bloqueio que antes impedia salvar um horário
       // já passado.
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): ao editar um agendamento já existente, este
+      // formulário pode ficar aberto um tempo — se o STATUS não foi
+      // mexido pela pessoa (o valor no formulário continua sendo o que
+      // já estava quando o modal abriu), gravar por cima do registro
+      // inteiro podia reverter silenciosamente uma conclusão/cancelamento
+      // que outra pessoa tenha feito nesse mesmo agendamento enquanto
+      // este formulário ficava aberto. A gravação de verdade só acontece
+      // depois de confirmar no SERVIDOR que o status ainda é o mesmo de
+      // quando este modal abriu (ver o guardApptTransition mais abaixo,
+      // só chamado quando `a` existe — um agendamento novo não tem esse
+      // risco).
+      function finishApptSave() {
       var savedAppt;
       if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time); Toast.show("Agendamento atualizado", "success"); }
       else if (pendingPackageSession) {
@@ -2904,6 +3030,15 @@
       } else {
         Modal.close();
         render();
+      }
+      }
+      if (a) {
+        guardApptTransition(a.id, [a.status], finishApptSave, function (fresh) {
+          Toast.show("Este agendamento foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + ") enquanto você editava. Feche e abra novamente para ver os dados mais recentes antes de salvar.", "danger", 7500);
+          render();
+        });
+      } else {
+        finishApptSave();
       }
     });
   }

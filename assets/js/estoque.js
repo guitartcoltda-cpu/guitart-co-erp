@@ -628,16 +628,45 @@
       var packageUnitVal = box.querySelector("#pm-package-unit").value;
       var packageSizeVal = packageUnitVal ? (parseFloat(box.querySelector("#pm-package-size").value) || 0) : 0;
       if (packageUnitVal && packageSizeVal <= 0) { Toast.show("Informe o tamanho da embalagem (ex.: 1000)", "danger"); return; }
+      // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
+      // tempo real"): "Estoque Atual" aqui é só um campo do formulário de
+      // CADASTRO do produto (nome, fornecedor, preços...), mas antes ele
+      // gravava currentStock junto com o resto do patch via DB.update
+      // comum (upsert do registro inteiro) — como o modal fica aberto
+      // enquanto a pessoa revisa/edita o cadastro, o valor do campo é só
+      // uma FOTO do estoque de quando o modal abriu. Se alguém, em outro
+      // aparelho, vendesse/movimentasse esse mesmo produto enquanto o
+      // modal continuava aberto (ex.: "Movimentar Estoque", que já usa
+      // DB.mergeFieldUpdate corretamente), salvar o cadastro aqui
+      // sobrescrevia o estoque de volta para o valor congelado,
+      // apagando silenciosamente a movimentação concorrente. Correção:
+      // currentStock não entra mais no patch do cadastro — só se a
+      // pessoa realmente MEXEU no campo, aplica-se a DIFERENÇA (delta)
+      // via DB.mergeFieldUpdate, no mesmo padrão de "Movimentar
+      // Estoque", em vez de sobrescrever o valor absoluto.
       var patch = {
         name: name, sku: box.querySelector("#pm-sku").value.trim(), type: box.querySelector("#pm-type").value,
         unit: box.querySelector("#pm-unit").value.trim() || "un", supplier: box.querySelector("#pm-supplier").value.trim(),
-        currentStock: parseFloat(box.querySelector("#pm-stock").value) || 0, minStock: parseFloat(box.querySelector("#pm-min").value) || 0,
+        minStock: parseFloat(box.querySelector("#pm-min").value) || 0,
         costPrice: Utils.moneyMaskToFloat(box.querySelector("#pm-cost")),
         salePrice: box.querySelector("#pm-sale").value ? Utils.moneyMaskToFloat(box.querySelector("#pm-sale")) : null,
         packageUnit: packageUnitVal || null, packageSize: packageUnitVal ? packageSizeVal : null
       };
-      if (p) { DB.update("products", p.id, patch); DB.log("Estoque", "Atualizou o produto " + name); Toast.show("Produto atualizado", "success"); }
-      else { DB.insert("products", patch); DB.log("Estoque", "Cadastrou o produto " + name); Toast.show("Produto cadastrado", "success"); }
+      var newStockVal = parseFloat(box.querySelector("#pm-stock").value) || 0;
+      if (p) {
+        DB.update("products", p.id, patch);
+        var stockDelta = round2(newStockVal - (p.currentStock || 0));
+        if (stockDelta !== 0) {
+          DB.mergeFieldUpdate("products", p.id, "currentStock", function (current) {
+            return round2((current == null ? 0 : current) + stockDelta);
+          });
+          DB.log("Estoque", "Ajustou manualmente o estoque de " + name + " em " + (stockDelta > 0 ? "+" : "") + stockDelta);
+        }
+        DB.log("Estoque", "Atualizou o produto " + name); Toast.show("Produto atualizado", "success");
+      } else {
+        patch.currentStock = newStockVal;
+        DB.insert("products", patch); DB.log("Estoque", "Cadastrou o produto " + name); Toast.show("Produto cadastrado", "success");
+      }
       Modal.close();
       renderProducts();
     });

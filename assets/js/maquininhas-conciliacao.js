@@ -357,11 +357,43 @@
   function unmatch(lineId) {
     var line = DB.get("bankLines", lineId);
     if (!line) return;
-    if (line.matchedLineId) DB.update("bankLines", line.matchedLineId, { matched: false, matchedLineId: null });
+    var partnerId = line.matchedLineId;
+    if (partnerId) DB.update("bankLines", partnerId, { matched: false, matchedLineId: null });
     DB.update("bankLines", lineId, { matched: false, matchedLineId: null });
     DB.log("Maquininhas", "Desfez uma conciliação de maquininha");
     Toast.show("Conciliação desfeita", "info");
     render();
+    // BUG CORRIGIDO (18/09/2026): mesmo "par não-atômico" já corrigido em
+    // matchPair (ver confirmMatchPairSynced acima), só que no sentido de
+    // DESFAZER — ninguém confirmava que os dois lados realmente chegaram
+    // "desconciliados" no servidor. Se a rede caísse no meio, um lado
+    // voltava a aparecer como pendente (podendo ser conciliado de novo,
+    // com OUTRO parceiro) enquanto o outro ficava preso como "conciliado"
+    // apontando pra um parceiro que já mudou de par — um vínculo quebrado
+    // que só aparece numa auditoria manual. Confirma os dois lados; se não
+    // confirmar, refaz o link nos dois lados em vez de deixar pela metade.
+    if (partnerId) confirmUnmatchPairSynced(lineId, partnerId);
+  }
+
+  function confirmUnmatchPairSynced(lineId, partnerId, attemptsLeft) {
+    if (!DB.hasRemote()) return; // sem Supabase configurado: nada a confirmar
+    attemptsLeft = attemptsLeft == null ? 3 : attemptsLeft;
+    Promise.all([DB.fetchFresh("bankLines", lineId), DB.fetchFresh("bankLines", partnerId)]).then(function (r) {
+      var lineOk = r[0] && r[0].matched === false && !r[0].matchedLineId;
+      var partnerOk = r[1] && r[1].matched === false && !r[1].matchedLineId;
+      if (lineOk && partnerOk) return; // desfeito e confirmado dos dois lados
+      if (attemptsLeft > 1) {
+        if (!lineOk) DB.retrySync("bankLines", lineId);
+        if (!partnerOk) DB.retrySync("bankLines", partnerId);
+        setTimeout(function () { confirmUnmatchPairSynced(lineId, partnerId, attemptsLeft - 1); }, 1200);
+        return;
+      }
+      DB.update("bankLines", lineId, { matched: true, matchedLineId: partnerId });
+      DB.update("bankLines", partnerId, { matched: true, matchedLineId: lineId });
+      DB.log("Maquininhas", "Não foi possível confirmar o desfazimento com o servidor — a conciliação foi refeita automaticamente");
+      Toast.show("Não foi possível confirmar com o servidor — a conciliação foi refeita automaticamente. Verifique sua internet e tente de novo.", "danger", 6500);
+      render();
+    });
   }
 
   function round2(n) { return Math.round(n * 100) / 100; }

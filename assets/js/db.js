@@ -138,6 +138,15 @@
     try { sessionStorage.setItem(BOOT_CACHE_KEY, String(Date.now())); } catch (e) {}
   }
 
+  // Usado pelo aviso "Há atualizações disponíveis" (ver assets/js/
+  // layout.js/live-sync mais abaixo): ao clicar em "Atualizar", limpa esta
+  // marca antes de recarregar a página, para garantir que o próximo boot
+  // busque fresco do servidor de novo, mesmo que os 20s da janela acima
+  // ainda não tenham passado.
+  function clearBootCacheFresh() {
+    try { sessionStorage.removeItem(BOOT_CACHE_KEY); } catch (e) {}
+  }
+
   // ---------------------------------------------------------------
   // Espelho local (localStorage): reserva de leitura rápida/recente,
   // não a fonte de verdade — o Supabase é quem manda.
@@ -464,6 +473,37 @@
   function load() { return _cache; }
 
   // ---------------------------------------------------------------
+  // "Quase tempo real" (18/09/2026): antes desta correção, uma aba só
+  // buscava dados do Supabase UMA VEZ (no boot — ver bootstrapOnline
+  // acima) e nunca mais sozinha; mudanças feitas por outra pessoa, em
+  // outro aparelho, só apareciam se esta aba fosse recarregada. Numa
+  // recepção com várias pessoas usando o sistema ao mesmo tempo (o
+  // computador da recepção costuma ficar com uma aba aberta o dia
+  // inteiro), isso significa trabalhar com uma "foto" cada vez mais velha
+  // da agenda/estoque/financeiro sem perceber.
+  //
+  // hasRemoteChangesSince faz uma checagem LEVE (só pergunta "existe
+  // algum registro atualizado depois de X?" — sem baixar os dados de
+  // verdade) em cada tabela; ver assets/js/layout.js, que chama isso
+  // periodicamente em toda tela autenticada e mostra um aviso não-
+  // intrusivo ("Há atualizações disponíveis") em vez de recarregar
+  // sozinho por cima do que a pessoa está fazendo — a decisão de quando
+  // atualizar a tela continua sendo de quem está usando o sistema (nunca
+  // interrompe um formulário/modal aberto).
+  function hasRemoteChangesSince(sinceIso) {
+    if (!supa || !sinceIso) return Promise.resolve(false);
+    var checks = TABLES.map(function (t) {
+      // Consulta a tabela BASE (não a BOOT_VIEW) — só precisamos saber SE
+      // mudou algo, não dos dados em si, então o campo pesado de anexo
+      // (que a view existe pra evitar) nem entra na consulta.
+      return supa.from(t).select("id").gt("updated_at", sinceIso).limit(1).then(function (res) {
+        return !res.error && !!(res.data && res.data.length);
+      }).catch(function () { return false; });
+    });
+    return Promise.all(checks).then(function (results) { return results.some(Boolean); });
+  }
+
+  // ---------------------------------------------------------------
   // Sincronização em segundo plano com o Supabase.
   // Cada função aqui é "fire and forget": a tela já foi atualizada de
   // forma otimista no cache em memória antes de chamar isso — se a
@@ -612,18 +652,71 @@
   // velho. `transformFn` recebe o valor atual do campo tal como está no
   // servidor (pode ser undefined se o registro nunca teve esse campo) e é
   // responsável por lidar com esse caso — ver DB.mergeFieldUpdate abaixo.
-  function remoteMergeField(table, id, field, transformFn) {
-    if (!supa) return;
-    supa.from(table).select("data").eq("id", id).then(function (res) {
+  // REFORÇADO (18/09/2026, mesma varredura): as quatro funções remoteMerge*
+  // deste bloco (esta, remoteMergeRecord, remoteMergeSettings e
+  // remoteMergeSettingsField) originalmente buscavam o registro mais
+  // recente do servidor e gravavam de volta com um upsert "cego". Isso já
+  // encurtava MUITO a janela de corrida (de "a aba ficou aberta horas" —
+  // o bug original — para só o tempo de uma ida-e-volta de rede), mas não
+  // fechava essa janela por completo: uma simulação isolada escrita
+  // durante esta varredura reproduziu um caso real onde DUAS gravações
+  // concorrentes liam o mesmo valor ANTES de qualquer uma delas gravar
+  // (ex.: um desconto direto em Estoque e uma aprovação de desconto quase
+  // juntos) — nesse caso, a que gravasse por último ainda podia apagar a
+  // outra. Por isso, todas as quatro agora passam por casMergeWrite logo
+  // abaixo, que fecha essa janela de vez com "compare-and-swap": só grava
+  // se ninguém mais tiver gravado nesse registro desde que os dados foram
+  // buscados (usando o próprio updated_at, mantido automaticamente pela
+  // trigger set_updated_at já existente no schema); se alguém gravou no
+  // meio, busca de novo, do zero, e tenta de novo — em vez de gravar por
+  // cima cegamente ou desistir.
+  function casMergeWrite(table, id, computePatch, attemptsLeft) {
+    if (!supa) return Promise.resolve();
+    attemptsLeft = attemptsLeft == null ? 6 : attemptsLeft;
+    return supa.from(table).select("data, updated_at").eq("id", id).then(function (res) {
       if (res.error) throw res.error;
-      var server = res.data && res.data[0] && res.data[0].data;
-      if (!server) return { error: null }; // registro ainda não existe no servidor — nada a mesclar aqui
-      var merged = Object.assign({}, server);
-      merged[field] = transformFn(server[field]);
-      return supa.from(table).upsert({ id: id, data: merged });
-    }).then(function (res) {
-      if (res && res.error) throw res.error;
+      var row = res.data && res.data[0];
+      if (!row) return null; // registro ainda não existe no servidor — nada a mesclar aqui
+      var server = row.data;
+      var patch = computePatch(server);
+      if (patch == null) return null; // computePatch pode sinalizar "nada a gravar"
+      var merged = Object.assign({}, server, patch);
+      return supa.from(table).update({ data: merged }).eq("id", id).eq("updated_at", row.updated_at).select("id").then(function (upd) {
+        if (upd.error) throw upd.error;
+        if (upd.data && upd.data.length) return true; // gravou — ninguém mais mexeu nesse meio tempo
+        // updated_at já não bate mais com o que buscamos: outra gravação
+        // aconteceu bem no meio. Busca de novo (dados frescos de verdade)
+        // e tenta de novo, em vez de gravar cego por cima ou desistir.
+        if (attemptsLeft > 1) {
+          return casMergeWrite(table, id, computePatch, attemptsLeft - 1);
+        }
+        throw new Error("Não foi possível gravar sem sobrepor uma alteração concorrente, mesmo após várias tentativas");
+      });
     }).catch(function (err) { remoteFail(table, "salvar", err); });
+  }
+
+  function remoteMergeField(table, id, field, transformFn) {
+    casMergeWrite(table, id, function (server) {
+      var patch = {};
+      patch[field] = transformFn(server[field]);
+      return patch;
+    });
+  }
+
+  // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em tempo
+  // real"): irmã de remoteMergeField, para quando é preciso recalcular
+  // VÁRIOS campos interdependentes de uma vez (não dá pra tratar cada
+  // campo isoladamente porque um depende do outro — ex.: em
+  // productConsumptions, `totalCost`, `employeeShare` e `companyShare`
+  // são recalculados juntos a partir de `discountApplied`). Mesma ideia de
+  // remoteMergeField: busca o registro mais recente do SERVIDOR e aplica
+  // `transformFn` em cima DELE (não do cache local, que pode estar velho).
+  // `transformFn` recebe o registro fresco (como está no servidor) e
+  // devolve um OBJETO PATCH (só os campos que mudam) — nunca o registro
+  // inteiro, para não arriscar apagar um campo que `transformFn` não
+  // conhece (ex.: attachment.dataUrl de uma tabela BOOT_VIEW).
+  function remoteMergeRecord(table, id, transformFn) {
+    casMergeWrite(table, id, function (server) { return transformFn(server) || {}; });
   }
 
   // Apaga tudo de uma tabela no Supabase e regrava com a lista atual —
@@ -687,15 +780,31 @@
   // milissegundos), mas ela é de rede, não mais de "a aba ficou horas
   // aberta" — no volume de uso desta equipe, isso já resolve o problema.
   function remoteMergeSettings(patch) {
-    if (!supa) return;
-    supa.from("settings").select("data").eq("id", "settings").then(function (res) {
-      if (res.error) throw res.error;
-      var serverSettings = (res.data && res.data[0] && res.data[0].data) || {};
-      var merged = Object.assign({}, serverSettings, patch);
-      return supa.from("settings").upsert({ id: "settings", data: merged });
-    }).then(function (res) {
-      if (res && res.error) throw res.error;
-    }).catch(function (err) { remoteFail("settings", "sincronizar", err); });
+    casMergeWrite("settings", "settings", function () { return patch; });
+  }
+
+  // BUG CRÍTICO CORRIGIDO (18/09/2026): mesma família do bug de settings
+  // acima, só que num CAMPO ESPECÍFICO que guarda uma LISTA (Cargos,
+  // Formas de Pagamento, Pacotes de Tratamento, Grupos de Acesso...).
+  // remoteMergeSettings (acima) já evita que uma alteração incremental
+  // apague OUTROS campos de settings (ex.: editar um Cargo não apaga mais
+  // os Pacotes) — mas isso não protege duas pessoas editando a MESMA
+  // lista ao mesmo tempo: cada tela (ver configuracoes.js) lia a lista
+  // inteira do cache local, guardava em memória enquanto o usuário
+  // preenchia o formulário (às vezes minutos), e ao salvar recalculava a
+  // lista INTEIRA (map/concat/filter) a partir dessa cópia — se outra
+  // pessoa tivesse criado/editado/removido um item dessa mesma lista
+  // nesse meio tempo, a gravação seguinte apagava essa mudança
+  // silenciosamente (exatamente o mesmo tipo de incidente de "todos os
+  // pacotes sumiram", só que ainda não corrigido nessas 4 telas
+  // específicas). Resolve como remoteMergeField: busca o valor FRESCO do
+  // campo direto do servidor, aplica `transformFn` em cima dele, grava.
+  function remoteMergeSettingsField(field, transformFn) {
+    casMergeWrite("settings", "settings", function (server) {
+      var patch = {};
+      patch[field] = transformFn(server[field]);
+      return patch;
+    });
   }
 
   var DB = {
@@ -752,6 +861,25 @@
     // resto do sistema já faz.
     hasRemote: function () { return !!supa; },
 
+    // Timestamp (ISO) de quando o cache desta aba foi buscado fresco do
+    // servidor pela última vez de verdade (não só reaproveitado da janela
+    // de 20s entre navegações — ver BOOT_CACHE_KEY acima). Usado como
+    // "watermark" pelo aviso de "Há atualizações disponíveis" (ver
+    // assets/js/layout.js) para perguntar ao servidor "mudou algo desde
+    // então?".
+    syncedAt: function () {
+      var ms = readBootCacheFreshAt();
+      return ms ? new Date(ms).toISOString() : nowISO();
+    },
+
+    // Ver hasRemoteChangesSince acima.
+    hasRemoteChangesSince: function (sinceIso) { return hasRemoteChangesSince(sinceIso); },
+
+    // Ver clearBootCacheFresh acima — usado antes de recarregar a página
+    // a partir do aviso "Há atualizações disponíveis", para garantir um
+    // boot fresco de verdade.
+    clearBootCache: function () { clearBootCacheFresh(); },
+
     // Busca um registro direto do SERVIDOR (não do cache local desta aba),
     // como Promise. Usado quando é preciso confirmar o estado mais recente
     // de verdade antes de agir — ex.: Approvals.approve/reject, para não
@@ -800,6 +928,40 @@
       persist(table);
       remoteMergeField(table, id, field, transformFn);
       return db[table][idx];
+    },
+
+    // Igual a mergeFieldUpdate, mas para quando VÁRIOS campos do mesmo
+    // registro precisam ser recalculados juntos (interdependentes) em vez
+    // de um só — ver o comentário de remoteMergeRecord acima. `transformFn`
+    // recebe o registro atual (local na primeira passada, fresco do
+    // servidor na sincronização em segundo plano) e devolve só o PATCH
+    // (objeto com os campos que mudam), nunca o registro inteiro.
+    mergeRecordUpdate: function (table, id, transformFn) {
+      var db = load();
+      var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
+      if (idx === -1) return null;
+      var patch = transformFn(db[table][idx]) || {};
+      db[table][idx] = Object.assign({}, db[table][idx], patch, { updatedAt: nowISO() });
+      persist(table);
+      remoteMergeRecord(table, id, transformFn);
+      return db[table][idx];
+    },
+
+    // Igual a mergeFieldUpdate, mas para um campo DENTRO de settings (que
+    // é um único registro compartilhado por tudo em Configurações que não
+    // tem tabela própria) — ver o comentário de remoteMergeSettingsField
+    // acima. Usar em vez de updateSettings/saveRoles/savePaymentMethods/
+    // saveTreatmentPackages/saveAccessGroups sempre que o novo valor for
+    // uma lista RECALCULADA (map/concat/filter) a partir da lista já
+    // existente, em vez de um valor totalmente novo e independente.
+    mergeSettingsField: function (field, transformFn) {
+      var db = load();
+      var patch = {};
+      patch[field] = transformFn(db.settings ? db.settings[field] : undefined);
+      db.settings = Object.assign({}, db.settings, patch);
+      persist("settings");
+      remoteMergeSettingsField(field, transformFn);
+      return db.settings;
     },
 
     insertMany: function (table, records) {

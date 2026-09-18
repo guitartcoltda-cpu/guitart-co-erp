@@ -193,17 +193,29 @@
     // tela de Estoque quanto quando uma solicitação de desconto é aprovada
     // em Configurações → Aprovações (ver assets/js/approvals.js e
     // configuracoes.js).
+    // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em tempo
+    // real"): lia totalCost/discountApplied do CACHE LOCAL e gravava com
+    // DB.update (upsert do registro inteiro) — se dois descontos fossem
+    // aplicados ao MESMO lançamento quase ao mesmo tempo por pessoas
+    // diferentes (ex.: um Administrador dá desconto direto em Estoque
+    // enquanto outro aprova uma solicitação de desconto pendente para o
+    // mesmo lançamento, sem saber da outra ação), o segundo a gravar
+    // apagava silenciosamente o desconto do primeiro (o registro voltava
+    // a refletir só UM dos dois descontos, mesmo as duas telas tendo
+    // mostrado sucesso). Trocado por DB.mergeRecordUpdate: recalcula os 4
+    // campos juntos (são interdependentes — não dá pra tratar isolados)
+    // sempre em cima do registro mais recente do SERVIDOR.
     applyDiscount: function (consumptionId, discountAmount) {
-      var c = DB.get("productConsumptions", consumptionId);
-      if (!c) return null;
       var discount = Math.max(0, Number(discountAmount) || 0);
-      var newTotal = Math.max(0, round2(c.totalCost - discount));
-      var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
-      var employeeShare = round2(newTotal * (pct / 100));
-      var companyShare = round2(newTotal - employeeShare);
-      return DB.update("productConsumptions", consumptionId, {
-        totalCost: newTotal, employeeShare: employeeShare, companyShare: companyShare,
-        discountApplied: round2((Number(c.discountApplied) || 0) + discount)
+      return DB.mergeRecordUpdate("productConsumptions", consumptionId, function (c) {
+        var newTotal = Math.max(0, round2(c.totalCost - discount));
+        var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
+        var employeeShare = round2(newTotal * (pct / 100));
+        var companyShare = round2(newTotal - employeeShare);
+        return {
+          totalCost: newTotal, employeeShare: employeeShare, companyShare: companyShare,
+          discountApplied: round2((Number(c.discountApplied) || 0) + discount)
+        };
       });
     },
 
