@@ -399,60 +399,57 @@
   }
 
   // ---------------------------------------------------------------
-  // "Quase tempo real" (18/09/2026, varredura de "múltiplos usuários em
-  // tempo real"): antes desta correção, uma aba só buscava dados do
-  // Supabase UMA VEZ, no carregamento — mudanças feitas por outra pessoa,
-  // em outro aparelho, só apareciam se esta aba fosse recarregada
-  // manualmente (ver comentário de hasRemoteChangesSince em db.js). Numa
-  // recepção com várias pessoas trabalhando ao mesmo tempo (é comum um
-  // computador ficar com uma aba aberta o dia inteiro), isso significa
-  // trabalhar com uma "foto" cada vez mais velha da agenda/estoque/
-  // financeiro sem perceber — exatamente o tipo de coisa que "atrapalha,
-  // altera, confunde o funcionamento" que foi pedido para cobrir.
+  // "Tempo real" (18/09/2026, varredura de "múltiplos usuários em tempo
+  // real"; revisado no mesmo dia a pedido do usuário — ver abaixo): antes
+  // desta correção, uma aba só buscava dados do Supabase UMA VEZ, no
+  // carregamento — mudanças feitas por outra pessoa, em outro aparelho,
+  // só apareciam se esta aba fosse recarregada manualmente (ver
+  // comentário de hasRemoteChangesSince em db.js). Numa recepção com
+  // várias pessoas trabalhando ao mesmo tempo (é comum um computador
+  // ficar com uma aba aberta o dia inteiro), isso significa trabalhar com
+  // uma "foto" cada vez mais velha da agenda/estoque/financeiro sem
+  // perceber.
   //
-  // Em vez de recarregar sozinho por cima do que a pessoa está fazendo
-  // (o que poderia apagar um formulário/modal aberto no meio do
-  // preenchimento — o oposto do pedido de "não interferir a ação
-  // individual de cada pessoa"), esta checagem periódica só avisa, com
-  // uma faixa discreta e um botão — quem está usando decide a hora de
-  // atualizar.
+  // Primeira versão publicada hoje avisava com uma faixa fixa no topo da
+  // tela ("Há atualizações — Atualizar agora"/"Agora não") e esperava um
+  // clique antes de recarregar. A pedido explícito do usuário ("Essa
+  // atualização não pode existir, tem que ser automático, ninguém tem que
+  // clicar em nada"), essa faixa foi removida: a atualização agora
+  // acontece sozinha, sem nenhum aviso visível e sem exigir clique. A
+  // única cautela mantida é NÃO recarregar por cima de um modal/painel
+  // aberto (Modal.open/Drawer.open, ver utils.js, sempre marca
+  // `document.body` com a classe `modal-open-lock` enquanto está aberto,
+  // e a remove ao fechar) — isso continua sendo necessário porque
+  // recarregar a página no meio do preenchimento de um formulário
+  // apagaria o que a pessoa estava digitando, o que era exatamente o
+  // problema original que o usuário pediu para evitar ("sem interferir a
+  // ação individual de cada pessoa"). Fora de um modal/painel aberto, não
+  // há mais nenhuma espera: a tela é atualizada assim que uma mudança é
+  // detectada.
   var LIVE_SYNC_INTERVAL_MS = 45000;
+  var LIVE_SYNC_RETRY_MS = 4000; // religa a checagem rápida enquanto um modal/painel está bloqueando o refresh automático
   var liveSyncTimer = null;
-  var liveSyncBannerShown = false;
+  var liveSyncPending = false; // já detectou mudança e está só esperando o modal/painel fechar para recarregar
 
-  function liveSyncBannerHtml() {
-    return '<div id="live-sync-banner" role="status" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--color-success, #1f8a5f);color:#fff;padding:10px 16px;text-align:center;font-size:13.5px;box-shadow:var(--shadow-md, 0 4px 18px rgba(0,0,0,.18));">' +
-      '<i class="fa-solid fa-rotate"></i> Há atualizações de outras pessoas no sistema — esta tela pode estar desatualizada.' +
-      '<button type="button" id="live-sync-refresh-btn" style="margin-left:12px;background:#fff;color:var(--color-success, #1f8a5f);border:none;border-radius:6px;padding:4px 14px;font-weight:600;cursor:pointer;">Atualizar agora</button>' +
-      '<button type="button" id="live-sync-dismiss-btn" style="margin-left:8px;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);border-radius:6px;padding:4px 12px;cursor:pointer;">Agora não</button>' +
-      '</div>';
+  function reloadNow() {
+    if (global.DB && DB.clearBootCache) DB.clearBootCache();
+    global.location.reload();
   }
 
-  function showLiveSyncBanner() {
-    if (liveSyncBannerShown) return;
-    liveSyncBannerShown = true;
-    var el = document.getElementById("live-sync-banner");
-    if (!el) {
-      document.body.insertAdjacentHTML("afterbegin", liveSyncBannerHtml());
-      el = document.getElementById("live-sync-banner");
-    }
-    el.style.display = "block";
-    var refreshBtn = document.getElementById("live-sync-refresh-btn");
-    var dismissBtn = document.getElementById("live-sync-dismiss-btn");
-    // "Atualizar agora": recarrega a página — nunca automático, só quando
-    // a própria pessoa decide (ela pode terminar o que está fazendo antes
-    // de clicar). Limpa a marca de "cache recente" antes (ver
-    // DB.clearBootCache em db.js) para garantir que o próximo carregamento
-    // busque fresco do servidor de verdade, e não reaproveite a janela de
-    // poucos segundos entre navegações.
-    if (refreshBtn) refreshBtn.onclick = function () {
-      if (global.DB && DB.clearBootCache) DB.clearBootCache();
-      global.location.reload();
-    };
-    if (dismissBtn) dismissBtn.onclick = function () {
-      el.style.display = "none";
-      liveSyncBannerShown = false; // permite avisar de novo se detectar outra mudança depois
-    };
+  function refreshWhenSafe() {
+    if (liveSyncPending) return; // já tem um refresh agendado, não empilha outro
+    liveSyncPending = true;
+    (function attempt() {
+      if (document.hidden) { setTimeout(attempt, LIVE_SYNC_RETRY_MS); return; }
+      if (document.body.classList.contains("modal-open-lock")) {
+        // Um modal ou painel lateral está aberto agora — provavelmente um
+        // formulário em preenchimento. Não recarrega por cima disso;
+        // tenta de novo em alguns segundos, até a pessoa fechar.
+        setTimeout(attempt, LIVE_SYNC_RETRY_MS);
+        return;
+      }
+      reloadNow();
+    })();
   }
 
   function startLiveSync() {
@@ -460,9 +457,9 @@
     if (liveSyncTimer) return; // proteção contra dupla inicialização
     function tick() {
       if (document.hidden) return; // aba em segundo plano: não gasta consulta à toa
-      if (liveSyncBannerShown) return; // já avisou — espera a pessoa decidir antes de checar de novo
+      if (liveSyncPending) return; // já detectou mudança, só esperando a hora certa de recarregar
       DB.hasRemoteChangesSince(DB.syncedAt()).then(function (changed) {
-        if (changed) showLiveSyncBanner();
+        if (changed) refreshWhenSafe();
       });
     }
     liveSyncTimer = setInterval(tick, LIVE_SYNC_INTERVAL_MS);
