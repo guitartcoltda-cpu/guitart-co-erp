@@ -16,6 +16,14 @@
     status: function (r) { return r.saldo <= 0.01 ? 0 : (r.pago > 0 ? 1 : 2); }
   };
 
+  // Selo de status (Pago / Parcial / A Pagar) — mesmo critério usado na
+  // coluna "Saldo" da tabela e, a partir de 19/09/2026, também no rodapé do
+  // modal "Ver detalhes" (ver resumoCalculoHtml/openDetailsModal), para que
+  // os dois lugares nunca divirjam sobre o que já foi pago.
+  function commStatusBadgeHtml(r) {
+    return r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0.005 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
+  }
+
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
   function init() {
@@ -474,7 +482,7 @@
       Utils.thSort("Saldo", "saldo", commissionSortState, { className: "text-right" }) +
       '<th class="com-col-actions"></th></tr></thead><tbody>' +
       rows.map(function (r) {
-        var status = r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
+        var status = commStatusBadgeHtml(r);
         // Aviso discreto sob "Comissão" quando parte dela já saiu para pagar
         // assistente(s) — o valor completo (o que foi de fato descontado)
         // só aparece em "Ver detalhes", mas esse aviso já sinaliza que existe
@@ -708,6 +716,10 @@
       resumoCalculoHtml(row) +
       '<div class="flex justify-between mt-16" style="font-weight:800;font-size:15px;border-top:2px solid var(--border-color);padding-top:10px;">' +
         '<span>Total Devido</span><span id="dm-grand-total">' + Utils.fmtMoney(row.devido) + '</span>' +
+      '</div>' +
+      '<div class="flex justify-between mt-8 small text-success"><span>(−) Pago no Período</span><span class="text-num" id="dm-recap-pago">' + (row.pago > 0.005 ? "- " + Utils.fmtMoney(row.pago) : Utils.fmtMoney(0)) + '</span></div>' +
+      '<div class="flex justify-between mt-8" style="font-weight:800;font-size:15px;border-top:1px solid var(--border-color);padding-top:10px;">' +
+        '<span>Saldo em Aberto</span><span><span class="' + (row.saldo > 0.01 ? "text-danger" : "text-success") + '" id="dm-grand-saldo">' + Utils.fmtMoney(Math.max(0, row.saldo)) + '</span> <span id="dm-grand-status">' + commStatusBadgeHtml(row) + '</span></span>' +
       '</div>';
 
     var box = Modal.open({ title: "Detalhes da Comissão — " + e.name, wide: true, bodyHtml: body });
@@ -765,6 +777,18 @@
         if (bonusEl) {
           bonusEl.textContent = (newRow.bonusTotal < 0 ? "- " + Utils.fmtMoney(Math.abs(newRow.bonusTotal)) : Utils.fmtMoney(newRow.bonusTotal));
         }
+        // "Pago" não muda (é o que já foi de fato pago antes de abrir o
+        // modal), mas o "Saldo em Aberto" e o selo de status dependem do
+        // "Total Devido", então precisam recalcular junto — a pedido do
+        // usuário (19/09/2026), para o modal nunca mostrar um total que
+        // pareça conflitar com o Pago/Saldo já exibidos na tabela.
+        var saldoEl = box.querySelector("#dm-grand-saldo");
+        if (saldoEl) {
+          saldoEl.textContent = Utils.fmtMoney(Math.max(0, newRow.saldo));
+          saldoEl.className = newRow.saldo > 0.01 ? "text-danger" : "text-success";
+        }
+        var statusEl = box.querySelector("#dm-grand-status");
+        if (statusEl) { statusEl.innerHTML = commStatusBadgeHtml(newRow); }
       }
       renderBonusSection();
       render(rows); // keep the page-level table/summary in sync while the modal is open
