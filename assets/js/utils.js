@@ -436,6 +436,21 @@
       return neg ? -Math.abs(n) : n;
     },
 
+    // Verdadeiro quando a forma de pagamento gravada no agendamento
+    // (appt.paymentMethod) está cadastrada como "Parceria" em Configurações
+    // → Formas de Pagamento (isParceria:true) — usado por comissoes.js e
+    // extrato-comissao.js para excluir esses atendimentos do cálculo normal
+    // de comissão (ver INCIDENTE 19/09/2026: um atendimento de Parceria
+    // tinha sido contabilizado como comissão normal e efetivamente pago a
+    // um profissional). Parceria nunca gera comissão nem receita — ver
+    // parceriaCostTotal em computeRows()/computeForEmployeeCurrent().
+    isParceriaAppt: function (appt) {
+      if (!appt || !appt.paymentMethod) return false;
+      if (!window.DB || !DB.getPaymentMethods) return false;
+      var pm = DB.getPaymentMethods().find(function (p) { return p.name === appt.paymentMethod; });
+      return !!(pm && pm.isParceria);
+    },
+
     // Divide a comissão de um atendimento concluído entre o profissional
     // principal e o assistente (quando houver). O "pote" do principal é
     // sempre appt.price * taxaPrincipal/100 — a taxa vem de appt.commissionPercent
@@ -447,6 +462,15 @@
     // a outra metade é um custo assumido pelo salão (não é descontada de
     // ninguém — por isso o total pago em comissão nesse atendimento passa a
     // ser maior que o pote sozinho quando há assistente).
+    // NOTA (19/09/2026): esta função continua calculando o "pote" normal
+    // mesmo para um atendimento de Parceria (não checa isParceriaAppt) —
+    // de propósito, porque agenda.js (openConcludeSingleModal/GroupModal)
+    // reaproveita exatamente essa mesma matemática para decidir quanto do
+    // valor do atendimento vira despesa do salão vs. desconto do
+    // profissional. Quem NÃO pode tratar o resultado como comissão ganha
+    // são os consumidores de relatório (comissoes.js/extrato-comissao.js) —
+    // eles checam isParceriaAppt(a) antes de somar mainCommission/
+    // assistantCommission em qualquer total de comissão devida.
     apptCommissionSplit: function (appt, employee) {
       var round2 = function (n) { return Math.round(n * 100) / 100; };
       var price = Number(appt && appt.price) || 0;

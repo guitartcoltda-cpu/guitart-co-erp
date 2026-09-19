@@ -42,7 +42,6 @@
     var saldoThis = revenueThis - expenseThis;
     var saldoPrev = revenuePrev - expensePrev;
 
-    var concludedInRange = appointments.filter(function (a) { return inRange(a, range) && a.status === "concluido"; });
     // BUG CORRIGIDO (18/09/2026): o card e o texto do modal de detalhe
     // sempre descreveram "Ticket Médio" como "receita de SERVIÇOS
     // concluídos ÷ nº de atendimentos concluídos" (ver bodyHtml abaixo,
@@ -54,6 +53,13 @@
     // própria definição da tela. Corrigido para somar o preço só dos
     // atendimentos concluídos no período (o mesmo valor já listado na
     // tabela de detalhe), batendo com o que a tela sempre disse calcular.
+    // BUG CORRIGIDO (19/09/2026): atendimentos com forma de pagamento
+    // "Parceria" (cliente não paga nada) continuavam entrando aqui com o
+    // preço base do serviço, inflando o Ticket Médio com receita que nunca
+    // existiu de verdade — mesma família do bug de comissionamento
+    // corrigido nesta rodada (ver comissoes.js). Excluídos tanto do
+    // numerador (soma) quanto do divisor (contagem de atendimentos).
+    var concludedInRange = appointments.filter(function (a) { return inRange(a, range) && a.status === "concluido" && !Utils.isParceriaAppt(a); });
     var serviceRevenueInRange = concludedInRange.reduce(function (s, a) { return s + (a.price || 0); }, 0);
     var ticketMedio = concludedInRange.length ? serviceRevenueInRange / concludedInRange.length : 0;
 
