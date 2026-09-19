@@ -442,12 +442,8 @@
     // extrato-comissao.js para excluir esses atendimentos do cálculo normal
     // de comissão (ver INCIDENTE 19/09/2026: um atendimento de Parceria
     // tinha sido contabilizado como comissão normal e efetivamente pago a
-    // um profissional). Parceria nunca gera comissão nem receita, e também
-    // não gera nenhum desconto pelo valor do serviço em si (esclarecimento
-    // do usuário, mesmo dia) — o único custo real que desconta o
-    // profissional é o consumo de produtos/insumos usados no atendimento,
-    // sempre tratado à parte por Consumo.deductionForRange, independente
-    // da forma de pagamento.
+    // um profissional). Parceria nunca gera comissão nem receita — ver
+    // parceriaCostTotal em computeRows()/computeForEmployeeCurrent().
     isParceriaAppt: function (appt) {
       if (!appt || !appt.paymentMethod) return false;
       if (!window.DB || !DB.getPaymentMethods) return false;

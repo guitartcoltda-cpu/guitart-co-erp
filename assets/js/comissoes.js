@@ -317,20 +317,10 @@
       // parceriaSplitFieldHtml) virava comissão de verdade, somada em
       // mainCommissionTotal e efetivamente paga ao profissional — caso
       // real: o atendimento de Parceria da Dra. Natasha foi contabilizado
-      // como comissão comum para o Francisco.
-      // AJUSTE (19/09/2026, mesmo dia — esclarecimento do usuário): a
-      // primeira correção tinha ido longe demais na outra direção, virando
-      // a % negociada num DESCONTO do saldo do profissional. Mas como a
-      // Parceria nunca gera cobrança nem repasse ao profissional pelo
-      // VALOR do serviço, esse valor também não pode virar um desconto —
-      // ele simplesmente não entra em lugar nenhum da conta (nem soma, nem
-      // subtrai). O único custo real de um atendimento de Parceria que
-      // efetivamente desconta do profissional é o consumo de produtos/
-      // insumos usados nele — isso já é tratado à parte, de forma
-      // independente e sempre foi correto, por Consumo.deductionForRange
-      // (percentual configurável por lançamento, padrão 50/50). Parceria
-      // não pode gerar comissão nem receita — mas também não gera desconto
-      // pelo valor do serviço em si.
+      // como comissão comum para o Francisco. Parceria não pode gerar
+      // comissão nem receita — a parte negociada do profissional agora vira
+      // um DESCONTO (parceriaCostTotal), a mesma lógica já usada para
+      // Consumo de Insumos, nunca uma soma em "Comissão".
       var payingMain = asMain.filter(function (a) { return !Utils.isParceriaAppt(a); });
       var serviceRevenue = round2(sumBy(payingMain, "price"));
       var mainCommissionTotal = 0;
@@ -346,9 +336,19 @@
       // desconto na hora do pagamento. Não altera "Comissão" nem "Devido":
       // é só a mesma dedução, já aplicada, tornada visível.
       var assistantDeductionTotal = 0;
+      var parceriaCostTotal = 0;
+      var parceriaCostItems = [];
       asMain.forEach(function (a) {
-        if (Utils.isParceriaAppt(a)) return; // Parceria: nem comissão, nem desconto pelo valor do serviço (só consumo de produtos, à parte)
         var split = Utils.apptCommissionSplit(a, e);
+        if (Utils.isParceriaAppt(a)) {
+          parceriaCostTotal += split.mainCommission;
+          parceriaCostItems.push({
+            appointmentId: a.id, date: a.date, time: a.time, clientId: a.clientId, serviceId: a.serviceId,
+            baseValue: a.price, splitPct: round2(a.commissionPercent != null ? a.commissionPercent : (e.commissionRate || 0)),
+            amount: split.mainCommission
+          });
+          return;
+        }
         mainCommissionTotal += split.mainCommission;
         if (a.assistantId) assistantDeductionTotal += round2(split.pool - split.mainCommission);
       });
@@ -361,22 +361,19 @@
       mainCommissionTotal = round2(mainCommissionTotal);
       assistantDeductionTotal = round2(assistantDeductionTotal);
       assistantCommissionTotal = round2(assistantCommissionTotal);
+      parceriaCostTotal = round2(parceriaCostTotal);
       var baseComissao = round2(mainCommissionTotal + assistantCommissionTotal);
       var bonuses = bonusesFor(e.id);
       var bonusTotal = round2(sumBy(bonuses, "amount"));
-      // Consumo.deductionForRange já cobre, de forma independente da forma
-      // de pagamento, o único custo real que um atendimento de Parceria
-      // desconta do profissional: os produtos/insumos usados nele
-      // (percentual configurável por lançamento, padrão 50/50) — não
-      // precisa de nenhum tratamento especial aqui.
       var consumo = window.Consumo ? Consumo.deductionForRange(e.id, range) : { total: 0, items: [] };
-      var devido = round2(baseComissao + bonusTotal - consumo.total);
+      var devido = round2(baseComissao + bonusTotal - consumo.total - parceriaCostTotal);
       var pagoTxns = txnsByEmployeeId[e.id] || [];
       var pago = sumBy(pagoTxns, "amount");
       return {
         employee: e, serviceRevenue: serviceRevenue, atendimentos: asMain.length,
         mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
         assistantDeductionTotal: assistantDeductionTotal,
+        parceriaCostTotal: parceriaCostTotal, parceriaCostItems: parceriaCostItems,
         baseComissao: baseComissao, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
         devido: devido, pago: pago, saldo: round2(devido - pago)
       };
@@ -485,7 +482,7 @@
         var asstHintHtml = r.assistantDeductionTotal > 0.005
           ? '<div class="small text-danger">-' + Utils.fmtMoney(r.assistantDeductionTotal) + ' repasse assistente</div>'
           : '';
-        var netAdjust = round2(r.bonusTotal - r.consumoTotal);
+        var netAdjust = round2(r.bonusTotal - r.consumoTotal - r.parceriaCostTotal);
         var adjustHtml;
         if (Math.abs(netAdjust) < 0.005) {
           adjustHtml = '<span class="small text-muted">—</span>';
@@ -702,6 +699,7 @@
       '</table>' +
       asstSectionHtml +
       consumoSectionHtml(row) +
+      parceriaSectionHtml(row) +
       '<div class="flex items-center justify-between mt-16 mb-8">' +
         '<h4 style="font-size:14px;">Comissionamento Esporádico do Período</h4>' +
         '<button type="button" class="btn btn-sm btn-outline" id="dm-add-bonus"><i class="fa-solid fa-plus"></i> Novo Lançamento</button>' +
@@ -807,6 +805,9 @@
     if (row.consumoTotal > 0.005) {
       rowsHtml += '<div class="flex justify-between small mt-8 text-danger"><span>(−) Consumo de Insumos</span><span class="text-num">- ' + Utils.fmtMoney(row.consumoTotal) + '</span></div>';
     }
+    if (row.parceriaCostTotal > 0.005) {
+      rowsHtml += '<div class="flex justify-between small mt-8 text-danger"><span>(−) Atendimentos em Parceria</span><span class="text-num">- ' + Utils.fmtMoney(row.parceriaCostTotal) + '</span></div>';
+    }
     return '<div class="mt-16" style="border-top:1px solid var(--border-color);padding-top:12px;">' +
       '<h4 style="font-size:14px;margin-bottom:4px;">Resumo do Cálculo</h4>' +
       '<div class="small text-muted mb-8">Da comissão bruta até o total devido — use esta lista para justificar o valor final ao profissional.</div>' +
@@ -839,6 +840,38 @@
       '<tbody>' + linesHtml + '</tbody>' +
       '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="5">Subtotal do desconto</td>' +
       '<td class="text-right text-num text-danger">- ' + Utils.fmtMoney(row.consumoTotal) + '</td></tr></tfoot></table>';
+  }
+
+  // Mostra, atendimento a atendimento, o desconto de "Parceria" — forma de
+  // pagamento em que o cliente não paga nada (ver agenda.js/isParceriaMethod
+  // e configuracoes.js/isParceria) — aplicado ao profissional em vez de
+  // somado como comissão (BUG CORRIGIDO 19/09/2026, ver comentário em
+  // computeRows(): um atendimento de Parceria tinha virado comissão normal e
+  // chegou a ser pago a um profissional). A % usada é a mesma negociada por
+  // atendimento em Agenda → Concluir/Fechar Conta ("% do Profissional
+  // (Parceria)") — o restante do valor já virou despesa do salão na hora da
+  // conclusão (ver "Parceria - ..." em Lançamentos Financeiros).
+  function parceriaSectionHtml(row) {
+    if (!row.parceriaCostItems || !row.parceriaCostItems.length) return "";
+    var services = DB.all("services"), clients = DB.all("clients");
+    var linesHtml = row.parceriaCostItems.map(function (it) {
+      var s = services.find(function (x) { return x.id === it.serviceId; });
+      var c = clients.find(function (x) { return x.id === it.clientId; });
+      return '<tr>' +
+        '<td>' + Utils.fmtDate(it.date) + ' · ' + it.time + '</td>' +
+        '<td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
+        '<td>' + Utils.escapeHtml(s ? s.name : "-") + '</td>' +
+        '<td class="text-right text-num">' + Utils.fmtMoney(it.baseValue) + '</td>' +
+        '<td class="text-right text-num">' + it.splitPct + '%</td>' +
+        '<td class="text-right text-num font-bold text-danger">- ' + Utils.fmtMoney(it.amount) + '</td>' +
+        '</tr>';
+    }).join("");
+    return '<h4 style="font-size:14px;margin-top:18px;margin-bottom:8px;">Desconto por Atendimentos em Parceria</h4>' +
+      '<div class="small text-muted mb-8">Atendimentos com a forma de pagamento "Parceria" não cobram o cliente nem geram comissão — a parte negociada do profissional é descontada aqui, em vez de somada à comissão.</div>' +
+      '<table class="data-table"><thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Base</th><th class="text-right">% Profissional</th><th class="text-right">Desconto</th></tr></thead>' +
+      '<tbody>' + linesHtml + '</tbody>' +
+      '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="5">Subtotal do desconto</td>' +
+      '<td class="text-right text-num text-danger">- ' + Utils.fmtMoney(row.parceriaCostTotal) + '</td></tr></tfoot></table>';
   }
 
   // Data padrão sugerida no lançamento de comissionamento esporádico — hoje,
