@@ -7,29 +7,39 @@
    pagamento 'Parceria' não pode gerar comissionamento para o
    profissional. Os atendimentos vinculados a 'parceria' precisam
    descontar do profissional o valor dos consumos dos produtos e não
-   gerar nenhuma receita. [...] descontados 50% salão e 50% profissional,
-   tendo atendimentos que são 100% descontados dos profissionais."
+   gerar nenhuma receita."
 
    BUG relatado: um atendimento de Parceria (Dra. Natasha) tinha sido
    contabilizado como comissão comum para o profissional Francisco —
    Utils.apptCommissionSplit() não distinguia Parceria, então o campo
    "% do Profissional (Parceria)" (reaproveitado de appt.commissionPercent,
    ver agenda.js/parceriaSplitFieldHtml) virava comissão de verdade em vez
-   de um desconto.
+   de zero.
+
+   AJUSTE (19/09/2026, mesmo dia — esclarecimento do usuário): a primeira
+   correção tinha ido longe demais na outra direção, transformando a %
+   negociada num DESCONTO do saldo do profissional. O usuário esclareceu:
+   como o cliente nunca é cobrado por um atendimento de Parceria, o
+   profissional também não pode "perder" nada pelo VALOR do serviço em
+   si — nem ganha (comissão), nem perde (desconto). O único custo real
+   que desconta o profissional num atendimento de Parceria é o consumo
+   de produtos/insumos usados nele, já tratado de forma independente e
+   sempre correta por Consumo.deductionForRange (percentual configurável
+   por lançamento, padrão 50/50, sem relação com a forma de pagamento).
 
    Este teste carrega comissoes.js E extrato-comissao.js de verdade num
    único jsdom (ids não colidem: prefixo "cm-" e "tbl-commission" de um
    lado, "ec-" e "tbl-ec" do outro), com um DB falso que inclui:
    - 1 atendimento normal (Pix, R$100, comissão 20%) — deve gerar R$20 de
      comissão normalmente (não é sobre Parceria que este teste desconfia).
-   - 2 atendimentos de Parceria do mesmo profissional: um com split 50%
-     (R$200 de base) e outro com split 100% (R$80 de base) — cobrindo
-     explicitamente o caso "alguns atendimentos são 100% descontados do
-     profissional" citado pelo usuário.
-   - 1 consumo de insumo vinculado ao atendimento de Parceria de 50%,
+   - 2 atendimentos de Parceria do mesmo profissional (R$200 e R$80 de
+     base) — nenhum dos dois pode gerar comissão NEM desconto pelo valor
+     do serviço.
+   - 1 consumo de insumo vinculado ao atendimento de Parceria de R$200,
      para confirmar que o desconto de consumo continua funcionando
-     normalmente e de forma independente do desconto de Parceria (nunca
-     somado como comissão, sempre subtraído).
+     normalmente e de forma independente da forma de pagamento (nunca
+     somado como comissão, sempre subtraído — o único efeito real que
+     Parceria tem sobre o saldo do profissional).
 
    Uso: node test/parceria-comissao.test.js
    ============================================================ */
@@ -73,7 +83,6 @@ const HTML =
   '<div id="ec-assistant" style="display:none;"></div>' +
   '<div id="ec-assistant-deduct" style="display:none;"></div>' +
   '<div id="ec-consumo" style="display:none;"></div>' +
-  '<div id="ec-parceria" style="display:none;"></div>' +
   '<div id="ec-bonus" style="display:none;"></div>' +
   '<div id="toast-stack"></div>' +
   '</body></html>';
@@ -116,14 +125,14 @@ const tables = {
   appointments: [
     // Atendimento normal — não é Parceria, comissão deve continuar normal.
     { id: "aNormal", date: d05, time: "09:00", employeeId: "emp1", serviceId: "svc1", clientId: "cNormal", price: 100, status: "concluido", paymentMethod: "Pix" },
-    // Atendimento de Parceria, split 50% profissional / 50% salão — caso
-    // padrão citado pelo usuário. commissionPercent aqui é o MESMO campo
-    // reaproveitado por agenda.js/parceriaSplitFieldHtml para a % negociada
-    // da Parceria (não é uma taxa de comissão de verdade).
+    // Atendimento de Parceria (R$200) — commissionPercent aqui é o MESMO
+    // campo reaproveitado por agenda.js/parceriaSplitFieldHtml só para a
+    // divisão do lançamento de despesa do salão na conclusão (contabilidade
+    // interna do salão); não afeta mais o saldo do profissional de forma
+    // alguma — nem soma comissão, nem desconta nada pelo valor do serviço.
     { id: "aParc50", date: d10, time: "10:00", employeeId: "emp1", serviceId: "svc1", clientId: "cNatasha", price: 200, status: "concluido", paymentMethod: "Parceria", commissionPercent: 50 },
-    // Atendimento de Parceria, split 100% profissional — caso citado pelo
-    // usuário ("tendo atendimentos que são 100% descontados dos
-    // profissionais").
+    // Segundo atendimento de Parceria (R$80) — mesmo raciocínio, valor
+    // diferente só para garantir que a exclusão não depende do valor.
     { id: "aParc100", date: d15, time: "11:00", employeeId: "emp1", serviceId: "svc1", clientId: "cNatasha", price: 80, status: "concluido", paymentMethod: "Parceria", commissionPercent: 100 }
   ],
   services: [{ id: "svc1", name: "Corte Masculino" }],
@@ -248,10 +257,12 @@ function setRangeEC(start, end) {
     check("A: Atendimentos = 3 (inclui os 2 de Parceria na contagem)", cellText(row, 2) === "3", cellText(row, 2));
     check("A: Receita de Serviço = R$100,00 (só o atendimento normal — Parceria não gera receita)", moneyIn(cellText(row, 3), 100), cellText(row, 3));
     check("A: Comissão = R$20,00 (só 20% de R$100 — nenhuma comissão dos 2 atendimentos de Parceria)", moneyIn(cellText(row, 4), 20), cellText(row, 4));
-    // Descontos/Acréscimos = bonusTotal(0) - consumoTotal(15) - parceriaCostTotal(100+80=180) = -195
-    check("A: Descontos/Acréscimos = -R$195,00 (consumo R$15 + custo de Parceria R$180, nunca somados à comissão)", moneyIn(cellText(row, 5), 195) && cellText(row, 5).indexOf("-") !== -1, cellText(row, 5));
-    // Devido = 20 + 0 - 15 - 180 = -175
-    check("A: Devido = -R$175,00 (comissão normal menos consumo menos custo de Parceria)", moneyIn(cellText(row, 6), 175) && cellText(row, 6).indexOf("-") !== -1, cellText(row, 6));
+    // Descontos/Acréscimos = bonusTotal(0) - consumoTotal(15) = -15 — os dois
+    // atendimentos de Parceria (R$200 e R$80) NÃO entram aqui de forma
+    // alguma (nem soma, nem desconto): só o consumo de insumo desconta.
+    check("A: Descontos/Acréscimos = -R$15,00 (só o consumo — Parceria não desconta pelo valor do serviço)", moneyIn(cellText(row, 5), 15) && cellText(row, 5).indexOf("-") !== -1, cellText(row, 5));
+    // Devido = 20 + 0 - 15 = 5
+    check("A: Devido = R$5,00 (comissão normal menos consumo — nada relacionado à Parceria)", moneyIn(cellText(row, 6), 5) && cellText(row, 6).indexOf("-") === -1, cellText(row, 6));
   })();
 
   // ---- B. Modal "Ver detalhes" — atendimentos de Parceria mostram R$0,00
@@ -287,8 +298,9 @@ function setRangeEC(start, end) {
     check("B: linha do atendimento de Parceria 50% mostra R$0,00 em Valor Cobrado e Comissão, com selo 'Parceria'", parc50Ok);
     check("B: linha do atendimento de Parceria 100% mostra R$0,00 em Valor Cobrado e Comissão, com selo 'Parceria'", parc100Ok);
     check("B: linha do atendimento normal continua mostrando R$100,00 / R$20,00, sem selo 'Parceria'", normalOk);
-    check("B: seção 'Desconto por Atendimentos em Parceria' aparece no modal", modalBody.textContent.indexOf("Desconto por Atendimentos em Parceria") !== -1);
-    check("B: seção mostra o total descontado de R$180,00 (R$100 + R$80)", modalBody.textContent.indexOf("- " + Utils.fmtMoney(180).replace("R$ ", "R$ ")) !== -1 || modalBody.textContent.indexOf(Utils.fmtMoney(180)) !== -1, modalBody.textContent.match(/Desconto por Atendimentos em Parceria[\s\S]{0,600}/));
+    check("B: seção 'Desconto por Atendimentos em Parceria' NÃO existe mais no modal (Parceria não desconta pelo valor do serviço)", modalBody.textContent.indexOf("Desconto por Atendimentos em Parceria") === -1);
+    var grandTotalEl = modalBody.querySelector("#dm-grand-total");
+    check("B: Resumo do Cálculo — Total Devido = R$5,00 (comissão R$20 menos consumo R$15, nada de Parceria)", grandTotalEl && moneyIn(grandTotalEl.textContent, 5), grandTotalEl && grandTotalEl.textContent);
     Modal.close();
   })();
 
@@ -302,9 +314,9 @@ function setRangeEC(start, end) {
   await flush();
   (function () {
     var summary = Utils.qs("#ec-summary");
-    check("C: KPI 'Comissão do Período' = -R$175,00 (mesmo valor de Devido do Comissionamento)", summary.textContent.indexOf("Comissão do Período") !== -1 && moneyIn(summary.textContent, 175));
-    check("C: KPI 'Desconto por Parceria' aparece, com R$180,00", summary.textContent.indexOf("Desconto por Parceria") !== -1 && moneyIn(summary.textContent, 180), summary.textContent);
-    check("C: KPI 'Desconto por Consumo' aparece, com R$15,00 (independente do desconto de Parceria)", summary.textContent.indexOf("Desconto por Consumo") !== -1 && moneyIn(summary.textContent, 15));
+    check("C: KPI 'Comissão do Período' = R$5,00 (mesmo valor de Devido do Comissionamento)", summary.textContent.indexOf("Comissão do Período") !== -1 && moneyIn(summary.textContent, 5));
+    check("C: KPI 'Desconto por Parceria' NÃO existe mais (Parceria não desconta pelo valor do serviço)", summary.textContent.indexOf("Desconto por Parceria") === -1, summary.textContent);
+    check("C: KPI 'Desconto por Consumo' aparece, com R$15,00 (único efeito real de Parceria no saldo)", summary.textContent.indexOf("Desconto por Consumo") !== -1 && moneyIn(summary.textContent, 15));
 
     var tbl = Utils.qs("#tbl-ec");
     var tfoot = tbl.querySelector("tfoot tr");
@@ -315,9 +327,12 @@ function setRangeEC(start, end) {
     check("C: rodapé da tabela — Valor Cobrado total = R$100,00 (só o atendimento normal)", tfootTds[1] && moneyIn(tfootTds[1].textContent, 100), tfootTds[1] && tfootTds[1].textContent);
     check("C: rodapé da tabela — Comissão total = R$20,00", tfootTds[4] && moneyIn(tfootTds[4].textContent, 20), tfootTds[4] && tfootTds[4].textContent);
 
+    // Ajuste (19/09/2026): a seção "ec-parceria" (e o contêiner no HTML)
+    // foram removidos — não existe mais nenhuma seção de desconto por
+    // Parceria no Extrato, já que Parceria não desconta nada pelo valor
+    // do serviço.
     var parceriaEl = document.getElementById("ec-parceria");
-    check("C: seção 'Desconto por Atendimentos em Parceria' visível no Extrato", parceriaEl && parceriaEl.style.display !== "none" && parceriaEl.textContent.indexOf("Desconto por Atendimentos em Parceria") !== -1);
-    check("C: seção do Extrato mostra o total de R$180,00", parceriaEl && moneyIn(parceriaEl.textContent, 180), parceriaEl && parceriaEl.textContent);
+    check("C: elemento 'ec-parceria' não existe mais no DOM do teste (removido do HTML)", !parceriaEl);
   })();
 
   console.log("");
