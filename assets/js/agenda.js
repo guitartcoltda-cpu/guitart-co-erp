@@ -1251,6 +1251,73 @@
     return { getInstallments: function () { return isCredit() ? (parseInt(select.value, 10) || 1) : null; } };
   }
 
+  // Detalhamento da taxa da maquininha (20/09/2026, a pedido do usuário): ao
+  // lado da Forma de Pagamento/Parcelas, mostra ao vivo quanto está sendo
+  // cobrado do cliente, a taxa da maquininha aplicada, quanto ela desconta em
+  // R$ e o valor líquido que o salão de fato recebe — só aparece quando a
+  // Forma de Pagamento é uma das que passam por maquininha (Cartão de
+  // Crédito, Cartão de Débito, Pix; Dinheiro/Parceria/Pacote não têm taxa).
+  // A taxa usada é a mesma lógica já usada em Maquininhas → estimativa do
+  // período (ver creditRateForInstallments em maquininhas.js): taxa exata da
+  // parcela cadastrada na Tabela de Parcelamento quando existe, senão a taxa
+  // "à vista", sempre pela MÉDIA das maquininhas ativas (não há, aqui, um
+  // seletor de qual maquininha foi usada nesta venda específica — mesmo
+  // critério "média" que Maquininhas usa por padrão). Duplicada aqui (em vez
+  // de reaproveitada de maquininhas.js) porque aquele arquivo é uma IIFE que
+  // não expõe nada globalmente.
+  function activeCardMachines() {
+    return DB.all("cardMachines").filter(function (m) { return m.active !== false; });
+  }
+  function feeRateFor(payMethod, installments) {
+    if (payMethod !== "Cartão de Crédito" && payMethod !== "Cartão de Débito" && payMethod !== "Pix") return null;
+    var active = activeCardMachines();
+    if (!active.length) return null;
+    function rateOf(m) {
+      if (payMethod === "Cartão de Crédito") {
+        var table = m.installmentFeesCredit || {};
+        var v = (installments && installments > 1) ? table[String(installments)] : undefined;
+        var base = (v !== undefined && v !== null && v !== "") ? v : (m.feeCreditPercent || 0);
+        return base + (m.otherTaxesPercent || 0);
+      }
+      if (payMethod === "Cartão de Débito") return (m.feeDebitPercent || 0) + (m.otherTaxesPercent || 0);
+      return (m.feePixPercent || 0) + (m.otherTaxesPercent || 0); // Pix
+    }
+    var total = active.reduce(function (s, m) { return s + rateOf(m); }, 0);
+    return total / active.length;
+  }
+  function feeBreakdownHtml(prefix) {
+    return '<div class="form-field full" id="' + prefix + '-fee-breakdown" style="display:none;">' +
+      '<div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:10px 12px;background:var(--gray-50);font-size:13px;">' +
+        '<div class="flex items-center justify-between"><span>Valor cobrado do cliente</span><strong id="' + prefix + '-fee-amount">R$ 0,00</strong></div>' +
+        '<div class="flex items-center justify-between" style="margin-top:4px;"><span>Taxa da maquininha (<span id="' + prefix + '-fee-rate">0%</span>)</span><strong id="' + prefix + '-fee-discount" style="color:#dc2626;">- R$ 0,00</strong></div>' +
+        '<div class="flex items-center justify-between" style="border-top:1px dashed var(--border-color);margin-top:6px;padding-top:6px;"><span>Valor líquido que o salão recebe</span><strong id="' + prefix + '-fee-net">R$ 0,00</strong></div>' +
+      '</div>' +
+    '</div>';
+  }
+  // getAmount: função que devolve o valor cobrado atual (lida no momento do
+  // sync, não travada num valor fixo) — no "Concluir Atendimento" é o campo
+  // Valor Cobrado; no "Fechar Conta" é o Total somado de todos os itens.
+  function wireFeeBreakdown(box, prefix, paySelect, installmentsCtrl, getAmount) {
+    var wrap = box.querySelector("#" + prefix + "-fee-breakdown");
+    var elAmount = box.querySelector("#" + prefix + "-fee-amount");
+    var elRate = box.querySelector("#" + prefix + "-fee-rate");
+    var elDiscount = box.querySelector("#" + prefix + "-fee-discount");
+    var elNet = box.querySelector("#" + prefix + "-fee-net");
+    function sync() {
+      var rate = feeRateFor(paySelect.value, installmentsCtrl.getInstallments());
+      if (rate === null) { wrap.style.display = "none"; return; }
+      var amount = getAmount() || 0;
+      var discount = round2(amount * rate / 100);
+      var net = round2(amount - discount);
+      elAmount.textContent = Utils.fmtMoney(amount);
+      elRate.textContent = rate.toFixed(2) + "%";
+      elDiscount.textContent = "- " + Utils.fmtMoney(discount);
+      elNet.textContent = Utils.fmtMoney(net);
+      wrap.style.display = "";
+    }
+    return { sync: sync };
+  }
+
   // ---------------- Crédito do cliente ----------------
   // A pedido do usuário (09/09/2026): quando o cliente paga a mais que o
   // devido no Fechar Conta, a diferença vira crédito (client.creditBalance)
@@ -1574,6 +1641,7 @@
       '<div class="form-field" id="cc-amount-wrap"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + visiblePayMethods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
       installmentsFieldHtml("cc") +
+      feeBreakdownHtml("cc") +
       '</div>' +
       '<div id="cc-parceria-block" class="form-grid" style="display:none;">' +
         '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este atendimento. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
@@ -1612,6 +1680,15 @@
     var amountWrap = box.querySelector("#cc-amount-wrap");
     var amountInput = box.querySelector("#cc-amount");
     var installmentsCtrl = wireInstallmentsField(box, "cc", paySelect);
+    var feeCtrl = wireFeeBreakdown(box, "cc", paySelect, installmentsCtrl, function () { return Utils.moneyMaskToFloat(amountInput) || 0; });
+    (function wireFeeSync() {
+      var installmentsSelectEl = box.querySelector("#cc-installments");
+      function syncFee() { feeCtrl.sync(); }
+      paySelect.addEventListener("change", syncFee);
+      if (installmentsSelectEl) installmentsSelectEl.addEventListener("change", syncFee);
+      amountInput.addEventListener("input", syncFee);
+      syncFee();
+    })();
 
     // Compra de pacote selecionada agora (se houver mais de uma compatível,
     // respeita o que está marcado em "Qual pacote?"; senão, a única opção).
@@ -1883,6 +1960,7 @@
         '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
         installmentsFieldHtml("ccg") +
         '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
+        feeBreakdownHtml("ccg") +
       '</div>' +
       reconciliationHtml("ccg", client);
 
@@ -1891,16 +1969,18 @@
 
     var paySelectG = box.querySelector("#ccg-pay");
     var installmentsCtrlG = wireInstallmentsField(box, "ccg", paySelectG);
+    var feeCtrlG = wireFeeBreakdown(box, "ccg", paySelectG, installmentsCtrlG, function () { return Utils.moneyMaskToFloat(box.querySelector("#ccg-total")) || 0; });
 
     function isGroupParceria() { return isParceriaMethod(paySelectG.value, methods); }
 
     function updateTotal() {
-      if (isGroupParceria()) { Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), 0); return; }
+      if (isGroupParceria()) { Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), 0); feeCtrlG.sync(); return; }
       var total = 0;
       lines.forEach(function (l) {
         total += Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || 0;
       });
       Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), total);
+      feeCtrlG.sync();
     }
 
     var recon = wireReconciliation(box, "ccg", client, methods,
@@ -1923,6 +2003,10 @@
       recon.refresh();
     }
     paySelectG.addEventListener("change", syncGroupParceriaVisibility);
+    (function () {
+      var installmentsSelectG = box.querySelector("#ccg-installments");
+      if (installmentsSelectG) installmentsSelectG.addEventListener("change", updateTotal);
+    })();
 
     lines.forEach(function (l) {
       var amountInput = box.querySelector("#" + l.rowPrefix + "-amount");
