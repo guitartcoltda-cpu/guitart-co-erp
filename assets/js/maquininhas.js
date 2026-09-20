@@ -4,17 +4,26 @@
    débito/Pix, antecipação, outras taxas) e estimativa de quanto é
    descontado nas vendas recebidas por cartão/Pix.
 
-   IMPORTANTE: os lançamentos de receita (transactions) ainda não
-   registram qual maquininha foi usada em cada venda. Por isso, os
-   valores de taxa aqui são uma ESTIMATIVA: aplicamos a taxa da
-   maquininha selecionada (ou a média das ativas) sobre a receita
-   recebida por Cartão de Crédito / Cartão de Débito / Pix no
-   período — não é o extrato exato da operadora.
+   IMPORTANTE: nem todo lançamento de receita (transactions) registra qual
+   maquininha foi usada na venda — só quando `cardMachineId` foi gravado
+   (ver "20/09/2026, continuação" abaixo). Para os demais (a maioria, e
+   todo lançamento anterior a essa mudança), os valores de taxa aqui
+   continuam sendo uma ESTIMATIVA: aplicamos a taxa da maquininha
+   selecionada (ou a média das ativas) sobre a receita recebida por Cartão
+   de Crédito / Cartão de Débito / Pix no período — não é o extrato exato
+   da operadora.
 
    20/09/2026: em Cartão de Crédito, quando o lançamento tem o número de
    parcelas (ver agenda.js/financeiro.js) e a maquininha tem aquela parcela
    cadastrada na Tabela de Parcelamento, a estimativa usa a taxa daquela
    parcela em vez da taxa "à vista" — ver creditRateForInstallments abaixo.
+
+   20/09/2026, continuação: Concluir Atendimento/Fechar Conta (agenda.js)
+   ganharam um seletor opcional "Maquininha" — quando usado, o lançamento
+   grava `cardMachineId`, e este arquivo passa a usar a taxa EXATA daquela
+   maquininha para aquela venda específica (em vez de estimar pela média),
+   sempre que nenhuma simulação manual "e se toda a receita passasse por
+   esta maquininha" estiver ativa no seletor abaixo — ver rateForTxn.
    ============================================================ */
 (function () {
   "use strict";
@@ -101,6 +110,31 @@
     return total / active.length;
   }
 
+  // Taxa efetiva (%) de UM lançamento específico — 20/09/2026, continuação
+  // (fecha a lacuna documentada no cabeçalho deste arquivo): a partir de
+  // agora, Concluir Atendimento/Fechar Conta (ver agenda.js) podem gravar
+  // qual maquininha foi de fato usada em `t.cardMachineId`. Quando isso
+  // existe e NÃO há uma simulação manual "e se toda a receita passasse por
+  // esta maquininha" ativa (state.simMachineId), a taxa exata daquela
+  // maquininha é usada em vez da média — mais preciso que estimar. A
+  // simulação manual continua tendo prioridade quando selecionada (mesmo
+  // "what-if" de sempre, ignorando de propósito qual maquininha cada venda
+  // realmente usou). Lançamentos sem `cardMachineId` (a maioria, até essa
+  // funcionalidade passar a ser usada no dia a dia, e todo lançamento
+  // anterior a ela) continuam caindo na média, sem nenhuma mudança de
+  // comportamento para eles.
+  function rateForTxn(t, rates) {
+    var machine = (!state.simMachineId && t.cardMachineId) ? DB.get("cardMachines", t.cardMachineId) : null;
+    if (t.paymentMethod === "Cartão de Crédito") {
+      return machine ? machineCreditRate(machine, t.installments) : creditRateForInstallments(t.installments);
+    }
+    if (machine) {
+      var field = t.paymentMethod === "Cartão de Débito" ? "feeDebitPercent" : (t.paymentMethod === "Pix" ? "feePixPercent" : null);
+      if (field) return (machine[field] || 0) + (machine.otherTaxesPercent || 0);
+    }
+    return rates[t.paymentMethod] || 0;
+  }
+
   function populateSimSelect() {
     var sel = Utils.qs("#mq-sim");
     var current = state.simMachineId;
@@ -131,10 +165,12 @@
       var m = byMethod[t.paymentMethod];
       if (!m) return;
       m.revenue += t.amount;
-      // Crédito parcelado usa a taxa daquela parcela específica (Tabela de
-      // Parcelamento), quando cadastrada — ver creditRateForInstallments
-      // acima. Débito e Pix não parcelam, seguem a taxa fixa de sempre.
-      var rate = (t.paymentMethod === "Cartão de Crédito") ? creditRateForInstallments(t.installments) : (rates[t.paymentMethod] || 0);
+      // Taxa desta venda: exata da maquininha gravada em `t.cardMachineId`
+      // quando conhecida (e nenhuma simulação manual ativa — ver
+      // rateForTxn acima); crédito parcelado sem maquininha conhecida usa a
+      // taxa daquela parcela específica (Tabela de Parcelamento), quando
+      // cadastrada; senão cai na média das ativas, como sempre.
+      var rate = rateForTxn(t, rates);
       m.fee += t.amount * rate / 100;
     });
 
