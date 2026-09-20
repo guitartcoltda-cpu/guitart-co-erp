@@ -10,6 +10,11 @@
    maquininha selecionada (ou a média das ativas) sobre a receita
    recebida por Cartão de Crédito / Cartão de Débito / Pix no
    período — não é o extrato exato da operadora.
+
+   20/09/2026: em Cartão de Crédito, quando o lançamento tem o número de
+   parcelas (ver agenda.js/financeiro.js) e a maquininha tem aquela parcela
+   cadastrada na Tabela de Parcelamento, a estimativa usa a taxa daquela
+   parcela em vez da taxa "à vista" — ver creditRateForInstallments abaixo.
    ============================================================ */
 (function () {
   "use strict";
@@ -71,6 +76,31 @@
     return rates;
   }
 
+  // Taxa efetiva (%) do Cartão de Crédito para um número de parcelas
+  // específico — 20/09/2026, a pedido do usuário: até aqui o fechamento
+  // (render() abaixo) sempre usava a taxa "à vista" (feeCreditPercent) para
+  // TODA receita em Cartão de Crédito, mesmo quando a maquininha já tinha a
+  // Tabela de Parcelamento cadastrada (installmentFeesCredit, 2x–18x) —
+  // subestimando a taxa de vendas parceladas. Agora, quando o lançamento
+  // guarda `installments` (ver agenda.js/financeiro.js) e a maquininha tem
+  // aquela parcela cadastrada na tabela, usa a taxa exata daquela parcela;
+  // senão cai para feeCreditPercent, exatamente como antes (nenhuma mudança
+  // para vendas à vista ou para lançamentos antigos sem `installments`).
+  function machineCreditRate(m, n) {
+    var table = m.installmentFeesCredit || {};
+    var v = (n && n > 1) ? table[String(n)] : undefined;
+    var base = (v !== undefined && v !== null && v !== "") ? v : (m.feeCreditPercent || 0);
+    return base + (m.otherTaxesPercent || 0);
+  }
+  function creditRateForInstallments(n) {
+    var active = getActiveMachines();
+    var machine = state.simMachineId ? DB.get("cardMachines", state.simMachineId) : null;
+    if (machine) return machineCreditRate(machine, n);
+    if (!active.length) return 0;
+    var total = active.reduce(function (s, m) { return s + machineCreditRate(m, n); }, 0);
+    return total / active.length;
+  }
+
   function populateSimSelect() {
     var sel = Utils.qs("#mq-sim");
     var current = state.simMachineId;
@@ -101,7 +131,11 @@
       var m = byMethod[t.paymentMethod];
       if (!m) return;
       m.revenue += t.amount;
-      m.fee += t.amount * (rates[t.paymentMethod] || 0) / 100;
+      // Crédito parcelado usa a taxa daquela parcela específica (Tabela de
+      // Parcelamento), quando cadastrada — ver creditRateForInstallments
+      // acima. Débito e Pix não parcelam, seguem a taxa fixa de sempre.
+      var rate = (t.paymentMethod === "Cartão de Crédito") ? creditRateForInstallments(t.installments) : (rates[t.paymentMethod] || 0);
+      m.fee += t.amount * rate / 100;
     });
 
     var cardRevenue = PAY_METHODS.reduce(function (s, p) { return s + byMethod[p.key].revenue; }, 0);

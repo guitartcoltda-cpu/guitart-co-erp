@@ -1216,6 +1216,41 @@
       '</div>';
   }
 
+  // Parcelas do Cartão de Crédito (20/09/2026, a pedido do usuário): até
+  // aqui, "Concluir Atendimento"/"Fechar Conta" perguntavam a Forma de
+  // Pagamento mas nunca quantas vezes o cliente parcelou no crédito — sem
+  // isso, Maquininhas não tinha como saber qual taxa da Tabela de
+  // Parcelamento (cadastrada por maquininha, 2x a 18x) usar no fechamento, e
+  // caía sempre na taxa "à vista", subestimando o quanto é descontado de
+  // verdade. Mesmo rótulo/opções 1x–12x já usados em Financeiro → Novo
+  // Lançamento (ver #tm-installments em financeiro.js) — mantém o app
+  // consistente em como parcelamento é perguntado e mostrado.
+  function installmentsFieldHtml(prefix) {
+    return '<div class="form-field" id="' + prefix + '-installments-field" style="display:none;"><label>Parcelas</label><select id="' + prefix + '-installments">' +
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (n) { return '<option value="' + n + '">' + n + 'x' + (n === 1 ? " (à vista)" : "") + '</option>'; }).join("") +
+      '</select></div>';
+  }
+
+  // Liga o campo acima a um <select> de Forma de Pagamento: só aparece
+  // (e só entra no lançamento) quando o valor selecionado é exatamente
+  // "Cartão de Crédito" — mesma checagem por nome já usada em financeiro.js,
+  // já que parcelamento não se aplica às demais formas (Pix, Débito,
+  // Dinheiro, Parceria, Pacote). `getInstallments()` devolve null fora do
+  // crédito, para o lançamento não gravar um número de parcelas que não
+  // significa nada.
+  function wireInstallmentsField(box, prefix, paySelect) {
+    var field = box.querySelector("#" + prefix + "-installments-field");
+    var select = box.querySelector("#" + prefix + "-installments");
+    function isCredit() { return paySelect.value === "Cartão de Crédito"; }
+    function sync() {
+      field.style.display = isCredit() ? "" : "none";
+      if (!isCredit()) select.value = "1";
+    }
+    paySelect.addEventListener("change", sync);
+    sync();
+    return { getInstallments: function () { return isCredit() ? (parseInt(select.value, 10) || 1) : null; } };
+  }
+
   // ---------------- Crédito do cliente ----------------
   // A pedido do usuário (09/09/2026): quando o cliente paga a mais que o
   // devido no Fechar Conta, a diferença vira crédito (client.creditBalance)
@@ -1538,6 +1573,7 @@
       '</div></div>' : "") +
       '<div class="form-field" id="cc-amount-wrap"><label>Valor Cobrado (R$)</label><input type="text" id="cc-amount"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + visiblePayMethods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
+      installmentsFieldHtml("cc") +
       '</div>' +
       '<div id="cc-parceria-block" class="form-grid" style="display:none;">' +
         '<div class="form-field full"><div class="small text-muted"><i class="fa-solid fa-circle-info"></i> Parceria: o cliente não paga por este atendimento. O valor acima serve só de base para dividir o custo entre o profissional e o salão.</div></div>' +
@@ -1575,6 +1611,7 @@
     var packageChoiceEl = box.querySelector("#cc-package-choice");
     var amountWrap = box.querySelector("#cc-amount-wrap");
     var amountInput = box.querySelector("#cc-amount");
+    var installmentsCtrl = wireInstallmentsField(box, "cc", paySelect);
 
     // Compra de pacote selecionada agora (se houver mais de uma compatível,
     // respeita o que está marcado em "Qual pacote?"; senão, a única opção).
@@ -1617,6 +1654,7 @@
 
     box.querySelector("#cc-save").addEventListener("click", function () {
       var payMethod = box.querySelector("#cc-pay").value;
+      var installments = installmentsCtrl.getInstallments();
       var isParceria = isParceriaMethod(payMethod, methods);
       var isPkgPay = isPackagePayMethod(payMethod, methods);
       var chosenPurchase = isPkgPay ? selectedPackagePurchase() : null;
@@ -1648,11 +1686,12 @@
         // cobrado/exibido nesta tela. Por isso price só assume `amount`
         // (o valor realmente cobrado do cliente) no caso normal, sem
         // pacote nenhum envolvido.
-        // Forma de pagamento gravada no próprio agendamento (além de nos
-        // lançamentos financeiros) só para exibição em "Editar Agendamento"
-        // — payMethod já é "Pacote" no caso de consumo de pacote (isPkgPay),
-        // então nenhum caso especial é necessário aqui.
-        var apptPatch = { status: "concluido", paymentMethod: payMethod };
+        // Forma de pagamento (e parcelas, quando crédito) gravadas no
+        // próprio agendamento (além de nos lançamentos financeiros) só para
+        // exibição em "Editar Agendamento" — payMethod já é "Pacote" no
+        // caso de consumo de pacote (isPkgPay), então nenhum caso especial
+        // é necessário aqui.
+        var apptPatch = { status: "concluido", paymentMethod: payMethod, installments: installments };
         if (isPkgPay) {
           apptPatch.price = packageDilutedValue;
           apptPatch.packagePurchaseId = chosenPurchase.id;
@@ -1719,7 +1758,7 @@
           DB.insert("transactions", {
             type: "receita", description: service.name + " - " + client.name, amount: mainRevenue,
             date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-            paymentMethod: payMethod, status: "pago",
+            paymentMethod: payMethod, status: "pago", installments: installments,
             employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
           });
           // Crédito do cliente: usado agora (desconta), gerado agora
@@ -1760,7 +1799,7 @@
             DB.insert("transactions", {
               type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
               categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
-              paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+              paymentMethod: payMethod, status: "pago", installments: installments, employeeId: appt.employeeId, clientId: appt.clientId,
               productId: productId, appointmentId: appt.id, reconciled: false
             });
           }
@@ -1770,6 +1809,7 @@
       DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name +
         (isPkgPay ? " consumindo a sessão " + packageSessionIndexForLog + " de " + chosenPurchase.sessionsTotal + " do pacote \"" + chosenPurchase.packageName + "\" (comissão sobre " + Utils.fmtMoney(packageDilutedValue) + ", sem cobrança nova)" :
          isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + ")") +
+        (installments > 1 ? " em " + installments + "x no crédito" : "") +
         (isPackageSale && packagePurchase ? " — venda do pacote \"" + packagePurchase.packageName + "\" (comissão desta sessão sobre " + Utils.fmtMoney(appt.price) + ")" : "") +
         (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
       // Enfileira o pedido de avaliação por WhatsApp (envio manual, mesmo
@@ -1841,6 +1881,7 @@
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div class="form-grid">' +
         '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
+        installmentsFieldHtml("ccg") +
         '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
       '</div>' +
       reconciliationHtml("ccg", client);
@@ -1849,6 +1890,7 @@
     var box = Modal.open({ title: "Fechar Conta — " + client.name, wide: true, bodyHtml: body, footHtml: foot });
 
     var paySelectG = box.querySelector("#ccg-pay");
+    var installmentsCtrlG = wireInstallmentsField(box, "ccg", paySelectG);
 
     function isGroupParceria() { return isParceriaMethod(paySelectG.value, methods); }
 
@@ -1899,6 +1941,7 @@
 
     box.querySelector("#ccg-save").addEventListener("click", function () {
       var payMethod = paySelectG.value;
+      var installments = installmentsCtrlG.getInstallments();
       var isParceria = isGroupParceria();
       var totalAmount = 0;
       var summaryParts = [];
@@ -1930,10 +1973,10 @@
           var category = service ? DB.findOne("categories", function (c) { return c.id === service.categoryId; }) : null;
           var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
 
-          // Mesma forma de pagamento do "Fechar Conta" (payMethod, escolhida
-          // uma única vez para o grupo inteiro) gravada em cada agendamento
-          // do grupo — só para exibição em "Editar Agendamento".
-          var apptPatch = { status: "concluido", price: amount, paymentMethod: payMethod };
+          // Mesma forma de pagamento (e parcelas) do "Fechar Conta" (payMethod,
+          // escolhida uma única vez para o grupo inteiro) gravada em cada
+          // agendamento do grupo — só para exibição em "Editar Agendamento".
+          var apptPatch = { status: "concluido", price: amount, paymentMethod: payMethod, installments: installments };
           var splitPct = null;
           if (isParceria) {
             splitPct = resolvedParceriaSplitPercent(box, l.rowPrefix + "-parceria-pct", appt, l.employee);
@@ -1962,7 +2005,7 @@
             DB.insert("transactions", {
               type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: lineRevenue,
               date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-              paymentMethod: payMethod, status: "pago",
+              paymentMethod: payMethod, status: "pago", installments: installments,
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           }
@@ -2004,7 +2047,7 @@
               DB.insert("transactions", {
                 type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
                 categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
-                paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
+                paymentMethod: payMethod, status: "pago", installments: installments, employeeId: appt.employeeId, clientId: appt.clientId,
                 productId: productId, appointmentId: appt.id, reconciled: false
               });
             }
@@ -2267,7 +2310,7 @@
       // concluídos antes desta gravação existir não têm a.paymentMethod e por
       // isso ficam sem o campo, em vez de mostrar algo incorreto.
       (a && a.status === "concluido" && a.paymentMethod ?
-        '<div class="form-field full"><label>Forma de Pagamento</label><input type="text" value="' + Utils.escapeHtml(a.paymentMethod) + '" disabled></div>'
+        '<div class="form-field full"><label>Forma de Pagamento</label><input type="text" value="' + Utils.escapeHtml(a.paymentMethod) + (a.installments > 1 ? " (" + a.installments + "x)" : "") + '" disabled></div>'
       : "") +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
