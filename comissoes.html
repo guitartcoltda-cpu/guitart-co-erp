@@ -27,6 +27,12 @@
 <link rel="icon" href="assets/img/logo-guitart.png">
 <link rel="stylesheet" href="assets/css/style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- SheetJS (xlsx) — a pedido do usuário (23/09/2026), para o botão "Extrair
+     Relatório" da tela de Comissionamento, que exporta um .xlsx com o
+     detalhe completo do comissionamento de todos os profissionais e seus
+     lançamentos, para conferência manual. Ver generateCommissionExcel() em
+     assets/js/comissoes.js. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>window.PAGE_META = { title: "Comissionamento", subtitle: "Cálculo automático de comissões por profissional" };</script>
 <style>
   .com-bulk-bar {
@@ -81,6 +87,7 @@
           </div>
           <div class="toolbar-actions">
             <button class="btn btn-outline" id="btn-com-pdf"><i class="fa-solid fa-file-pdf"></i> Gerar PDF</button>
+            <button class="btn btn-outline" id="btn-com-xlsx"><i class="fa-solid fa-file-excel"></i> Extrair Relatório</button>
             <button class="btn btn-outline" id="btn-com-send-admins"><i class="fa-brands fa-whatsapp"></i> Enviar resumo aos administradores</button>
             <button class="btn btn-secondary" id="btn-new-bonus"><i class="fa-solid fa-award"></i> Comissionamento Esporádico</button>
           </div>
