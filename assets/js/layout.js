@@ -410,46 +410,67 @@
   // uma "foto" cada vez mais velha da agenda/estoque/financeiro sem
   // perceber.
   //
-  // Primeira versão publicada hoje avisava com uma faixa fixa no topo da
-  // tela ("Há atualizações — Atualizar agora"/"Agora não") e esperava um
-  // clique antes de recarregar. A pedido explícito do usuário ("Essa
-  // atualização não pode existir, tem que ser automático, ninguém tem que
-  // clicar em nada"), essa faixa foi removida: a atualização agora
-  // acontece sozinha, sem nenhum aviso visível e sem exigir clique. A
-  // única cautela mantida é NÃO recarregar por cima de um modal/painel
-  // aberto (Modal.open/Drawer.open, ver utils.js, sempre marca
-  // `document.body` com a classe `modal-open-lock` enquanto está aberto,
-  // e a remove ao fechar) — isso continua sendo necessário porque
-  // recarregar a página no meio do preenchimento de um formulário
-  // apagaria o que a pessoa estava digitando, o que era exatamente o
-  // problema original que o usuário pediu para evitar ("sem interferir a
-  // ação individual de cada pessoa"). Fora de um modal/painel aberto, não
-  // há mais nenhuma espera: a tela é atualizada assim que uma mudança é
-  // detectada.
+  // Primeira versão publicada em 18/09/2026 avisava com uma faixa fixa no
+  // topo da tela ("Há atualizações — Atualizar agora"/"Agora não") e
+  // esperava um clique antes de recarregar. Ainda no mesmo dia, a pedido
+  // do usuário ("Essa atualização não pode existir, tem que ser
+  // automático, ninguém tem que clicar em nada"), essa faixa foi
+  // removida e o recarregamento passou a ser 100% automático.
+  //
+  // 23/09/2026: na prática, o recarregamento automático se mostrou
+  // disruptivo — a pedido do usuário ("Está com um bug de atualização,
+  // está atualizando a tela sozinho e sempre que atualiza, tira o
+  // filtro, sai de tudo, interrompe toda a operação"): mesmo evitando
+  // recarregar por cima de um modal/painel aberto, um `location.reload()`
+  // sozinho ainda reseta qualquer filtro aplicado na tela (período,
+  // busca, abas), fecha o que a pessoa estava vendo/rolando e interrompe
+  // o que estava fazendo mesmo fora de um formulário. A partir de agora a
+  // página NUNCA recarrega sozinha: ao detectar mudança de outra pessoa,
+  // mostra só um ícone pequeno e discreto no canto inferior direito da
+  // tela (ver showLiveSyncIcon) — sem interromper nada, sem apagar
+  // filtro nenhum. A pessoa decide se e quando quer atualizar, clicando
+  // no ícone.
   var LIVE_SYNC_INTERVAL_MS = 45000;
-  var LIVE_SYNC_RETRY_MS = 4000; // religa a checagem rápida enquanto um modal/painel está bloqueando o refresh automático
   var liveSyncTimer = null;
-  var liveSyncPending = false; // já detectou mudança e está só esperando o modal/painel fechar para recarregar
+  var liveSyncNotified = false; // já mostrou o ícone nesta aba — evita duplicar/checar de novo à toa
 
   function reloadNow() {
     if (global.DB && DB.clearBootCache) DB.clearBootCache();
     global.location.reload();
   }
 
-  function refreshWhenSafe() {
-    if (liveSyncPending) return; // já tem um refresh agendado, não empilha outro
-    liveSyncPending = true;
-    (function attempt() {
-      if (document.hidden) { setTimeout(attempt, LIVE_SYNC_RETRY_MS); return; }
-      if (document.body.classList.contains("modal-open-lock")) {
-        // Um modal ou painel lateral está aberto agora — provavelmente um
-        // formulário em preenchimento. Não recarrega por cima disso;
-        // tenta de novo em alguns segundos, até a pessoa fechar.
-        setTimeout(attempt, LIVE_SYNC_RETRY_MS);
-        return;
-      }
-      reloadNow();
-    })();
+  // Ícone discreto de "sistema atualizado" (23/09/2026) — canto inferior
+  // direito, por cima de tudo mas sem bloquear nem cobrir nenhum conteúdo
+  // da tela, não interrompe preenchimento de formulário nem reseta filtro
+  // nenhum (não mexe em mais nada da página). Clicar nele recarrega a
+  // página quando a própria pessoa decidir (mesma limpeza de cache de
+  // boot de sempre) — nunca é forçado.
+  function showLiveSyncIcon() {
+    if (liveSyncNotified) return;
+    liveSyncNotified = true;
+    if (!document.getElementById("live-sync-icon-style")) {
+      var style = document.createElement("style");
+      style.id = "live-sync-icon-style";
+      style.textContent =
+        "#live-sync-icon{position:fixed;right:18px;bottom:18px;z-index:9999;" +
+        "width:44px;height:44px;border-radius:50%;background:var(--primary-color,#1f3a5f);" +
+        "color:#fff;border:none;display:flex;align-items:center;justify-content:center;" +
+        "box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;font-size:17px;padding:0;" +
+        "animation:live-sync-pop .25s ease-out;}" +
+        "#live-sync-icon:hover{filter:brightness(1.12);}" +
+        "#live-sync-icon .live-sync-dot{position:absolute;top:-2px;right:-2px;width:12px;height:12px;" +
+        "border-radius:50%;background:#22c55e;border:2px solid #fff;}" +
+        "@keyframes live-sync-pop{from{transform:scale(.6);opacity:0;}to{transform:scale(1);opacity:1;}}";
+      document.head.appendChild(style);
+    }
+    var btn = document.createElement("button");
+    btn.id = "live-sync-icon";
+    btn.type = "button";
+    btn.title = "O sistema foi atualizado por outra pessoa — clique para atualizar esta tela quando quiser";
+    btn.setAttribute("aria-label", "Sistema atualizado — clique para atualizar");
+    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i><span class="live-sync-dot"></span>';
+    btn.addEventListener("click", function () { reloadNow(); });
+    document.body.appendChild(btn);
   }
 
   function startLiveSync() {
@@ -457,9 +478,9 @@
     if (liveSyncTimer) return; // proteção contra dupla inicialização
     function tick() {
       if (document.hidden) return; // aba em segundo plano: não gasta consulta à toa
-      if (liveSyncPending) return; // já detectou mudança, só esperando a hora certa de recarregar
+      if (liveSyncNotified) return; // já avisou nesta aba, não precisa checar de novo
       DB.hasRemoteChangesSince(DB.syncedAt()).then(function (changed) {
-        if (changed) refreshWhenSafe();
+        if (changed) showLiveSyncIcon();
       });
     }
     liveSyncTimer = setInterval(tick, LIVE_SYNC_INTERVAL_MS);
