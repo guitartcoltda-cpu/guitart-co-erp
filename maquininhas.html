@@ -78,7 +78,7 @@
         <div class="toolbar">
           <div class="toolbar-title">
             <h2>Maquininhas</h2>
-            <p>Taxas de cartão/Pix, estimativa do custo pago às operadoras e conciliação do slip com o extrato</p>
+            <p>Taxas de cartão, estimativa do custo pago às operadoras e conciliação do slip com o extrato</p>
           </div>
           <div class="toolbar-actions">
             <button class="btn btn-primary" id="btn-new-mq"><i class="fa-solid fa-plus"></i> Nova Maquininha</button>
@@ -105,14 +105,15 @@
             <div>
               <strong>Estimativa.</strong> As vendas registradas no sistema ainda não indicam qual maquininha foi usada em cada transação.
               Os valores de taxa abaixo são calculados aplicando a taxa cadastrada da maquininha selecionada (ou a média das ativas)
-              sobre a receita recebida por cartão/Pix no período — não são o extrato exato da operadora.
+              sobre a receita recebida por cartão no período — não são o extrato exato da operadora. Pix não entra aqui: cai direto na
+              conta do salão, sem passar por maquininha, e nunca tem taxa.
             </div>
           </div>
 
           <div class="kpi-grid" id="mq-summary" style="margin-bottom:16px;"></div>
 
           <div class="card mb-16">
-            <div class="card-header"><div><h3>Receita x Taxa Estimada por Forma de Pagamento</h3><div class="card-header-sub">Crédito, débito e Pix — período selecionado</div></div></div>
+            <div class="card-header"><div><h3>Receita x Taxa Estimada por Forma de Pagamento</h3><div class="card-header-sub">Crédito e débito — período selecionado</div></div></div>
             <div class="card-body"><div id="chart-mq-pay"></div></div>
           </div>
 
