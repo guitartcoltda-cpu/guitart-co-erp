@@ -82,7 +82,8 @@
 
     var cliSortGetters = {
       lastVisit: function (c) { return lastVisitByClient[c.id] || null; },
-      totalSpend: function (c) { return spendByClient[c.id] || 0; }
+      totalSpend: function (c) { return spendByClient[c.id] || 0; },
+      credit: function (c) { return clientCredit(c); }
     };
     clients = Utils.sortBy(clients, cliSortState, cliSortGetters);
 
@@ -100,17 +101,28 @@
         Utils.thSort("Primeira Visita", "firstVisit", cliSortState) +
         Utils.thSort("Última Visita", "lastVisit", cliSortState) +
         Utils.thSort("Total Gasto", "totalSpend", cliSortState, { className: "text-right" }) +
+        Utils.thSort("Saldo", "credit", cliSortState, { className: "text-right", title: "Crédito a favor do cliente (verde) ou pendência de pagamento (vermelho), acumulado a partir de pagamentos a maior/a menor em Fechar Conta. Veja \"Histórico de crédito\" no Histórico do cliente para saber de qual atendimento veio." }) +
         '<th>Tags</th><th></th></tr></thead><tbody>' +
         pageItems.map(function (c) {
           var lv = lastVisitByClient[c.id] || null;
           var credit = clientCredit(c);
-          var creditBadge = credit > 0 ? ' <span class="badge badge-success" title="Crédito disponível">' + Utils.fmtMoney(credit) + '</span>' : (credit < 0 ? ' <span class="badge badge-danger" title="Pendência">' + Utils.fmtMoney(Math.abs(credit)) + '</span>' : '');
+          // A pedido do usuário (23/09/2026): o saldo/crédito do cliente
+          // ganhou uma coluna própria (antes só aparecia como um selo
+          // pequeno colado no nome, fácil de passar despercebido) — quem
+          // gerou esse crédito fica visível no Histórico do cliente (ver
+          // openHistoryModal), não aqui na lista principal.
+          var creditCellHtml = credit > 0
+            ? '<span class="text-num font-bold text-success">' + Utils.fmtMoney(credit) + '</span>'
+            : (credit < 0
+              ? '<span class="text-num font-bold text-danger">- ' + Utils.fmtMoney(Math.abs(credit)) + '</span>'
+              : '<span class="small text-muted">—</span>');
           return '<tr>' +
-            '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(c.name) + '</div><span class="font-bold pointer" data-view="' + c.id + '">' + Utils.escapeHtml(c.name) + '</span>' + creditBadge + '</div></td>' +
+            '<td><div class="flex items-center gap-8"><div class="avatar">' + Utils.initials(c.name) + '</div><span class="font-bold pointer" data-view="' + c.id + '">' + Utils.escapeHtml(c.name) + '</span></div></td>' +
             '<td class="small">' + Utils.escapeHtml(c.phone) + '<br><span class="text-muted">' + Utils.escapeHtml(c.email) + '</span></td>' +
             '<td class="text-num">' + Utils.fmtDate(c.firstVisit) + '</td>' +
             '<td class="text-num">' + (lv ? Utils.fmtDate(lv) : '<span class="text-muted">-</span>') + '</td>' +
             '<td class="text-right text-num font-bold">' + Utils.fmtMoney(spendByClient[c.id] || 0) + '</td>' +
+            '<td class="text-right">' + creditCellHtml + '</td>' +
             '<td><div class="chip-list">' + (c.tags || []).map(function (t) { return '<span class="chip">' + Utils.escapeHtml(t) + '</span>'; }).join("") + '</div></td>' +
             '<td><div class="flex gap-6">' +
               '<button class="btn btn-icon btn-ghost" data-view="' + c.id + '" title="Histórico"><i class="fa-solid fa-clock-rotate-left"></i></button>' +
@@ -179,9 +191,28 @@
       '</div>' +
       (creditHistory.length ? '<div class="small text-muted mb-16"><a href="#" id="ch-toggle-credit-history">Ver histórico de crédito (' + creditHistory.length + ')</a><div id="ch-credit-history" style="display:none;margin-top:8px;">' +
         creditHistory.map(function (h) {
+          // A pedido do usuário (23/09/2026): além da nota livre (que já
+          // costuma citar o serviço), mostra explicitamente de qual
+          // atendimento — data, serviço e profissional — cada movimentação
+          // de crédito/pendência veio, resolvendo h.appointmentId contra a
+          // lista de atendimentos do próprio cliente (já carregada acima).
+          // Sem isso, "de qual atendimento gerou esse crédito" dependia só
+          // do texto livre da nota, sem link nenhum para o atendimento em
+          // si (ex.: se o serviço foi renomeado depois, a nota antiga
+          // continuava com o nome velho).
+          var linkedAppt = h.appointmentId ? appts.find(function (a) { return a.id === h.appointmentId; }) : null;
+          var apptDescHtml = "";
+          if (linkedAppt) {
+            var s = services.find(function (x) { return x.id === linkedAppt.serviceId; });
+            var e = employees.find(function (x) { return x.id === linkedAppt.employeeId; });
+            var apptDesc = (s ? s.name : "Atendimento") + " em " + Utils.fmtDate(linkedAppt.date) + (linkedAppt.time ? " " + linkedAppt.time : "") + (e ? " com " + e.name : "");
+            apptDescHtml = '<div class="small text-muted" style="margin-top:2px;"><i class="fa-solid fa-calendar-check"></i> Atendimento: ' + Utils.escapeHtml(apptDesc) + '</div>';
+          } else if (h.appointmentId) {
+            apptDescHtml = '<div class="small text-muted" style="margin-top:2px;"><i class="fa-solid fa-triangle-exclamation"></i> Atendimento de origem não encontrado (removido)</div>';
+          }
           return '<div class="small" style="padding:3px 0;border-bottom:1px solid var(--border-color);">' + Utils.fmtDate(h.date) + ' — ' +
             (h.delta > 0 ? '<span style="color:#1baf7a;">+' + Utils.fmtMoney(h.delta) + '</span>' : '<span style="color:#d64545;">' + Utils.fmtMoney(h.delta) + '</span>') +
-            ' — ' + Utils.escapeHtml(h.note || '') + '</div>';
+            ' — ' + Utils.escapeHtml(h.note || '') + apptDescHtml + '</div>';
         }).join("") + '</div></div>' : '') +
       (pkgPurchases.length ? '<div class="divider"></div><h4 class="mb-16">Pacotes de Tratamento (' + pkgPurchases.length + ')</h4>' +
         '<div class="table-wrap mb-16"><table class="data-table"><thead><tr><th>Pacote</th><th>Tamanho</th><th>Sessões</th><th class="text-right">Valor Total</th><th>Comprado em</th></tr></thead><tbody>' +
