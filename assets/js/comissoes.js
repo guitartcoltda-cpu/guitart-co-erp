@@ -55,6 +55,8 @@
     if (bulkBtn) bulkBtn.addEventListener("click", bulkRegisterPayment);
     var pdfBtn = Utils.qs("#btn-com-pdf");
     if (pdfBtn) pdfBtn.addEventListener("click", generateCommissionPdf);
+    var xlsxBtn = Utils.qs("#btn-com-xlsx");
+    if (xlsxBtn) xlsxBtn.addEventListener("click", generateCommissionExcel);
     var sendBtn = Utils.qs("#btn-com-send-admins");
     if (sendBtn) sendBtn.addEventListener("click", openSendToAdminsModal);
     render();
@@ -196,6 +198,171 @@
     doc.save("comissoes_" + customRange.start + "_a_" + customRange.end + ".pdf");
     DB.log("Comissão", "Gerou PDF resumo de comissões (ref. " + data.monthLabel + ")");
     Toast.show("PDF de comissões gerado", "success");
+  }
+
+  // Botão "Extrair Relatório" (23/09/2026, a pedido do usuário): exporta um
+  // .xlsx com o detalhe completo do comissionamento de todos os
+  // profissionais e seus lançamentos no período selecionado — para
+  // conferência manual dos lançamentos, sem depender só do que aparece na
+  // tela/modal "Ver detalhes". Reaproveita exatamente os mesmos dados e o
+  // mesmo critério de cálculo já usados em computeRows()/openDetailsModal(),
+  // só reorganizados em planilhas (uma por tipo de lançamento) em vez de
+  // HTML — valores monetários e quantidades ficam como número (não texto
+  // formatado), para permitir somas/fórmulas direto no Excel.
+  function generateCommissionExcel() {
+    if (!window.XLSX) { Toast.show("Não foi possível carregar a biblioteca de Excel — verifique sua conexão e tente novamente", "danger"); return; }
+    var rows = computeRows();
+    if (!rows.length) { Toast.show("Nenhum profissional comissionado neste período para gerar o relatório", "info"); return; }
+
+    var range = currentRange();
+    var services = DB.all("services"), clients = DB.all("clients"), employeesAll = DB.all("employees"), products = DB.all("products");
+    var servicesById = {}; services.forEach(function (s) { servicesById[s.id] = s; });
+    var clientsById = {}; clients.forEach(function (c) { clientsById[c.id] = c; });
+    var employeesById = {}; employeesAll.forEach(function (e) { employeesById[e.id] = e; });
+    var productsById = {}; products.forEach(function (p) { productsById[p.id] = p; });
+    var apptsAll = DB.all("appointments").filter(function (a) { return a.status === "concluido" && a.date >= range.start && a.date <= range.end; });
+
+    var resumoRows = [];
+    var apptPrincipalRows = [];
+    var apptAssistenteRows = [];
+    var esporadicoRows = [];
+    var consumoRows = [];
+    var parceriaRows = [];
+    var pagamentoRows = [];
+
+    rows.forEach(function (r) {
+      var e = r.employee;
+      resumoRows.push([
+        e.name, e.role, r.atendimentos, r.serviceRevenue,
+        round2(r.mainCommissionTotal + r.assistantDeductionTotal), r.assistantDeductionTotal, r.assistantCommissionTotal,
+        r.baseComissao, r.bonusTotal, r.consumoTotal, r.parceriaCostTotal,
+        r.devido, r.pago, round2(Math.max(0, r.saldo)), commStatusLabel(r)
+      ]);
+
+      var apptsMain = apptsAll.filter(function (a) { return a.employeeId === e.id; }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
+      var apptsAsst = apptsAll.filter(function (a) { return a.assistantId === e.id; }).sort(function (a, b) { return a.date.localeCompare(b.date) || a.time.localeCompare(b.time); });
+      var consumoByAppt = {};
+      (r.consumoItems || []).forEach(function (c) {
+        if (!c.appointmentId) return;
+        consumoByAppt[c.appointmentId] = round2((consumoByAppt[c.appointmentId] || 0) + c.employeeShare);
+      });
+
+      apptsMain.forEach(function (a) {
+        var s = servicesById[a.serviceId], c = clientsById[a.clientId];
+        var isParc = Utils.isParceriaAppt(a);
+        var split = Utils.apptCommissionSplit(a, e);
+        var apptConsumo = consumoByAppt[a.id] || 0;
+        var apptAsstDeduct = 0, assistantName = "";
+        if (a.assistantId && !isParc) {
+          apptAsstDeduct = round2(split.pool - split.mainCommission);
+          var asstEmp = employeesById[a.assistantId];
+          assistantName = asstEmp ? asstEmp.name : "";
+        }
+        apptPrincipalRows.push([
+          Utils.fmtDate(a.date), a.time, e.name, e.role,
+          c ? c.name : "", s ? s.name : "", isParc ? "Sim" : "Não",
+          isParc ? 0 : a.price,
+          round2(a.commissionPercent != null ? a.commissionPercent : (e.commissionRate || 0)),
+          isParc ? 0 : split.mainCommission,
+          assistantName, apptAsstDeduct, apptConsumo,
+          isParc ? 0 : round2(split.mainCommission)
+        ]);
+      });
+
+      apptsAsst.forEach(function (a) {
+        if (Utils.isParceriaAppt(a)) return;
+        var s = servicesById[a.serviceId], c = clientsById[a.clientId];
+        var mainEmp = employeesById[a.employeeId];
+        var split = Utils.apptCommissionSplit(a, mainEmp);
+        apptAssistenteRows.push([
+          Utils.fmtDate(a.date), a.time, e.name, mainEmp ? mainEmp.name : "",
+          c ? c.name : "", s ? s.name : "", a.price, split.assistantCommission
+        ]);
+      });
+
+      bonusesFor(e.id).forEach(function (b) {
+        var tipoLabel = b.kind === "percentual" ? "Percentual sobre venda (" + b.refPercent + "% de " + Utils.fmtMoney(b.refValue) + ")" :
+          b.kind === "desconto" ? "Desconto / dedução" : "Valor fixo";
+        esporadicoRows.push([
+          b.date ? Utils.fmtDate(b.date) : Utils.monthLabel(b.month + "-01"), e.name, b.description, tipoLabel, b.amount
+        ]);
+      });
+
+      (r.consumoItems || []).forEach(function (c) {
+        var p = productsById[c.productId];
+        var pct = c.employeeSharePercent != null ? c.employeeSharePercent : 50;
+        consumoRows.push([
+          Utils.fmtDate(c.date), e.name, p ? p.name : "",
+          window.Consumo ? Consumo.fmtQty(c.quantity, c.unit) : (c.quantity + c.unit),
+          c.totalCost, pct, c.employeeShare, c.appointmentId ? "Sim" : "Não"
+        ]);
+      });
+
+      (r.parceriaCostItems || []).forEach(function (it) {
+        var s = servicesById[it.serviceId], c = clientsById[it.clientId];
+        parceriaRows.push([
+          Utils.fmtDate(it.date) + " " + it.time, e.name, c ? c.name : "", s ? s.name : "",
+          it.baseValue, it.splitPct, it.amount
+        ]);
+      });
+
+      paymentsFor(e.id).forEach(function (t) {
+        pagamentoRows.push([
+          Utils.fmtDate(t.date), e.name, t.amount, t.paymentMethod || "", t.description || "", t.attachment ? "Sim" : "Não"
+        ]);
+      });
+    });
+
+    var totalDevido = round2(rows.reduce(function (s, r) { return s + r.devido; }, 0));
+    var totalPago = round2(rows.reduce(function (s, r) { return s + r.pago; }, 0));
+    var totalAberto = round2(rows.reduce(function (s, r) { return s + Math.max(0, r.saldo); }, 0));
+
+    function aoaSheet(headers, dataRows) {
+      return XLSX.utils.aoa_to_sheet([headers].concat(dataRows));
+    }
+
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, aoaSheet(["Campo", "Valor"], [
+      ["Relatório", "Comissionamento Detalhado"],
+      ["Período de referência", periodLabel()],
+      ["Data de corte considerada", Utils.fmtDate(cutoffDate())],
+      ["Gerado em", Utils.fmtDate(Utils.todayISO())],
+      ["Profissionais comissionados no período", rows.length],
+      ["Total devido no período", totalDevido],
+      ["Total pago no período", totalPago],
+      ["Saldo em aberto no período", totalAberto]
+    ]), "Informações");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Profissional", "Cargo", "Atendimentos", "Receita de Serviços",
+      "Comissão como Principal (bruta)", "Repasse a Assistente(s)", "Comissão como Assistente",
+      "Comissão do Período", "Comissionamento Esporádico (líquido)", "Consumo de Insumos",
+      "Atendimentos em Parceria (desconto)", "Total Devido", "Total Pago", "Saldo em Aberto", "Status"
+    ], resumoRows), "Resumo");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Data", "Hora", "Profissional", "Cargo", "Cliente", "Serviço", "Parceria",
+      "Valor Cobrado", "% Comissão", "Comissão Bruta", "Assistente", "Repasse ao Assistente",
+      "Produtos (Consumo)", "Comissão Líquida"
+    ], apptPrincipalRows), "Atendimentos - Principal");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Data", "Hora", "Assistente", "Profissional Principal", "Cliente", "Serviço", "Valor Cobrado", "Comissão do Assistente"
+    ], apptAssistenteRows), "Atendimentos - Assistente");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Data", "Profissional", "Descrição", "Tipo", "Valor"
+    ], esporadicoRows), "Comissionamento Esporádico");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Data", "Profissional", "Produto", "Quantidade", "Custo Total", "% Profissional", "Parte do Profissional", "Atendimento Vinculado"
+    ], consumoRows), "Consumo de Insumos");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Data/Hora", "Profissional", "Cliente", "Serviço", "Valor Base", "% Profissional", "Desconto"
+    ], parceriaRows), "Parceria");
+    XLSX.utils.book_append_sheet(wb, aoaSheet([
+      "Data", "Profissional", "Valor", "Forma de Pagamento", "Descrição", "Comprovante Anexado"
+    ], pagamentoRows), "Pagamentos");
+
+    var filename = "comissionamento_detalhado_" + customRange.start + "_a_" + customRange.end + ".xlsx";
+    XLSX.writeFile(wb, filename);
+    DB.log("Comissão", "Extraiu relatório detalhado de comissionamento em Excel (ref. " + periodLabel() + ")");
+    Toast.show("Relatório de comissionamento extraído", "success");
   }
 
   function buildAdminWhatsAppMessage(data) {
@@ -394,6 +561,30 @@
     var c = DB.findOne("categories", function (x) { return x.name === "Comissões"; });
     _commCatId = c ? c.id : null;
     return _commCatId;
+  }
+
+  // Mesmo critério usado dentro de computeRows() para somar "Pago" (ver
+  // comentário ali), mas devolvendo os lançamentos individuais em vez de só
+  // o total — usado pelo relatório em Excel (generateCommissionExcel), onde
+  // cada pagamento de comissão do profissional vira uma linha própria, para
+  // conferência manual.
+  function paymentsFor(employeeId) {
+    var range = currentRange();
+    var wholeMonth = isWholeMonthPrefix(range);
+    var wholeMonthKey = range.start.slice(0, 7);
+    var catId = commissionCatId();
+    return DB.all("transactions").filter(function (t) {
+      if (t.type !== "despesa" || t.categoryId !== catId || t.employeeId !== employeeId) return false;
+      return wholeMonth
+        ? (t.relatedMonth === wholeMonthKey)
+        : (t.relatedRangeStart
+          ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
+          : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && monthLastDay(t.relatedMonth) <= range.end));
+    }).sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+  }
+
+  function commStatusLabel(r) {
+    return r.saldo <= 0.01 ? "Pago" : (r.pago > 0.005 ? "Parcial" : "A Pagar");
   }
 
   // `precomputedRows` (opcional): evita chamar computeRows() de novo quando
