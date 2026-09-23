@@ -413,9 +413,12 @@
     if (rankingSub) rankingSub.textContent = "Top profissionais por valor devido — " + periodLabel();
 
     document.getElementById("com-summary").innerHTML = [
-      kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#0eb8d9", "#dbf7fc"),
-      kpi("Comissão Paga", Utils.fmtMoney(totalPago), "fa-circle-check", "#1baf7a", "#e2f5ec"),
-      kpi("Saldo em Aberto", Utils.fmtMoney(totalAberto), "fa-hourglass-half", "#b7791f", "#fdf2df"),
+      kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#0eb8d9", "#dbf7fc",
+        "Soma do que todos os profissionais ganharam de comissão pelos atendimentos concluídos dentro do período selecionado — não importa se já foi pago ou não."),
+      kpi("Comissão Paga", Utils.fmtMoney(totalPago), "fa-circle-check", "#1baf7a", "#e2f5ec",
+        "Soma do que já foi de fato pago aos profissionais, dentro do período selecionado. Como o pagamento é semanal, pode não bater com \"Comissão Devida\": uma semana paga que começou no mês anterior conta aqui mesmo sem estar no período em exibição, e uma semana já trabalhada mas ainda não paga fica de fora até o próximo pagamento."),
+      kpi("Saldo em Aberto", Utils.fmtMoney(totalAberto), "fa-hourglass-half", "#b7791f", "#fdf2df",
+        "\"Comissão Devida\" menos \"Comissão Paga\", somado profissional por profissional. Pode variar um pouco pelo mesmo motivo explicado nesses dois cartões (semana de pagamento atravessando a virada do mês) — isso não é um erro."),
       kpi("Profissionais Comissionados", String(rows.length), "fa-users", "#4a3aa7", "#ece8f8"),
       kpi("Descontos de Comissionamento Esporádico", Utils.fmtMoney(sporadicDiscountTotal()), "fa-scissors", "#c23b3b", "#fbe6e6")
     ].join("");
@@ -477,9 +480,9 @@
       Utils.thSort("Receita", "serviceRevenue", commissionSortState, { className: "text-right" }) +
       Utils.thSort("Comissão", "baseComissao", commissionSortState, { className: "text-right" }) +
       '<th class="text-right">Descontos/Acréscimos</th>' +
-      Utils.thSort("Devido", "devido", commissionSortState, { className: "text-right" }) +
-      Utils.thSort("Pago", "pago", commissionSortState, { className: "text-right" }) +
-      Utils.thSort("Saldo", "saldo", commissionSortState, { className: "text-right" }) +
+      Utils.thSort("Devido", "devido", commissionSortState, { className: "text-right", title: "O que esse profissional ganhou de comissão pelos atendimentos concluídos dentro do período selecionado — não importa se já foi pago ou não." }) +
+      Utils.thSort("Pago", "pago", commissionSortState, { className: "text-right", title: "O que já foi de fato pago a esse profissional, dentro do período selecionado. Pode não bater com \"Devido\" por causa do pagamento semanal atravessando a virada do mês — ver \"Ver detalhes\"." }) +
+      Utils.thSort("Saldo", "saldo", commissionSortState, { className: "text-right", title: "\"Devido\" menos \"Pago\". Pode variar um pouco pelo mesmo motivo — isso não é um erro." }) +
       '<th class="com-col-actions"></th></tr></thead><tbody>' +
       rows.map(function (r) {
         var status = commStatusBadgeHtml(r);
@@ -717,7 +720,7 @@
       '<div class="flex justify-between mt-16" style="font-weight:800;font-size:15px;border-top:2px solid var(--border-color);padding-top:10px;">' +
         '<span>Total Devido</span><span id="dm-grand-total">' + Utils.fmtMoney(row.devido) + '</span>' +
       '</div>' +
-      '<div class="flex justify-between mt-8 small text-success"><span>(−) Pago no Período</span><span class="text-num" id="dm-recap-pago">' + (row.pago > 0.005 ? "- " + Utils.fmtMoney(row.pago) : Utils.fmtMoney(0)) + '</span></div>' +
+      '<div class="flex justify-between mt-8 small text-success"><span>(−) Pago no Período<i class="fa-solid fa-circle-info kpi-info-icon" title="O que já foi de fato pago a este profissional dentro do período selecionado. Pode ser diferente do que ele ganhou nesse mesmo período, porque o pagamento é semanal e uma semana pode atravessar a virada do mês." style="text-transform:none;"></i></span><span class="text-num" id="dm-recap-pago">' + (row.pago > 0.005 ? "- " + Utils.fmtMoney(row.pago) : Utils.fmtMoney(0)) + '</span></div>' +
       '<div class="flex justify-between mt-8" style="font-weight:800;font-size:15px;border-top:1px solid var(--border-color);padding-top:10px;">' +
         '<span>Saldo em Aberto</span><span><span class="' + (row.saldo > 0.01 ? "text-danger" : "text-success") + '" id="dm-grand-saldo">' + Utils.fmtMoney(Math.max(0, row.saldo)) + '</span> <span id="dm-grand-status">' + commStatusBadgeHtml(row) + '</span></span>' +
       '</div>';
@@ -1074,9 +1077,13 @@
     return round2(Math.abs(total));
   }
 
-  function kpi(label, value, icon, color, bg) {
+  // tooltip (opcional, 23/09/2026 — mesmo motivo/pedido de extrato-comissao.js):
+  // mostra um ⓘ ao lado do rótulo, com esse texto num "title" nativo do
+  // navegador, explicando em linguagem simples o que aquele número conta.
+  function kpi(label, value, icon, color, bg, tooltip) {
+    var info = tooltip ? '<i class="fa-solid fa-circle-info kpi-info-icon" title="' + Utils.escapeHtml(tooltip) + '"></i>' : "";
     return '<div class="kpi-card"><div class="kpi-icon" style="background:' + bg + ';color:' + color + ';"><i class="fa-solid ' + icon + '"></i></div>' +
-      '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
+      '<div class="kpi-label">' + label + info + '</div><div class="kpi-value">' + value + '</div></div>';
   }
   function sumBy(arr, field) { return arr.reduce(function (s, t) { return s + (Number(t[field]) || 0); }, 0); }
   function round2(n) { return Math.round(n * 100) / 100; }

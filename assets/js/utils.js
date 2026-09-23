@@ -643,12 +643,20 @@
     // — `getters` é opcional, um mapa { campo: function(item){ return valorComparável; } }
     // para colunas cujo valor de ordenação não é `item[field]` direto (dinheiro formatado,
     // nome vindo de uma tabela relacionada, badge calculado etc).
+    // opts.title (23/09/2026, a pedido do usuário): quando informado, mostra
+    // um ⓘ pequeno ao lado do rótulo com esse texto num "title" nativo do
+    // navegador — para colunas cujo número sozinho pode confundir (ex.:
+    // "Devido" x "Pago" no Comissionamento, quando um pagamento semanal
+    // atravessa a virada do mês). Fica dentro do <th> (então clicar nele
+    // também ordena a coluna, igual ao resto do cabeçalho), mas fora do
+    // <span> do rótulo/ícone de ordenação, só para não competir visualmente.
     thSort: function (label, field, state, opts) {
       opts = opts || {};
       var active = !!(state && state.field === field);
       var icon = active ? (state.dir === "desc" ? "fa-sort-down" : "fa-sort-up") : "fa-sort";
+      var infoIcon = opts.title ? '<i class="fa-solid fa-circle-info th-info-icon" title="' + this.escapeHtml(opts.title) + '"></i>' : "";
       return '<th class="th-sortable' + (active ? " active" : "") + (opts.className ? " " + opts.className : "") + '" data-sort="' + field + '">' +
-        '<span class="th-sortable-label">' + label + '<i class="fa-solid ' + icon + ' sort-icon"></i></span></th>';
+        '<span class="th-sortable-label">' + label + '<i class="fa-solid ' + icon + ' sort-icon"></i></span>' + infoIcon + '</th>';
     },
 
     wireSortHeaders: function (tbl, state, onChange) {

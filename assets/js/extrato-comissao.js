@@ -372,9 +372,12 @@
     var e = data.employee;
 
     var kpis = [
-      kpi("Comissão do Período", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#0eb8d9", "#dbf7fc"),
-      kpi("Já Recebido", Utils.fmtMoney(data.pago), "fa-circle-check", "#1baf7a", "#e2f5ec"),
-      kpi("Saldo em Aberto", Utils.fmtMoney(Math.max(0, data.saldo)), "fa-hourglass-half", "#b7791f", "#fdf2df"),
+      kpi("Comissão do Período", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#0eb8d9", "#dbf7fc",
+        "Quanto você ganhou de comissão pelos atendimentos concluídos dentro do período De/Até escolhido acima — não importa se esse valor já caiu no seu pagamento ou não."),
+      kpi("Já Recebido", Utils.fmtMoney(data.pago), "fa-circle-check", "#1baf7a", "#e2f5ec",
+        "Quanto já foi de fato pago a você, dentro do período escolhido. Como o pagamento é semanal, esse valor pode não bater com \"Comissão do Período\": uma semana paga que começou no mês anterior conta aqui mesmo sem estar no período em exibição, e uma semana já trabalhada mas ainda não paga fica de fora até o próximo pagamento."),
+      kpi("Saldo em Aberto", Utils.fmtMoney(Math.max(0, data.saldo)), "fa-hourglass-half", "#b7791f", "#fdf2df",
+        "\"Comissão do Período\" menos \"Já Recebido\". Pode variar um pouco por causa do efeito explicado nesses dois cartões (semana de pagamento atravessando a virada do mês) — isso não é um erro."),
       kpi("Atendimentos no Período", String(data.appointments.length), "fa-scissors", "#4a3aa7", "#ece8f8")
     ];
     if (data.consumoTotal > 0) {
@@ -679,9 +682,14 @@
       '<div class="ec-p-sub">' + Utils.escapeHtml(sub) + '</div></div>';
   }
 
-  function kpi(label, value, icon, color, bg) {
+  // tooltip (opcional, 23/09/2026 — a pedido do usuário, depois de uma
+  // dúvida real sobre "Comissão do Período" x "Já Recebido" não baterem):
+  // mostra um ⓘ ao lado do rótulo, com esse texto num "title" nativo do
+  // navegador, explicando em linguagem simples o que aquele número conta.
+  function kpi(label, value, icon, color, bg, tooltip) {
+    var info = tooltip ? '<i class="fa-solid fa-circle-info kpi-info-icon" title="' + Utils.escapeHtml(tooltip) + '"></i>' : "";
     return '<div class="kpi-card"><div class="kpi-icon" style="background:' + bg + ';color:' + color + ';"><i class="fa-solid ' + icon + '"></i></div>' +
-      '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
+      '<div class="kpi-label">' + label + info + '</div><div class="kpi-value">' + value + '</div></div>';
   }
   function sum(arr) { return arr.reduce(function (s, v) { return s + (Number(v) || 0); }, 0); }
   function round2(n) { return Math.round(n * 100) / 100; }
