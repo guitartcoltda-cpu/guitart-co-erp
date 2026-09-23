@@ -1,8 +1,8 @@
 /* ============================================================
    Salão ERP — Maquininhas
-   Cadastro de maquininhas de cartão (operadora, taxas de crédito/
-   débito/Pix, antecipação, outras taxas) e estimativa de quanto é
-   descontado nas vendas recebidas por cartão/Pix.
+   Cadastro de maquininhas de cartão (operadora, taxas de crédito/débito,
+   antecipação, outras taxas) e estimativa de quanto é descontado nas
+   vendas recebidas por cartão.
 
    IMPORTANTE: nem todo lançamento de receita (transactions) registra qual
    maquininha foi usada na venda — só quando `cardMachineId` foi gravado
@@ -10,8 +10,8 @@
    todo lançamento anterior a essa mudança), os valores de taxa aqui
    continuam sendo uma ESTIMATIVA: aplicamos a taxa da maquininha
    selecionada (ou a média das ativas) sobre a receita recebida por Cartão
-   de Crédito / Cartão de Débito / Pix no período — não é o extrato exato
-   da operadora.
+   de Crédito / Cartão de Débito no período — não é o extrato exato da
+   operadora.
 
    20/09/2026: em Cartão de Crédito, quando o lançamento tem o número de
    parcelas (ver agenda.js/financeiro.js) e a maquininha tem aquela parcela
@@ -24,14 +24,29 @@
    maquininha para aquela venda específica (em vez de estimar pela média),
    sempre que nenhuma simulação manual "e se toda a receita passasse por
    esta maquininha" estiver ativa no seletor abaixo — ver rateForTxn.
+
+   23/09/2026: Pix removido por completo desta página, a pedido do usuário
+   ("Pagamento de pix é direto para conta sempre, não tem cobrança de
+   taxa") — Pix cai direto na conta do salão, sem passar por maquininha, e
+   nunca teve motivo pra entrar na conta de custo de cartão. A taxa de Pix
+   que existia no cadastro de cada maquininha (`feePixPercent`) parou de
+   ser lida/editada aqui; registros antigos podem ainda ter esse campo
+   gravado, mas ele não tem mais nenhum efeito em lugar nenhum.
+
+   23/09/2026, continuação: a partir de 3x no parcelamento do Cartão de
+   Crédito, Concluir Atendimento/Fechar Conta (agenda.js) deixam escolher
+   se quem paga a taxa da maquininha é o Salão (padrão) ou o Cliente
+   (repassada a ele). Quando o Cliente paga, o lançamento grava
+   `feePaidBy: "cliente"` — o custo dessa venda para o salão passa a ser
+   R$0,00 (ver rateForTxn abaixo), mesmo que uma simulação manual esteja
+   ativa, já que o salão de fato não pagou nada por ela.
    ============================================================ */
 (function () {
   "use strict";
 
   var PAY_METHODS = [
     { key: "Cartão de Crédito", field: "feeCreditPercent", label: "Crédito" },
-    { key: "Cartão de Débito", field: "feeDebitPercent", label: "Débito" },
-    { key: "Pix", field: "feePixPercent", label: "Pix" }
+    { key: "Cartão de Débito", field: "feeDebitPercent", label: "Débito" }
   ];
 
   var pfCtrl = null;
@@ -123,14 +138,22 @@
   // funcionalidade passar a ser usada no dia a dia, e todo lançamento
   // anterior a ela) continuam caindo na média, sem nenhuma mudança de
   // comportamento para eles.
+  //
+  // 23/09/2026: se o lançamento tem `feePaidBy: "cliente"` (parcelamento
+  // de 3x ou mais em que a taxa foi repassada ao cliente, escolhido em
+  // Concluir Atendimento/Fechar Conta — ver agenda.js), o custo dessa
+  // venda para o SALÃO é R$0,00 — o cliente já cobriu a taxa, então nada
+  // foi de fato descontado do salão nela. Essa checagem vem antes de
+  // qualquer outra (inclusive da simulação manual): é um fato sobre o que
+  // realmente aconteceu naquela venda específica, não uma estimativa.
   function rateForTxn(t, rates) {
+    if (t.feePaidBy === "cliente") return 0;
     var machine = (!state.simMachineId && t.cardMachineId) ? DB.get("cardMachines", t.cardMachineId) : null;
     if (t.paymentMethod === "Cartão de Crédito") {
       return machine ? machineCreditRate(machine, t.installments) : creditRateForInstallments(t.installments);
     }
-    if (machine) {
-      var field = t.paymentMethod === "Cartão de Débito" ? "feeDebitPercent" : (t.paymentMethod === "Pix" ? "feePixPercent" : null);
-      if (field) return (machine[field] || 0) + (machine.otherTaxesPercent || 0);
+    if (machine && t.paymentMethod === "Cartão de Débito") {
+      return (machine.feeDebitPercent || 0) + (machine.otherTaxesPercent || 0);
     }
     return rates[t.paymentMethod] || 0;
   }
@@ -180,15 +203,15 @@
 
     var maiorTaxa = 0;
     machines.forEach(function (m) {
-      [m.feeCreditPercent, m.feeDebitPercent, m.feePixPercent].forEach(function (v) {
+      [m.feeCreditPercent, m.feeDebitPercent].forEach(function (v) {
         if ((v || 0) > maiorTaxa) maiorTaxa = v || 0;
       });
     });
 
     document.getElementById("mq-summary").innerHTML = [
-      kpi("Receita via Cartão/Pix", Utils.fmtMoney(cardRevenue), txns.filter(function (t) { return byMethod[t.paymentMethod]; }).length + " venda(s) no período", "fa-credit-card", "#0eb8d9", "#dbf7fc"),
+      kpi("Receita via Cartão", Utils.fmtMoney(cardRevenue), txns.filter(function (t) { return byMethod[t.paymentMethod]; }).length + " venda(s) no período", "fa-credit-card", "#0eb8d9", "#dbf7fc"),
       kpi("Taxa Estimada Paga", Utils.fmtMoney(estimatedFee), "Estimativa — ver nota acima", "fa-hand-holding-dollar", "#c23b3b", "#fbe6e6"),
-      kpi("Taxa Média Efetiva", feePct.toFixed(2) + "%", "sobre a receita via cartão/Pix", "fa-percent", "#6d5efc", "#ece9ff"),
+      kpi("Taxa Média Efetiva", feePct.toFixed(2) + "%", "sobre a receita via cartão", "fa-percent", "#6d5efc", "#ece9ff"),
       kpi("Maior Taxa Cadastrada", maiorTaxa.toFixed(2) + "%", machines.length + " maquininha(s) cadastrada(s)", "fa-arrow-trend-up", "#4a3aa7", "#ece8f8")
     ].join("");
 
@@ -201,7 +224,7 @@
       ],
       height: 260,
       valueFormatter: function (v) { return Utils.fmtMoney(v); },
-      emptyMessage: "Sem vendas por cartão/Pix no período"
+      emptyMessage: "Sem vendas por cartão no período"
     });
 
     renderTable(machines);
@@ -211,7 +234,7 @@
     document.getElementById("mq-count-sub").textContent = machines.length + " maquininha(s) cadastrada(s)";
     var tbl = document.getElementById("tbl-mq");
     if (!machines.length) {
-      Utils.emptyTable(tbl, "fa-credit-card", "Nenhuma maquininha cadastrada", "Cadastre a primeira maquininha e suas taxas de crédito, débito e Pix.");
+      Utils.emptyTable(tbl, "fa-credit-card", "Nenhuma maquininha cadastrada", "Cadastre a primeira maquininha e suas taxas de crédito e débito.");
       return;
     }
     var mqGetters = {
@@ -223,7 +246,6 @@
       Utils.thSort("Operadora", "operator", mqSortState) +
       Utils.thSort("Crédito à Vista", "feeCreditPercent", mqSortState, { className: "text-right" }) +
       Utils.thSort("Débito", "feeDebitPercent", mqSortState, { className: "text-right" }) +
-      Utils.thSort("Pix", "feePixPercent", mqSortState, { className: "text-right" }) +
       Utils.thSort("Antecipação", "anticipationFeePercent", mqSortState, { className: "text-right" }) +
       Utils.thSort("Status", "active", mqSortState) +
       '<th></th></tr></thead><tbody>' +
@@ -233,7 +255,6 @@
           '<td class="small text-muted">' + Utils.escapeHtml(m.operator || "-") + '</td>' +
           '<td class="text-right text-num">' + fmtPct(m.feeCreditPercent) + '</td>' +
           '<td class="text-right text-num">' + fmtPct(m.feeDebitPercent) + '</td>' +
-          '<td class="text-right text-num">' + fmtPct(m.feePixPercent) + '</td>' +
           '<td class="text-right text-num">' + (m.anticipationFeePercent ? fmtPct(m.anticipationFeePercent) : '<span class="text-muted">-</span>') + '</td>' +
           '<td>' + (m.active !== false ? '<span class="badge badge-success">Ativa</span>' : '<span class="badge badge-gray">Inativa</span>') + '</td>' +
           '<td><div class="flex gap-6">' +
@@ -320,7 +341,6 @@
       '<div class="form-field full"><label>Endereço</label><input type="text" id="mq-address" placeholder="Rua, número, bairro..." value="' + (m ? Utils.escapeHtml(m.address || "") : "") + '"></div>' +
       '<div class="form-field"><label>Taxa Débito à Vista (%)</label><input type="number" step="0.01" min="0" id="mq-fee-debit" value="' + (m ? m.feeDebitPercent : "") + '"></div>' +
       '<div class="form-field"><label>Taxa Crédito à Vista (%)</label><input type="number" step="0.01" min="0" id="mq-fee-credit" value="' + (m ? m.feeCreditPercent : "") + '"></div>' +
-      '<div class="form-field"><label>Taxa Pix (%)</label><input type="number" step="0.01" min="0" id="mq-fee-pix" value="' + (m ? (m.feePixPercent != null ? m.feePixPercent : 0) : 0) + '"></div>' +
       '<div class="form-field"><label>Taxa de Antecipação (%)</label><input type="number" step="0.01" min="0" id="mq-fee-antecip" value="' + (m ? (m.anticipationFeePercent || "") : "") + '"></div>' +
       '<div class="form-field"><label>Outras Taxas/Impostos (%)</label><input type="number" step="0.01" min="0" id="mq-fee-other" value="' + (m ? (m.otherTaxesPercent || "") : "") + '"></div>' +
       '<div class="form-field full">' +
@@ -352,7 +372,6 @@
         address: box.querySelector("#mq-address").value.trim(),
         feeCreditPercent: parseFloat(box.querySelector("#mq-fee-credit").value) || 0,
         feeDebitPercent: parseFloat(box.querySelector("#mq-fee-debit").value) || 0,
-        feePixPercent: parseFloat(box.querySelector("#mq-fee-pix").value) || 0,
         anticipationFeePercent: parseFloat(box.querySelector("#mq-fee-antecip").value) || 0,
         otherTaxesPercent: parseFloat(box.querySelector("#mq-fee-other").value) || 0,
         installmentFeesCredit: installmentFeesCredit,

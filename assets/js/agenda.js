@@ -1251,12 +1251,14 @@
     return { getInstallments: function () { return isCredit() ? (parseInt(select.value, 10) || 1) : null; } };
   }
 
-  // Detalhamento da taxa da maquininha (20/09/2026, a pedido do usuário): ao
+  // Detalhamento da taxa da maquininha (20/09/2026, a pedido do usuário; taxa
+  // do Pix removida em 23/09/2026 — ver comentário do feeRateFor abaixo): ao
   // lado da Forma de Pagamento/Parcelas, mostra ao vivo quanto está sendo
   // cobrado do cliente, a taxa da maquininha aplicada, quanto ela desconta em
   // R$ e o valor líquido que o salão de fato recebe — só aparece quando a
-  // Forma de Pagamento é uma das que passam por maquininha (Cartão de
-  // Crédito, Cartão de Débito, Pix; Dinheiro/Parceria/Pacote não têm taxa).
+  // Forma de Pagamento é uma das que realmente passam por maquininha (Cartão
+  // de Crédito, Cartão de Débito; Dinheiro/Pix/Parceria/Pacote não têm taxa —
+  // Pix cai direto na conta do salão, sem passar por maquininha nenhuma).
   // A taxa usada é a mesma lógica já usada em Maquininhas → estimativa do
   // período (ver creditRateForInstallments em maquininhas.js): taxa exata da
   // parcela cadastrada na Tabela de Parcelamento quando existe, senão a taxa
@@ -1273,8 +1275,18 @@
   // vez que cada maquininha tem sua taxa"): opcional; quando informado
   // (uma maquininha específica escolhida no seletor abaixo), usa a taxa
   // EXATA daquela maquininha em vez da média das ativas.
+  //
+  // Pix removido do cálculo de taxa (23/09/2026, a pedido do usuário —
+  // "Pagamento de pix é direto para conta sempre, não tem cobrança de taxa.
+  // Deixe cobrança de taxa somente no crédito e débito conforme tabela de
+  // cada maquina"): Pix cai direto na conta do salão, sem passar por
+  // maquininha — não tem taxa nenhuma, sempre. Esta função agora só se
+  // aplica a Cartão de Crédito/Débito; para qualquer outra forma de
+  // pagamento (incluindo Pix) devolve null, e quem chama esconde o
+  // detalhamento/seletor de maquininha por completo (mesmo tratamento que
+  // Dinheiro/Parceria/Pacote já tinham).
   function feeRateFor(payMethod, installments, machineId) {
-    if (payMethod !== "Cartão de Crédito" && payMethod !== "Cartão de Débito" && payMethod !== "Pix") return null;
+    if (payMethod !== "Cartão de Crédito" && payMethod !== "Cartão de Débito") return null;
     function rateOf(m) {
       if (payMethod === "Cartão de Crédito") {
         var table = m.installmentFeesCredit || {};
@@ -1282,8 +1294,7 @@
         var base = (v !== undefined && v !== null && v !== "") ? v : (m.feeCreditPercent || 0);
         return base + (m.otherTaxesPercent || 0);
       }
-      if (payMethod === "Cartão de Débito") return (m.feeDebitPercent || 0) + (m.otherTaxesPercent || 0);
-      return (m.feePixPercent || 0) + (m.otherTaxesPercent || 0); // Pix
+      return (m.feeDebitPercent || 0) + (m.otherTaxesPercent || 0); // Cartão de Débito
     }
     if (machineId) {
       var picked = DB.get("cardMachines", machineId);
@@ -1310,11 +1321,28 @@
       active.map(function (m) { return '<option value="' + m.id + '">' + Utils.escapeHtml(m.name) + '</option>'; }).join("");
     return '<div class="form-field" id="' + prefix + '-machine-field" style="display:none;"><label>Maquininha</label><select id="' + prefix + '-machine">' + options + '</select></div>';
   }
+  // "Quem paga a taxa" (23/09/2026, a pedido do usuário): "O parcelamento
+  // até 3x, a cobrança de taxa é descontada do salão, a partir de 3x pra
+  // cima, deixe opcional a cobrança de taxa para o cliente". Ou seja: em
+  // Cartão de Crédito 1x/2x a taxa sempre desconta do salão, sem opção (como
+  // já era); a partir de 3x (inclusive) até 12x, aparece este seletor,
+  // deixando escolher se quem paga a taxa é o Salão (padrão, mesmo
+  // comportamento de sempre) ou o Cliente (a taxa é repassada a ele — ver
+  // wireFeeBreakdown abaixo para como isso muda o detalhamento). Não se
+  // aplica a Débito (não tem parcelamento) nem a Pix (nunca tem taxa).
+  var FEE_PAYER_OPTIONAL_FROM_INSTALLMENTS = 3;
+  function feePayerFieldHtml(prefix) {
+    return '<div class="form-field" id="' + prefix + '-payer-field" style="display:none;"><label>Quem paga a taxa da maquininha</label><select id="' + prefix + '-payer">' +
+      '<option value="salao">Salão (padrão)</option>' +
+      '<option value="cliente">Cliente</option>' +
+      '</select></div>';
+  }
   function feeBreakdownHtml(prefix) {
     return '<div class="form-field full" id="' + prefix + '-fee-breakdown" style="display:none;">' +
       '<div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:10px 12px;background:var(--gray-50);font-size:13px;">' +
-        '<div class="flex items-center justify-between"><span>Valor cobrado do cliente</span><strong id="' + prefix + '-fee-amount">R$ 0,00</strong></div>' +
+        '<div class="flex items-center justify-between"><span id="' + prefix + '-fee-amount-label">Valor cobrado do cliente</span><strong id="' + prefix + '-fee-amount">R$ 0,00</strong></div>' +
         '<div class="flex items-center justify-between" style="margin-top:4px;"><span>Taxa da maquininha (<span id="' + prefix + '-fee-rate">0%</span>)</span><strong id="' + prefix + '-fee-discount" style="color:#dc2626;">- R$ 0,00</strong></div>' +
+        '<div class="flex items-center justify-between" id="' + prefix + '-fee-total-row" style="display:none;border-top:1px dashed var(--border-color);margin-top:6px;padding-top:6px;"><span>Total cobrado do cliente (com taxa)</span><strong id="' + prefix + '-fee-total">R$ 0,00</strong></div>' +
         '<div class="flex items-center justify-between" style="border-top:1px dashed var(--border-color);margin-top:6px;padding-top:6px;"><span>Valor líquido que o salão recebe</span><strong id="' + prefix + '-fee-net">R$ 0,00</strong></div>' +
       '</div>' +
     '</div>';
@@ -1326,31 +1354,68 @@
     var wrap = box.querySelector("#" + prefix + "-fee-breakdown");
     var machineField = box.querySelector("#" + prefix + "-machine-field");
     var machineSelect = box.querySelector("#" + prefix + "-machine");
+    var payerField = box.querySelector("#" + prefix + "-payer-field");
+    var payerSelect = box.querySelector("#" + prefix + "-payer");
+    var elAmountLabel = box.querySelector("#" + prefix + "-fee-amount-label");
     var elAmount = box.querySelector("#" + prefix + "-fee-amount");
     var elRate = box.querySelector("#" + prefix + "-fee-rate");
     var elDiscount = box.querySelector("#" + prefix + "-fee-discount");
+    var elTotalRow = box.querySelector("#" + prefix + "-fee-total-row");
+    var elTotal = box.querySelector("#" + prefix + "-fee-total");
     var elNet = box.querySelector("#" + prefix + "-fee-net");
+    // Só é elegível para a opção "Cliente" quando o campo está visível
+    // (Cartão de Crédito, 3x ou mais) — fora disso, mesmo que o <select>
+    // ainda guarde "cliente" de uma seleção anterior, o padrão "salao" vale.
+    function payerIsClient() {
+      return !!(payerField && payerField.style.display !== "none" && payerSelect && payerSelect.value === "cliente");
+    }
     function sync() {
       var machineId = machineSelect ? machineSelect.value : "";
-      var rate = feeRateFor(paySelect.value, installmentsCtrl.getInstallments(), machineId);
+      var installments = installmentsCtrl.getInstallments();
+      var rate = feeRateFor(paySelect.value, installments, machineId);
       if (rate === null) {
         wrap.style.display = "none";
         if (machineField) machineField.style.display = "none";
+        if (payerField) payerField.style.display = "none";
         return;
       }
       if (machineField) machineField.style.display = "";
+      var payerEligible = paySelect.value === "Cartão de Crédito" && installments >= FEE_PAYER_OPTIONAL_FROM_INSTALLMENTS;
+      if (payerField) {
+        payerField.style.display = payerEligible ? "" : "none";
+        if (!payerEligible && payerSelect) payerSelect.value = "salao";
+      }
       var amount = getAmount() || 0;
-      var discount = round2(amount * rate / 100);
-      var net = round2(amount - discount);
+      var fee = round2(amount * rate / 100);
+      var clientPays = payerIsClient();
+      elAmountLabel.textContent = clientPays ? "Valor do serviço" : "Valor cobrado do cliente";
       elAmount.textContent = Utils.fmtMoney(amount);
       elRate.textContent = rate.toFixed(2) + "%";
-      elDiscount.textContent = "- " + Utils.fmtMoney(discount);
-      elNet.textContent = Utils.fmtMoney(net);
+      if (clientPays) {
+        // Cliente absorve a taxa: ela é somada ao que ele paga no cartão
+        // (mostrado em "Total cobrado do cliente"), e o salão recebe o
+        // valor cheio do serviço, sem nenhum desconto.
+        elDiscount.textContent = "+ " + Utils.fmtMoney(fee);
+        elDiscount.style.color = "#16a34a";
+        elTotalRow.style.display = "";
+        elTotal.textContent = Utils.fmtMoney(round2(amount + fee));
+        elNet.textContent = Utils.fmtMoney(amount);
+      } else {
+        elDiscount.textContent = "- " + Utils.fmtMoney(fee);
+        elDiscount.style.color = "#dc2626";
+        elTotalRow.style.display = "none";
+        elNet.textContent = Utils.fmtMoney(round2(amount - fee));
+      }
       wrap.style.display = "";
     }
     return {
       sync: sync,
-      getMachineId: function () { return (machineSelect && machineSelect.value) ? machineSelect.value : null; }
+      getMachineId: function () { return (machineSelect && machineSelect.value) ? machineSelect.value : null; },
+      // feePaidBy (23/09/2026): só grava "cliente" quando o campo estava
+      // elegível/visível E o usuário escolheu essa opção; senão devolve
+      // null (não grava nada), mesma convenção de getMachineId — ausência
+      // do campo no lançamento significa "salão paga", o padrão de sempre.
+      getFeePaidBy: function () { return payerIsClient() ? "cliente" : null; }
     };
   }
 
@@ -1678,6 +1743,7 @@
       '<div class="form-field"><label>Forma de Pagamento</label><select id="cc-pay">' + visiblePayMethods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
       installmentsFieldHtml("cc") +
       machineSelectFieldHtml("cc") +
+      feePayerFieldHtml("cc") +
       feeBreakdownHtml("cc") +
       '</div>' +
       '<div id="cc-parceria-block" class="form-grid" style="display:none;">' +
@@ -1721,10 +1787,12 @@
     (function wireFeeSync() {
       var installmentsSelectEl = box.querySelector("#cc-installments");
       var machineSelectEl = box.querySelector("#cc-machine");
+      var payerSelectEl = box.querySelector("#cc-payer");
       function syncFee() { feeCtrl.sync(); }
       paySelect.addEventListener("change", syncFee);
       if (installmentsSelectEl) installmentsSelectEl.addEventListener("change", syncFee);
       if (machineSelectEl) machineSelectEl.addEventListener("change", syncFee);
+      if (payerSelectEl) payerSelectEl.addEventListener("change", syncFee);
       amountInput.addEventListener("input", syncFee);
       syncFee();
     })();
@@ -1772,6 +1840,7 @@
       var payMethod = box.querySelector("#cc-pay").value;
       var installments = installmentsCtrl.getInstallments();
       var cardMachineId = feeCtrl.getMachineId();
+      var feePaidBy = feeCtrl.getFeePaidBy();
       var isParceria = isParceriaMethod(payMethod, methods);
       var isPkgPay = isPackagePayMethod(payMethod, methods);
       var chosenPurchase = isPkgPay ? selectedPackagePurchase() : null;
@@ -1875,7 +1944,7 @@
           DB.insert("transactions", {
             type: "receita", description: service.name + " - " + client.name, amount: mainRevenue,
             date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-            paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId,
+            paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy,
             employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
           });
           // Crédito do cliente: usado agora (desconta), gerado agora
@@ -1916,7 +1985,7 @@
             DB.insert("transactions", {
               type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
               categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
-              paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, employeeId: appt.employeeId, clientId: appt.clientId,
+              paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy, employeeId: appt.employeeId, clientId: appt.clientId,
               productId: productId, appointmentId: appt.id, reconciled: false
             });
           }
@@ -2001,6 +2070,7 @@
         installmentsFieldHtml("ccg") +
         '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
         machineSelectFieldHtml("ccg") +
+        feePayerFieldHtml("ccg") +
         feeBreakdownHtml("ccg") +
       '</div>' +
       reconciliationHtml("ccg", client);
@@ -2047,8 +2117,10 @@
     (function () {
       var installmentsSelectG = box.querySelector("#ccg-installments");
       var machineSelectG = box.querySelector("#ccg-machine");
+      var payerSelectG = box.querySelector("#ccg-payer");
       if (installmentsSelectG) installmentsSelectG.addEventListener("change", updateTotal);
       if (machineSelectG) machineSelectG.addEventListener("change", updateTotal);
+      if (payerSelectG) payerSelectG.addEventListener("change", updateTotal);
     })();
 
     lines.forEach(function (l) {
@@ -2070,6 +2142,7 @@
       var payMethod = paySelectG.value;
       var installments = installmentsCtrlG.getInstallments();
       var cardMachineId = feeCtrlG.getMachineId();
+      var feePaidBy = feeCtrlG.getFeePaidBy();
       var isParceria = isGroupParceria();
       var totalAmount = 0;
       var summaryParts = [];
@@ -2133,7 +2206,7 @@
             DB.insert("transactions", {
               type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: lineRevenue,
               date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-              paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId,
+              paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy,
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           }
@@ -2175,7 +2248,7 @@
               DB.insert("transactions", {
                 type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
                 categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
-                paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, employeeId: appt.employeeId, clientId: appt.clientId,
+                paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy, employeeId: appt.employeeId, clientId: appt.clientId,
                 productId: productId, appointmentId: appt.id, reconciled: false
               });
             }
