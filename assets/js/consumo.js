@@ -5,11 +5,26 @@
    atendimento, sempre 50/50) e pelo Estoque (lançamento manual, onde
    o percentual pode ser ajustado — negociações nem sempre são meio a
    meio, ver "Lançar Consumo de Insumos"): registra o consumo de um
-   produto de uso interno medido em ml/g, deduz do estoque, gera a
-   parte do salão como despesa real da empresa e deixa a parte do
-   profissional disponível para reduzir o "Devido" no comissionamento
-   (ver Utils.consumoDeductionFor usado em comissoes.js /
-   extrato-comissao.js).
+   produto de uso interno medido em ml/g, deduz do estoque e deixa a
+   parte do profissional (employeeShare) disponível para reduzir o
+   "Devido" no comissionamento (ver Consumo.deductionFor/
+   deductionForRange, usados em comissoes.js/extrato-comissao.js).
+   CORREÇÃO (24/09/2026, a pedido do usuário — dupla contagem na DRE):
+   até aqui, a parte do salão (companyShare) também gerava um
+   lançamento de despesa próprio ("Consumo de insumo — ...", forma de
+   pagamento "Uso Interno") na categoria "Produtos e Insumos" — em
+   cima da despesa que a compra do produto (nota do fornecedor) já
+   gera na mesma categoria quando o produto é comprado. Como o
+   sistema não tem nenhum vínculo entre a compra e o consumo (não é
+   uma baixa de um "saldo" comprado, os dois lançamentos eram
+   independentes), o custo do mesmo produto acabava entrando na DRE
+   duas vezes: inteiro na compra, e de novo, picado, a cada uso. A
+   despesa real já nasce na nota de compra — Consumo.register()
+   continua registrando tudo (productConsumptions, baixa de estoque,
+   stockMovements) só não cria mais esse segundo lançamento
+   financeiro; companyShare continua sendo calculado e salvo em
+   productConsumptions, só para referência/relatório de custo por
+   atendimento, sem afetar a DRE.
    ============================================================ */
 (function (global) {
   "use strict";
@@ -55,11 +70,6 @@
     if (unit === "g" && q >= 1000) return Utils.fmtNumber(q / 1000, 2) + " kg";
     if (unit === "ml" && q >= 1000) return Utils.fmtNumber(q / 1000, 2) + " L";
     return Utils.fmtNumber(q, q % 1 ? 2 : 0) + " " + unit;
-  }
-
-  function consumoCategoria() {
-    return DB.findOne("categories", function (c) { return c.name === "Produtos e Insumos"; }) ||
-      DB.findOne("categories", function (c) { return /insumo/i.test(c.name); });
   }
 
   var Consumo = {
@@ -135,17 +145,11 @@
           relatedConsumptionId: record.id
         });
 
-        if (companyShare > 0) {
-          var category = consumoCategoria();
-          var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
-          DB.insert("transactions", {
-            type: "despesa", description: "Consumo de insumo — " + product.name + (employee ? " (" + employee.name + ")" : ""),
-            amount: companyShare, date: date,
-            categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-            paymentMethod: "Uso Interno", status: "pago", employeeId: opts.employeeId || null,
-            appointmentId: opts.appointmentId || null, reconciled: false
-          });
-        }
+        // Não gera mais um lançamento de despesa aqui — ver o comentário no
+        // topo do arquivo (correção de 24/09/2026). companyShare continua
+        // calculado e salvo em productConsumptions (linha acima) para
+        // referência de custo por atendimento; a despesa real do produto
+        // já foi contabilizada na nota de compra.
       });
 
       DB.log("Estoque", "Registrou consumo de " + quantity + unitLabelOf(product) + " de " + product.name +
