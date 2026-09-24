@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var state = { monthsCount: 6, cc: "", mode: "preset", customStart: "", customEnd: "" };
+  var state = { monthsCount: 6, cc: "", mode: "preset", customStart: "", customEnd: "", showEmptyMonths: false };
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -45,7 +45,17 @@
       render();
     });
     ccSel.addEventListener("change", function (e) { state.cc = e.target.value; render(); });
+    // Otimização da tabela DRE Gerencial (24/09/2026, a pedido do usuário):
+    // por padrão os meses sem nenhum lançamento (comuns no início de um
+    // período longo, antes do salão começar a registrar movimento) ficam
+    // ocultos na tabela para não empurrar os meses com dado para fora da
+    // área visível — este checkbox permite reexibi-los.
+    Utils.qs("#d-show-empty").addEventListener("change", function (e) {
+      state.showEmptyMonths = e.target.checked;
+      render();
+    });
     Utils.qs("#btn-export-dre").addEventListener("click", exportCSV);
+    Utils.qs("#btn-export-dre-pdf").addEventListener("click", generateDrePdf);
     render();
   }
 
@@ -83,28 +93,55 @@
     return { months: months, txns: txns };
   }
 
-  function render() {
-    var costCenters = DB.all("costCenters");
-    var categories = DB.all("categories");
-    var d = getData();
-    var months = d.months, txns = d.txns;
-
+  // Fonte única dos números do DRE (totais por categoria, por mês e do
+  // período) — usada tanto pela tela (render()) quanto pelo PDF
+  // (buildDrePdf()), para garantir que o PDF sempre bata com o que está
+  // sendo exibido, sem nenhum cálculo paralelo.
+  function computeDreDataset(months, txns, categories) {
     var receitaTotal = 0, despesaTotal = 0;
     var receitaByMonth = {}, despesaByMonth = {};
     months.forEach(function (m) { receitaByMonth[m] = 0; despesaByMonth[m] = 0; });
     txns.forEach(function (t) {
       var m = Utils.monthKey(t.date);
-      if (t.type === "receita") { receitaTotal += t.amount; receitaByMonth[m] += t.amount; }
-      else { despesaTotal += t.amount; despesaByMonth[m] += t.amount; }
+      if (t.type === "receita") { receitaTotal += t.amount; if (receitaByMonth[m] !== undefined) receitaByMonth[m] += t.amount; }
+      else { despesaTotal += t.amount; if (despesaByMonth[m] !== undefined) despesaByMonth[m] += t.amount; }
     });
     var resultado = receitaTotal - despesaTotal;
     var margem = receitaTotal > 0 ? (resultado / receitaTotal) * 100 : 0;
 
+    function catMonthTotal(catId, m) {
+      return sum(txns.filter(function (t) { return t.categoryId === catId && Utils.monthKey(t.date) === m; }));
+    }
+    function buildCatRows(list) {
+      return list.map(function (c) {
+        var monthTotals = {}, total = 0;
+        months.forEach(function (m) { var v = catMonthTotal(c.id, m); monthTotals[m] = v; total += v; });
+        return { cat: c, total: total, monthTotals: monthTotals };
+      }).filter(function (r) { return r.total > 0; });
+    }
+
+    return {
+      months: months,
+      receitaCats: buildCatRows(categories.filter(function (c) { return c.type === "receita"; })),
+      despesaCats: buildCatRows(categories.filter(function (c) { return c.type === "despesa"; })),
+      receitaByMonth: receitaByMonth, despesaByMonth: despesaByMonth,
+      receitaTotal: receitaTotal, despesaTotal: despesaTotal,
+      resultado: resultado, margem: margem
+    };
+  }
+
+  function render() {
+    var costCenters = DB.all("costCenters");
+    var categories = DB.all("categories");
+    var d = getData();
+    var months = d.months, txns = d.txns;
+    var dataset = computeDreDataset(months, txns, categories);
+
     document.getElementById("dre-summary").innerHTML = [
-      kpi("Receita do Período", Utils.fmtMoney(receitaTotal), "fa-arrow-trend-up", "#1baf7a", "#e2f5ec"),
-      kpi("Despesa do Período", Utils.fmtMoney(despesaTotal), "fa-arrow-trend-down", "#c23b3b", "#fbe6e6"),
-      kpi("Resultado", Utils.fmtMoney(resultado), "fa-scale-balanced", resultado >= 0 ? "#1baf7a" : "#c23b3b", resultado >= 0 ? "#e2f5ec" : "#fbe6e6"),
-      kpi("Margem", margem.toFixed(1) + "%", "fa-percent", "#6d5efc", "#ece9ff")
+      kpi("Receita do Período", Utils.fmtMoney(dataset.receitaTotal), "fa-arrow-trend-up", "#1baf7a", "#e2f5ec"),
+      kpi("Despesa do Período", Utils.fmtMoney(dataset.despesaTotal), "fa-arrow-trend-down", "#c23b3b", "#fbe6e6"),
+      kpi("Resultado", Utils.fmtMoney(dataset.resultado), "fa-scale-balanced", dataset.resultado >= 0 ? "#1baf7a" : "#c23b3b", dataset.resultado >= 0 ? "#e2f5ec" : "#fbe6e6"),
+      kpi("Margem", dataset.margem.toFixed(1) + "%", "fa-percent", "#6d5efc", "#ece9ff")
     ].join("");
 
     // trend chart
@@ -112,9 +149,9 @@
       container: document.getElementById("chart-dre-trend"),
       categories: months.map(function (m) { return Utils.monthLabel(m + "-01"); }),
       series: [
-        { name: "Receita", color: Charts.palette[2], data: months.map(function (m) { return round2(receitaByMonth[m]); }) },
-        { name: "Despesa", color: Charts.palette[7], data: months.map(function (m) { return round2(despesaByMonth[m]); }) },
-        { name: "Saldo", color: Charts.palette[0], data: months.map(function (m) { return round2(receitaByMonth[m] - despesaByMonth[m]); }) }
+        { name: "Receita", color: Charts.palette[2], data: months.map(function (m) { return round2(dataset.receitaByMonth[m]); }) },
+        { name: "Despesa", color: Charts.palette[7], data: months.map(function (m) { return round2(dataset.despesaByMonth[m]); }) },
+        { name: "Saldo", color: Charts.palette[0], data: months.map(function (m) { return round2(dataset.receitaByMonth[m] - dataset.despesaByMonth[m]); }) }
       ],
       height: 280,
       valueFormatter: function (v) { return Utils.fmtMoney(v); }
@@ -144,42 +181,48 @@
         '</div>';
     }).join("") : '<div class="empty-state"><div class="es-icon"><i class="fa-regular fa-chart-bar"></i></div><h4>Sem dados no período</h4></div>';
 
-    // DRE table
-    var receitaCats = categories.filter(function (c) { return c.type === "receita"; });
-    var despesaCats = categories.filter(function (c) { return c.type === "despesa"; });
+    // DRE table — meses sem nenhum lançamento (nem receita, nem despesa, em
+    // nenhuma categoria) ficam ocultos por padrão para não empurrar os
+    // meses com dado para fora da área visível; "Mostrar meses sem
+    // movimento" reexibe todos. Se TODO o período estiver vazio, mostra
+    // todos os meses mesmo assim (não faz sentido esconder tudo).
+    var emptyMonths = months.filter(function (m) { return !dataset.receitaByMonth[m] && !dataset.despesaByMonth[m]; });
+    var tableMonths = (state.showEmptyMonths || emptyMonths.length === months.length) ? months
+      : months.filter(function (m) { return dataset.receitaByMonth[m] || dataset.despesaByMonth[m]; });
+    // Coluna Total fica redundante (duplica o único mês exibido) e é
+    // ocultada quando a tabela se resume a um único mês.
+    var showTotalCol = tableMonths.length !== 1;
 
-    function catMonthTotal(catId, m, type) {
-      return sum(txns.filter(function (t) { return t.categoryId === catId && Utils.monthKey(t.date) === m; }));
+    var toggleEl = Utils.qs("#d-show-empty");
+    var hiddenCountEl = Utils.qs("#d-hidden-count");
+    if (toggleEl) toggleEl.disabled = emptyMonths.length === 0;
+    if (hiddenCountEl) {
+      hiddenCountEl.textContent = emptyMonths.length
+        ? " (" + emptyMonths.length + (emptyMonths.length === 1 ? " mês oculto" : " meses ocultos") + ")"
+        : "";
     }
-    function catTotal(catId) { return sum(txns.filter(function (t) { return t.categoryId === catId; })); }
 
-    var head = '<thead><tr><th style="min-width:220px;">Categoria</th>' +
-      months.map(function (m) { return '<th class="text-right">' + Utils.monthLabel(m + "-01") + '</th>'; }).join("") +
-      '<th class="text-right">Total</th></tr></thead>';
+    var head = '<thead><tr><th class="col-sticky-start" style="min-width:220px;">Categoria</th>' +
+      tableMonths.map(function (m) { return '<th class="text-right">' + Utils.monthLabel(m + "-01") + '</th>'; }).join("") +
+      (showTotalCol ? '<th class="text-right col-sticky-end">Total</th>' : '') + '</tr></thead>';
 
     var body = "<tbody>";
     body += sectionRow("RECEITAS");
-    receitaCats.forEach(function (c) {
-      var total = catTotal(c.id);
-      if (total <= 0) return;
-      body += catRow(c.name, c, months, catMonthTotal, false);
-    });
-    body += totalRow("Total de Receitas", months, function (m) { return receitaByMonth[m]; }, receitaTotal, false);
+    dataset.receitaCats.forEach(function (r) { body += catRow(r, tableMonths, showTotalCol); });
+    body += totalRow("Total de Receitas", tableMonths, function (m) { return dataset.receitaByMonth[m]; }, dataset.receitaTotal, showTotalCol);
 
     body += sectionRow("DESPESAS");
-    despesaCats.forEach(function (c) {
-      var total = catTotal(c.id);
-      if (total <= 0) return;
-      body += catRow(c.name, c, months, catMonthTotal, true);
-    });
-    body += totalRow("Total de Despesas", months, function (m) { return despesaByMonth[m]; }, despesaTotal, true);
+    dataset.despesaCats.forEach(function (r) { body += catRow(r, tableMonths, showTotalCol); });
+    body += totalRow("Total de Despesas", tableMonths, function (m) { return dataset.despesaByMonth[m]; }, dataset.despesaTotal, showTotalCol);
 
-    body += '<tr style="background:var(--gray-100);font-weight:800;"><td>RESULTADO DO PERÍODO</td>' +
-      months.map(function (m) {
-        var v = receitaByMonth[m] - despesaByMonth[m];
+    var resultBg = "var(--gray-100)";
+    body += '<tr style="background:' + resultBg + ';font-weight:800;"><td class="col-sticky-start" style="background:' + resultBg + ';">RESULTADO DO PERÍODO</td>' +
+      tableMonths.map(function (m) {
+        var v = dataset.receitaByMonth[m] - dataset.despesaByMonth[m];
         return '<td class="text-right text-num ' + (v >= 0 ? "text-success" : "text-danger") + '">' + Utils.fmtMoney(v) + '</td>';
       }).join("") +
-      '<td class="text-right text-num ' + (resultado >= 0 ? "text-success" : "text-danger") + '">' + Utils.fmtMoney(resultado) + '</td></tr>';
+      (showTotalCol ? '<td class="text-right text-num col-sticky-end ' + (dataset.resultado >= 0 ? "text-success" : "text-danger") + '" style="background:' + resultBg + ';">' + Utils.fmtMoney(dataset.resultado) + '</td>' : '') +
+      '</tr>';
     body += "</tbody>";
 
     document.getElementById("tbl-dre").innerHTML = head + body;
@@ -188,19 +231,18 @@
   function sectionRow(label) {
     return '<tr style="background:var(--gray-50);"><td colspan="99" style="font-weight:800;font-size:11px;letter-spacing:.04em;color:var(--gray-600);">' + label + '</td></tr>';
   }
-  function catRow(name, cat, months, catMonthTotal) {
-    var total = 0;
-    var cells = months.map(function (m) {
-      var v = catMonthTotal(cat.id, m);
-      total += v;
+  function catRow(row, tableMonths, showTotalCol) {
+    var cells = tableMonths.map(function (m) {
+      var v = row.monthTotals[m];
       return '<td class="text-right text-num">' + (v ? Utils.fmtMoney(v) : '<span class="text-muted">-</span>') + '</td>';
     }).join("");
-    return '<tr><td style="padding-left:24px;">' + Utils.escapeHtml(name) + '</td>' + cells + '<td class="text-right text-num font-bold">' + Utils.fmtMoney(total) + '</td></tr>';
+    return '<tr><td class="col-sticky-start" style="padding-left:24px;">' + Utils.escapeHtml(row.cat.name) + '</td>' + cells +
+      (showTotalCol ? '<td class="text-right text-num font-bold col-sticky-end">' + Utils.fmtMoney(row.total) + '</td>' : '') + '</tr>';
   }
-  function totalRow(label, months, getter, total, isExpense) {
-    return '<tr style="border-top:1px solid var(--border-color);font-weight:700;"><td>' + label + '</td>' +
-      months.map(function (m) { return '<td class="text-right text-num">' + Utils.fmtMoney(getter(m)) + '</td>'; }).join("") +
-      '<td class="text-right text-num">' + Utils.fmtMoney(total) + '</td></tr>';
+  function totalRow(label, tableMonths, getter, total, showTotalCol) {
+    return '<tr style="border-top:1px solid var(--border-color);font-weight:700;"><td class="col-sticky-start">' + label + '</td>' +
+      tableMonths.map(function (m) { return '<td class="text-right text-num">' + Utils.fmtMoney(getter(m)) + '</td>'; }).join("") +
+      (showTotalCol ? '<td class="text-right text-num col-sticky-end">' + Utils.fmtMoney(total) + '</td>' : '') + '</tr>';
   }
 
   function kpi(label, value, icon, color, bg) {
@@ -209,6 +251,24 @@
   }
   function sum(arr) { return arr.reduce(function (s, t) { return s + t.amount; }, 0); }
   function round2(n) { return Math.round(n * 100) / 100; }
+  function capFirst(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+  function currentUserDisplayName() {
+    var u = window.CurrentUser && window.CurrentUser.get && window.CurrentUser.get();
+    return u ? ((u.firstName || "") + " " + (u.lastName || "")).trim() || "-" : "-";
+  }
+
+  function ccLabel() {
+    if (!state.cc) return "Todos os Centros de Custo";
+    var cc = DB.get("costCenters", state.cc);
+    return cc ? cc.name : "Todos os Centros de Custo";
+  }
+
+  function periodLabel(months) {
+    if (!months.length) return "-";
+    if (months.length === 1) return capFirst(Utils.monthLabel(months[0] + "-01"));
+    return capFirst(Utils.monthLabel(months[0] + "-01")) + " a " + capFirst(Utils.monthLabel(months[months.length - 1] + "-01"));
+  }
 
   function exportCSV() {
     var d = getData();
@@ -224,5 +284,253 @@
     var csv = rows.map(function (r) { return r.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(";"); }).join("\n");
     Utils.downloadFile("dre_" + Utils.todayISO() + ".csv", "﻿" + csv, "text/csv;charset=utf-8");
     Toast.show("DRE exportado em CSV", "success");
+  }
+
+  // ================================================================
+  // "Baixar PDF" (24/09/2026, a pedido do usuário) — exporta o DRE Gerencial
+  // completo do período filtrado em um PDF formal, com papel timbrado
+  // (logo Guitart & Co.), pensado para apresentação aos donos/diretores.
+  // Reaproveita computeDreDataset() — os mesmos números da tela — e, ao
+  // contrário da tabela em tela, sempre traz TODOS os meses do período
+  // (não aplica a ocultação de meses sem movimento, que é só uma
+  // conveniência de leitura na tela) para manter o documento como um
+  // registro completo do período selecionado.
+  // ================================================================
+
+  var _logoDataUrlCache = null;
+  function loadLogoDataUrl(callback) {
+    if (_logoDataUrlCache) { callback(_logoDataUrlCache); return; }
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        canvas.getContext("2d").drawImage(img, 0, 0);
+        _logoDataUrlCache = canvas.toDataURL("image/png");
+      } catch (e) { _logoDataUrlCache = null; }
+      callback(_logoDataUrlCache);
+    };
+    img.onerror = function () { callback(null); };
+    img.src = "assets/img/logo-guitart.png";
+  }
+
+  function generateDrePdf() {
+    var jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
+    if (!jsPDFCtor) { Toast.show("Não foi possível carregar a biblioteca de PDF — verifique sua conexão e tente novamente", "danger"); return; }
+    var d = getData();
+    if (!d.txns.length) { Toast.show("Nenhum lançamento no período selecionado para gerar o PDF", "info"); return; }
+    var categories = DB.all("categories");
+    var dataset = computeDreDataset(d.months, d.txns, categories);
+    loadLogoDataUrl(function (logoDataUrl) { buildDrePdf(d.months, dataset, logoDataUrl); });
+  }
+
+  function buildDrePdf(months, dataset, logoDataUrl) {
+    var jsPDFCtor = window.jspdf.jsPDF;
+    var showTotalCol = months.length !== 1;
+    var doc = new jsPDFCtor({ unit: "pt", format: "a4", orientation: "landscape" });
+    var pageWidth = doc.internal.pageSize.getWidth();
+    var pageHeight = doc.internal.pageSize.getHeight();
+    var marginX = 40, tableEnd = pageWidth - marginX;
+
+    var catColW = 172;
+    var totalColW = showTotalCol ? 68 : 0;
+    var monthsAreaW = (tableEnd - marginX) - catColW - totalColW;
+    var monthColW = Math.max(30, monthsAreaW / months.length);
+    var fontSizeTable = monthColW < 38 ? 7 : 8.3;
+
+    var cols = [];
+    var curX = marginX + catColW;
+    months.forEach(function (m) { cols.push({ key: m, x: curX, w: monthColW }); curX += monthColW; });
+    var totalColX = curX;
+
+    function colorGreen() { return [27, 175, 122]; }
+    function colorRed() { return [194, 59, 59]; }
+    function colorGray() { return [110, 110, 110]; }
+    function colorInk() { return [26, 26, 30]; }
+
+    // ---- Letterhead (papel timbrado) — só na primeira página ----
+    function drawLetterhead() {
+      var headTop = 30;
+      var textX = marginX;
+      if (logoDataUrl) {
+        try { doc.addImage(logoDataUrl, "PNG", marginX, headTop - 4, 36, 36); textX = marginX + 48; } catch (e) {}
+      }
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.text("GUITART & CO.", textX, headTop + 12);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(colorGray()[0], colorGray()[1], colorGray()[2]);
+      doc.text("Documento de uso interno — Diretoria", textX, headTop + 24);
+
+      doc.setDrawColor(200, 200, 200);
+      doc.setLineWidth(1);
+      doc.line(marginX, headTop + 42, tableEnd, headTop + 42);
+
+      var y = headTop + 66;
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("Demonstrativo de Resultado (DRE)", marginX, y);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.setTextColor(colorGray()[0], colorGray()[1], colorGray()[2]);
+      doc.text("Período: " + periodLabel(months), marginX, y + 16);
+      doc.text("Centro de Custo: " + ccLabel(), marginX, y + 29);
+      doc.text("Gerado em " + Utils.fmtDateTime(DB.nowISO()) + " por " + currentUserDisplayName(), tableEnd, y + 16, { align: "right" });
+      doc.text("Confidencial — não distribuir fora da diretoria", tableEnd, y + 29, { align: "right" });
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+
+      return drawKpiRow(y + 48);
+    }
+
+    function drawKpiRow(y) {
+      var kpis = [
+        { label: "RECEITA DO PERÍODO", value: Utils.fmtMoney(dataset.receitaTotal), color: colorGreen() },
+        { label: "DESPESA DO PERÍODO", value: Utils.fmtMoney(dataset.despesaTotal), color: colorRed() },
+        { label: "RESULTADO", value: Utils.fmtMoney(dataset.resultado), color: dataset.resultado >= 0 ? colorGreen() : colorRed() },
+        { label: "MARGEM", value: dataset.margem.toFixed(1) + "%", color: colorInk() }
+      ];
+      var boxW = (tableEnd - marginX - 3 * 10) / 4;
+      var boxH = 42;
+      kpis.forEach(function (k, idx) {
+        var x = marginX + idx * (boxW + 10);
+        doc.setFillColor(247, 247, 248);
+        doc.roundedRect(x, y, boxW, boxH, 3, 3, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(7.5);
+        doc.setTextColor(colorGray()[0], colorGray()[1], colorGray()[2]);
+        doc.text(k.label, x + 10, y + 16);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13.5);
+        doc.setTextColor(k.color[0], k.color[1], k.color[2]);
+        doc.text(k.value, x + 10, y + 33);
+      });
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      return y + boxH + 22;
+    }
+
+    function drawTableHeader(y) {
+      doc.setFillColor(247, 247, 248);
+      doc.rect(marginX, y - 12, tableEnd - marginX, 18, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(colorGray()[0], colorGray()[1], colorGray()[2]);
+      doc.text("CATEGORIA", marginX + 4, y);
+      cols.forEach(function (c) { doc.text(Utils.monthLabel(c.key + "-01").toUpperCase(), c.x + c.w - 4, y, { align: "right" }); });
+      if (showTotalCol) doc.text("TOTAL", tableEnd - 4, y, { align: "right" });
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      y += 10;
+      doc.setDrawColor(190, 190, 190);
+      doc.setLineWidth(0.6);
+      doc.line(marginX, y, tableEnd, y);
+      return y + 14;
+    }
+
+    function ensureSpace(y, needed) {
+      if (y + needed <= pageHeight - 46) return y;
+      doc.addPage();
+      var ny = drawTableHeader(46);
+      return ny;
+    }
+
+    function drawSectionBand(y, label) {
+      y = ensureSpace(y, 20);
+      doc.setFillColor(238, 238, 240);
+      doc.rect(marginX, y - 10, tableEnd - marginX, 16, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(colorGray()[0], colorGray()[1], colorGray()[2]);
+      doc.text(label, marginX + 4, y + 1);
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      return y + 16;
+    }
+
+    function drawCatRow(y, row) {
+      y = ensureSpace(y, 14);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(fontSizeTable);
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      doc.text(row.cat.name, marginX + 12, y, { maxWidth: catColW - 16 });
+      cols.forEach(function (c) {
+        var v = row.monthTotals[c.key];
+        doc.text(v ? Utils.fmtMoney(v) : "-", c.x + c.w - 4, y, { align: "right" });
+      });
+      if (showTotalCol) {
+        doc.setFont("helvetica", "bold");
+        doc.text(Utils.fmtMoney(row.total), tableEnd - 4, y, { align: "right" });
+      }
+      return y + 13;
+    }
+
+    function drawTotalRow(y, label, getter, total) {
+      y = ensureSpace(y, 18);
+      doc.setDrawColor(210, 210, 210);
+      doc.setLineWidth(0.5);
+      doc.line(marginX, y - 9, tableEnd, y - 9);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(fontSizeTable);
+      doc.text(label, marginX + 4, y);
+      cols.forEach(function (c) { doc.text(Utils.fmtMoney(getter(c.key)), c.x + c.w - 4, y, { align: "right" }); });
+      if (showTotalCol) doc.text(Utils.fmtMoney(total), tableEnd - 4, y, { align: "right" });
+      return y + 15;
+    }
+
+    function drawResultRow(y) {
+      y = ensureSpace(y, 24);
+      var color = dataset.resultado >= 0 ? colorGreen() : colorRed();
+      doc.setFillColor(245, 245, 246);
+      doc.rect(marginX, y - 11, tableEnd - marginX, 20, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(fontSizeTable + 0.7);
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      doc.text("RESULTADO DO PERÍODO", marginX + 4, y + 2);
+      cols.forEach(function (c) {
+        var v = dataset.receitaByMonth[c.key] - dataset.despesaByMonth[c.key];
+        doc.setTextColor(v >= 0 ? colorGreen()[0] : colorRed()[0], v >= 0 ? colorGreen()[1] : colorRed()[1], v >= 0 ? colorGreen()[2] : colorRed()[2]);
+        doc.text(Utils.fmtMoney(v), c.x + c.w - 4, y + 2, { align: "right" });
+      });
+      if (showTotalCol) {
+        doc.setTextColor(color[0], color[1], color[2]);
+        doc.text(Utils.fmtMoney(dataset.resultado), tableEnd - 4, y + 2, { align: "right" });
+      }
+      doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
+      return y + 20;
+    }
+
+    var y = drawLetterhead();
+    y = drawTableHeader(y);
+    y = drawSectionBand(y, "RECEITAS");
+    dataset.receitaCats.forEach(function (r) { y = drawCatRow(y, r); });
+    y = drawTotalRow(y, "Total de Receitas", function (m) { return dataset.receitaByMonth[m]; }, dataset.receitaTotal);
+
+    y = drawSectionBand(y, "DESPESAS");
+    dataset.despesaCats.forEach(function (r) { y = drawCatRow(y, r); });
+    y = drawTotalRow(y, "Total de Despesas", function (m) { return dataset.despesaByMonth[m]; }, dataset.despesaTotal);
+
+    y += 6;
+    drawResultRow(y);
+
+    // Footer (rodapé) — página X de Y — escrito por último, quando o total
+    // de páginas já é conhecido.
+    var totalPages = doc.internal.getNumberOfPages();
+    for (var p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setDrawColor(220, 220, 220);
+      doc.setLineWidth(0.5);
+      doc.line(marginX, pageHeight - 30, tableEnd, pageHeight - 30);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(colorGray()[0], colorGray()[1], colorGray()[2]);
+      doc.text("Guitart & Co. — Demonstrativo de Resultado (DRE)", marginX, pageHeight - 18);
+      doc.text("Página " + p + " de " + totalPages, tableEnd, pageHeight - 18, { align: "right" });
+    }
+
+    var fileSuffix = months.length === 1 ? months[0] : months[0] + "_a_" + months[months.length - 1];
+    doc.save("dre_" + fileSuffix + ".pdf");
+    DB.log("DRE", "Gerou PDF do DRE (" + periodLabel(months) + ", " + ccLabel() + ")");
+    Toast.show("PDF do DRE gerado", "success");
   }
 })();
