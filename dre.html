@@ -24,6 +24,7 @@
 </script>
 <title>Fluxo de Caixa / DRE · Guitart & Co.</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <link rel="icon" href="assets/img/logo-guitart.png">
 <link rel="stylesheet" href="assets/css/style.css">
 <script>window.PAGE_META = { title: "Fluxo de Caixa / DRE", subtitle: "Relatório gerencial consolidado por período e centro de custo" };</script>
@@ -61,7 +62,12 @@
           <div class="form-field" id="d-start-field" style="display:none;"><label>De</label><input type="date" id="d-start"></div>
           <div class="form-field" id="d-end-field" style="display:none;"><label>Até</label><input type="date" id="d-end"></div>
           <div class="form-field"><label>Centro de Custo</label><select id="d-cc"><option value="">Todos</option></select></div>
+          <div class="form-field checkbox-wrap" style="align-self:flex-end;">
+            <input type="checkbox" id="d-show-empty">
+            <label for="d-show-empty" style="font-weight:600;">Mostrar meses sem movimento<span id="d-hidden-count" class="text-muted"></span></label>
+          </div>
           <button class="btn btn-secondary btn-sm" id="btn-export-dre" style="margin-left:auto;"><i class="fa-solid fa-file-arrow-down"></i> Exportar CSV</button>
+          <button class="btn btn-secondary btn-sm" id="btn-export-dre-pdf"><i class="fa-solid fa-file-pdf"></i> Baixar PDF</button>
         </div>
 
         <div class="kpi-grid" id="dre-summary" style="margin-bottom:16px;"></div>
