@@ -556,6 +556,28 @@ table.data-table tbody td {
 }
 table.data-table tbody tr:hover { background: var(--gray-50); }
 table.data-table tbody tr:last-child td { border-bottom: none; }
+
+/* Colunas fixas (sticky) ao rolar uma tabela na horizontal — usado no DRE
+   Gerencial para manter a coluna de Categoria e a de Total sempre visíveis
+   mesmo com muitos meses no período (24/09/2026). Genérico: qualquer tabela
+   pode adotar essas classes na 1ª/última coluna. */
+.data-table .col-sticky-start,
+.data-table .col-sticky-end {
+  position: sticky;
+  background: var(--bg-card);
+  z-index: 1;
+}
+.data-table .col-sticky-start { left: 0; box-shadow: 1px 0 0 var(--border-color); }
+.data-table .col-sticky-end { right: 0; box-shadow: -1px 0 0 var(--border-color); }
+.data-table thead .col-sticky-start,
+.data-table thead .col-sticky-end {
+  z-index: 3;
+  background: var(--gray-50);
+}
+.data-table tbody tr:hover .col-sticky-start,
+.data-table tbody tr:hover .col-sticky-end {
+  background: var(--gray-50);
+}
 .text-right { text-align: right; }
 .text-center { text-align: center; }
 .text-num { font-variant-numeric: tabular-nums; }
