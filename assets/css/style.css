@@ -560,23 +560,37 @@ table.data-table tbody tr:last-child td { border-bottom: none; }
 /* Colunas fixas (sticky) ao rolar uma tabela na horizontal — usado no DRE
    Gerencial para manter a coluna de Categoria e a de Total sempre visíveis
    mesmo com muitos meses no período (24/09/2026). Genérico: qualquer tabela
-   pode adotar essas classes na 1ª/última coluna. */
+   pode adotar essas classes na 1ª/última coluna.
+   col-sticky-end-2 (24/09/2026) é uma 2ª coluna fixa à direita, encostada
+   antes de col-sticky-end — usada no DRE para manter o Total fixo mesmo
+   com a nova coluna de Ações ("...") também fixa à direita dele. */
 .data-table .col-sticky-start,
-.data-table .col-sticky-end {
+.data-table .col-sticky-end,
+.data-table .col-sticky-end-2 {
   position: sticky;
   background: var(--bg-card);
   z-index: 1;
 }
 .data-table .col-sticky-start { left: 0; box-shadow: 1px 0 0 var(--border-color); }
 .data-table .col-sticky-end { right: 0; box-shadow: -1px 0 0 var(--border-color); }
+.data-table .col-sticky-end-2 { right: 52px; }
 .data-table thead .col-sticky-start,
-.data-table thead .col-sticky-end {
+.data-table thead .col-sticky-end,
+.data-table thead .col-sticky-end-2 {
   z-index: 3;
   background: var(--gray-50);
 }
 .data-table tbody tr:hover .col-sticky-start,
-.data-table tbody tr:hover .col-sticky-end {
+.data-table tbody tr:hover .col-sticky-end,
+.data-table tbody tr:hover .col-sticky-end-2 {
   background: var(--gray-50);
+}
+/* Coluna de Ações ("...") por categoria no DRE Gerencial (24/09/2026). */
+.data-table .dre-col-actions {
+  width: 52px;
+  min-width: 52px;
+  padding: 6px 8px;
+  text-align: center;
 }
 .text-right { text-align: right; }
 .text-center { text-align: center; }
@@ -771,6 +785,16 @@ body.modal-open-lock { overflow: hidden; }
   display: flex; align-items: center; justify-content: center; font-size: 13px;
 }
 .recon-item .ri-kebab-btn:hover { background: var(--gray-100); color: var(--gray-800); }
+
+/* Botão genérico de "..." (mais opções) — igual ao .ri-kebab-btn acima, mas
+   não preso ao layout do .recon-item, para poder ser usado em qualquer
+   lugar (ex.: célula de ação por categoria na tabela DRE, 24/09/2026). */
+.kebab-btn {
+  width: 26px; height: 26px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);
+  background: var(--bg-card); color: var(--gray-600); cursor: pointer; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+}
+.kebab-btn:hover { background: var(--gray-100); color: var(--gray-800); }
 
 /* ActionMenu — menu flutuante de "mais opções" (3 pontinhos), ver
    global.ActionMenu em utils.js. Independente do Modal/Drawer, para poder
