@@ -495,17 +495,30 @@
     }
 
     function drawRow(y, t) {
-      y = ensureSpace(y, 14);
       var cc = costCenters.find(function (c) { return c.id === t.costCenterId; });
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8.3);
+      // Quebra cada coluna que pode ter texto longo (Descrição/Centro de Custo/
+      // Pagamento) em linhas de verdade ANTES de desenhar, para saber quantas
+      // linhas a linha da tabela vai realmente ocupar — sem isso, uma descrição
+      // longa (ex.: "Mercado (itens capuccino, itens café, baygon, desinfetante,
+      // detergente)") quebrava em 2 linhas na hora de desenhar (efeito automático
+      // do maxWidth), mas a próxima linha da tabela avançava só a altura de 1
+      // linha, cobrindo a 2ª linha da descrição com o início do próximo lançamento.
+      var descLines = doc.splitTextToSize(t.description || "-", colDesc.w - 8);
+      var ccLines = doc.splitTextToSize(cc ? cc.name : "-", colCC.w - 8);
+      var pagLines = doc.splitTextToSize(t.paymentMethod || "-", colPag.w - 8);
+      var lineCount = Math.max(descLines.length, ccLines.length, pagLines.length, 1);
+      var lineHeight = 9.5;
+      var rowHeight = 13 + (lineCount - 1) * lineHeight;
+      y = ensureSpace(y, rowHeight);
       doc.setTextColor(colorInk()[0], colorInk()[1], colorInk()[2]);
       doc.text(Utils.fmtDate(t.date), colData.x + 4, y);
-      doc.text(t.description || "-", colDesc.x + 4, y, { maxWidth: colDesc.w - 8 });
-      doc.text(cc ? cc.name : "-", colCC.x + 4, y, { maxWidth: colCC.w - 8 });
-      doc.text(t.paymentMethod || "-", colPag.x + 4, y, { maxWidth: colPag.w - 8 });
+      doc.text(descLines, colDesc.x + 4, y);
+      doc.text(ccLines, colCC.x + 4, y);
+      doc.text(pagLines, colPag.x + 4, y);
       doc.text(Utils.fmtMoney(t.amount), tableEnd - 4, y, { align: "right" });
-      return y + 13;
+      return y + rowHeight;
     }
 
     var y = drawLetterhead();
