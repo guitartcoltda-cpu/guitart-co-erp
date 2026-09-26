@@ -858,6 +858,65 @@
     _escHandler: function (e) { if (e.key === "Escape") ActionMenu.close(); }
   };
 
+  // ---- Indicador de rolagem horizontal em tabelas (26/09/2026) ----
+  // A pedido do usuário, após relato de telas "encavaladas/estranhas" no
+  // celular: uma varredura confirmou que nenhuma página tinha overflow de
+  // página quebrado, mas tabelas com muitas colunas (Comissionamento,
+  // Clientes, Funcionários, Estoque etc.) já dependiam da rolagem horizontal
+  // do .table-wrap (ver comentário em style.css) sem nenhuma pista visual —
+  // no celular isso parecia só um valor cortado, não uma tabela rolável.
+  // Este helper roda em toda página (utils.js é carregado em todas), acha
+  // todo .table-wrap presente no DOM, e liga/desliga a sombra de "tem mais
+  // pra rolar" (classes .has-hscroll/.scrolled-end, CSS em style.css)
+  // conforme o conteúdo real de cada tabela — não mexe em nenhum dado,
+  // coluna ou estrutura, só nessas duas classes puramente visuais.
+  // Como quase toda tabela do sistema é montada dinamicamente por
+  // JavaScript (render() de cada tela, depois de DB.ready) — não existe no
+  // HTML no momento do DOMContentLoaded — um MutationObserver no <body>
+  // reescaneia (com debounce) sempre que o DOM muda, então funciona
+  // igual independente de quando/como cada tela desenha sua tabela.
+  var TABLE_HSCROLL_ATTR = "data-hscroll-bound";
+
+  function updateTableScrollHint(wrap) {
+    var hasOverflow = wrap.scrollWidth > wrap.clientWidth + 2;
+    wrap.classList.toggle("has-hscroll", hasOverflow);
+    if (!hasOverflow) { wrap.classList.remove("scrolled-end"); return; }
+    var atEnd = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
+    wrap.classList.toggle("scrolled-end", atEnd);
+  }
+
+  function bindTableScrollHint(wrap) {
+    if (!wrap.hasAttribute(TABLE_HSCROLL_ATTR)) {
+      wrap.setAttribute(TABLE_HSCROLL_ATTR, "1");
+      wrap.addEventListener("scroll", function () { updateTableScrollHint(wrap); }, { passive: true });
+    }
+    updateTableScrollHint(wrap);
+  }
+
+  function scanTableScrollHints() {
+    var wraps = document.querySelectorAll(".table-wrap");
+    for (var i = 0; i < wraps.length; i++) bindTableScrollHint(wraps[i]);
+  }
+
+  if (typeof document !== "undefined") {
+    var tableHintScanTimer = null;
+    var scheduleTableHintScan = function () {
+      if (tableHintScanTimer) return;
+      tableHintScanTimer = setTimeout(function () {
+        tableHintScanTimer = null;
+        scanTableScrollHints();
+      }, 150);
+    };
+
+    document.addEventListener("DOMContentLoaded", function () {
+      scanTableScrollHints();
+      if (typeof MutationObserver !== "undefined" && document.body) {
+        new MutationObserver(scheduleTableHintScan).observe(document.body, { childList: true, subtree: true });
+      }
+      window.addEventListener("resize", scheduleTableHintScan);
+    });
+  }
+
   global.Utils = Utils;
   global.Toast = Toast;
   global.Modal = Modal;
