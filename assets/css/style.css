@@ -72,6 +72,9 @@
      de botão primário, cartão de KPI clicável) para reforçar a sensação
      tecnológica sem exagerar no sistema inteiro */
   --shadow-glow: 0 0 0 1px rgba(14, 184, 217, .35), 0 6px 20px rgba(14, 184, 217, .22);
+  /* Sombra de "tem mais coluna pra ver" nas bordas de tabelas que rolam na
+     horizontal (26/09/2026, ver .table-wrap.has-hscroll abaixo) */
+  --table-scroll-shadow: rgba(15, 23, 42, .18);
 
   --sidebar-w: 248px;
   --topbar-h: 64px;
@@ -124,6 +127,7 @@
   --shadow-md: 0 4px 18px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 14px 36px rgba(0, 0, 0, 0.6);
   --shadow-glow: 0 0 0 1px rgba(14, 184, 217, .45), 0 8px 26px rgba(14, 184, 217, .32);
+  --table-scroll-shadow: rgba(0, 0, 0, .55);
 }
 
 * { box-sizing: border-box; }
@@ -530,7 +534,30 @@ input:focus, select:focus, textarea:focus {
 .input-icon-wrap .ic { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--gray-400); font-size: 13px; }
 
 /* ---------------- Tables ---------------- */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; position: relative; }
+/* Indicador de rolagem horizontal (26/09/2026) — a pedido do usuário, que
+   notou telas no celular "encavaladas, estranhas". Investigação: nenhuma
+   página tinha overflow de página quebrado, mas várias tabelas com muitas
+   colunas (Comissionamento, Clientes, Funcionários, Estoque etc.) já eram
+   bem mais largas que a tela e dependiam só da rolagem horizontal do
+   .table-wrap (decisão de design já existente, ver comentário mais abaixo
+   sobre o breakpoint 640px) — sem nenhuma pista visual de que dava para
+   arrastar, o valor simplesmente parecia "cortado". As classes abaixo
+   (adicionadas/removidas via JS em utils.js, Utils.initTableScrollHints)
+   desenham uma sombra sutil na borda direita só quando a tabela realmente
+   tem mais conteúdo pra rolar, e a escondem assim que a pessoa já rolou até
+   o fim — não muda nenhuma coluna, dado ou estrutura da tabela. */
+.table-wrap.has-hscroll::after {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 28px;
+  background: linear-gradient(to right, transparent, var(--table-scroll-shadow));
+  opacity: .55;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.table-wrap.has-hscroll.scrolled-end::after { opacity: 0; }
 table.data-table { width: 100%; font-size: 13px; }
 table.data-table thead th {
   text-align: left;
