@@ -80,6 +80,26 @@
   // so a disallowed page redirects away before rendering any content (same
   // "convenience, not real security" spirit documented in LEIA-ME.md — a
   // user with DevTools open can always bypass this).
+  //
+  // 26/09/2026 — CORREÇÃO (relato: "preencho CPF/senha certos no celular,
+  // confirmo, e volta pra tela de login"): login.html valida CPF/senha
+  // certinho (DB.findOne encontra o usuário) e redireciona para a página
+  // pedida com um location.href — uma navegação de página inteira, não uma
+  // troca de tela via JavaScript. Isso descarta o cache em memória do
+  // db.js e reinicia bootstrapOnline() do zero NA PÁGINA SEGUINTE, que por
+  // sua vez pode aproveitar um espelho local (IndexedDB) "fresco" (< 20s,
+  // ver BOOT_CACHE_TTL_MS em db.js) em vez de buscar de novo no servidor —
+  // uma otimização para não repetir a mesma busca a cada troca de tela.
+  // Numa rede mais lenta/instável (comum em celular fora do wi-fi do
+  // salão), esse espelho local pode não ter sido gravado a tempo ainda, ou
+  // a nova busca de rede pode falhar — e o guard abaixo, ao não achar o
+  // usuário no cache LOCAL desta aba, concluía (errado) que a conta não
+  // existe/foi desativada, e derrubava a sessão que tinha acabado de logar
+  // certinho — um loop de volta para o login. Corrigido: antes de desistir,
+  // quando o usuário não é achado no cache local (não quando ele É achado
+  // mas está marcado inativo — aí o dado local já é confiável), confirma
+  // direto no servidor via DB.fetchFresh antes de decidir. Só desloga de
+  // verdade se nem o servidor confirmar a conta.
   if (!CurrentUser.isLoginPage()) {
     // Aguarda o cache do DB estar pronto (a primeira busca no Supabase)
     // antes de revalidar a sessão — evita reprovar por engano um usuário
@@ -90,12 +110,29 @@
     // tela depois de DB.ready, então nada aparece antes dessa checagem.
     (global.DB ? DB.ready : Promise.resolve()).then(function () {
       var session = CurrentUser.get();
-      var dbUser = (session && global.DB) ? DB.get("users", session.id) : null;
-      if (!session || !dbUser || !dbUser.active) {
-        CurrentUser.logout();
-        var here = location.pathname.split("/").pop() || "index.html";
-        location.replace("login.html?redirect=" + encodeURIComponent(here));
+      if (!session) { goLogin(); return; }
+
+      var dbUser = global.DB ? DB.get("users", session.id) : null;
+      if (dbUser) {
+        if (!dbUser.active) { goLogin(); return; }
+        proceed(dbUser);
+        return;
+      }
+
+      // Não achado no cache local desta aba — pode ser conta realmente
+      // inexistente/apagada, OU (o caso mais comum na prática) o cache
+      // local desta página simplesmente não sincronizou a tempo ainda.
+      // Confirma direto no servidor antes de derrubar a sessão.
+      if (global.DB && DB.hasRemote()) {
+        DB.fetchFresh("users", session.id).then(function (fresh) {
+          if (fresh && fresh.active) proceed(fresh);
+          else goLogin();
+        });
       } else {
+        goLogin();
+      }
+
+      function proceed(dbUser) {
         if (session.role !== dbUser.role || session.firstName !== dbUser.firstName || session.lastName !== dbUser.lastName) {
           // keep session display fields fresh if an admin edited this user
           session.role = dbUser.role; session.firstName = dbUser.firstName; session.lastName = dbUser.lastName;
@@ -114,6 +151,12 @@
             location.replace("login.html");
           }
         }
+      }
+
+      function goLogin() {
+        CurrentUser.logout();
+        var here = location.pathname.split("/").pop() || "index.html";
+        location.replace("login.html?redirect=" + encodeURIComponent(here));
       }
     });
   }
