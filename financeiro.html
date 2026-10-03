@@ -6,7 +6,17 @@
 <script>
   (function () {
     try {
-      if (!sessionStorage.getItem('salao_erp_session')) {
+      // 03/10/2026: restaura a sessão guardada por "Manter conectado" (localStorage) em aba nova
+      if (!sessionStorage.getItem('salao_erp_session') && !(function () {
+        try {
+          var p = JSON.parse(localStorage.getItem('salao_erp_session_persist') || 'null');
+          if (p && p.user && p.user.id && (Date.now() - (p.savedAt || 0)) < 15552000000) {
+            sessionStorage.setItem('salao_erp_session', JSON.stringify(p.user));
+            return true;
+          }
+        } catch (e) {}
+        return false;
+      })()) {
         var here = location.pathname.split('/').pop() || 'index.html';
         location.replace('login.html?redirect=' + encodeURIComponent(here));
       }
