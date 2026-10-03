@@ -21,22 +21,85 @@
   // entrar com um novo login preciso atualizar a página para funcionar":
   // um recarregamento forçado aqui garante que a página sempre reflete a
   // sessão/dados atuais assim que volta a ficar visível.
+  //
+  // 03/10/2026 — exceto na própria tela de login: lá não há sessão "de
+  // outra pessoa" para esconder, e recarregar a tela de login ao voltar do
+  // bfcache só apagava CPF/senha já digitados (no celular, trocar de app
+  // para ver um código/mensagem e voltar fazia a tela "piscar" e limpar).
   window.addEventListener("pageshow", function (e) {
-    if (e.persisted) location.reload();
+    if (e.persisted && !/login\.html/.test(location.pathname)) location.reload();
   });
+
+  // 03/10/2026 — "Manter conectado neste aparelho". A sessão normal vive em
+  // sessionStorage (some quando a aba fecha — e, no celular, o navegador
+  // descarta abas em segundo plano o tempo todo, ou abre cada link do
+  // WhatsApp numa aba nova sem sessão: daí o relato de ter que logar de
+  // novo toda hora). Quando a pessoa marca "Manter conectado", uma cópia
+  // da sessão (SÓ id/nome/cargo — nunca a senha) é guardada também no
+  // localStorage e restaurada automaticamente em qualquer aba nova, até a
+  // pessoa tocar em "Sair" (ou o acesso ser desativado/removido — o guard
+  // abaixo continua revalidando a conta em toda página). A marcação em si
+  // (REMEMBER_KEY) e o CPF digitado ficam lembrados para a próxima vez.
+  var PERSIST_KEY = "salao_erp_session_persist";
+  var REMEMBER_KEY = "salao_erp_remember";
+  var REMEMBER_CPF_KEY = "salao_erp_remember_cpf";
+  var PERSIST_MAX_AGE_MS = 15552000000; // 180 dias desde o último uso (igual ao <head> de cada página)
+
+  function readPersisted() {
+    try {
+      var p = JSON.parse(localStorage.getItem(PERSIST_KEY) || "null");
+      if (p && p.user && p.user.id && (Date.now() - (p.savedAt || 0)) < PERSIST_MAX_AGE_MS) return p;
+    } catch (e) {}
+    return null;
+  }
 
   var CurrentUser = {
     get: function () {
       try {
         var raw = sessionStorage.getItem(SESSION_KEY);
-        return raw ? JSON.parse(raw) : null;
+        if (raw) return JSON.parse(raw);
       } catch (e) { return null; }
+      // aba nova (ou sessionStorage descartado pelo navegador): tenta
+      // restaurar a sessão guardada por "Manter conectado"
+      var p = readPersisted();
+      if (!p) return null;
+      try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(p.user)); } catch (e) {}
+      return p.user;
     },
-    set: function (user) {
+    // opts.persist: true → também guarda no localStorage ("Manter
+    // conectado"); false → apaga a cópia persistente; omitido → só
+    // atualiza a cópia persistente se ela já existir (ex.: nome/cargo
+    // editados por um admin).
+    set: function (user, opts) {
       try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(user)); } catch (e) {}
+      try {
+        var persist = opts && typeof opts.persist === "boolean" ? opts.persist : !!readPersisted();
+        if (persist) localStorage.setItem(PERSIST_KEY, JSON.stringify({ user: user, savedAt: Date.now() }));
+        else localStorage.removeItem(PERSIST_KEY);
+      } catch (e) {}
+    },
+    // renova o "prazo de validade" da sessão persistente a cada uso
+    touch: function () {
+      var p = readPersisted();
+      if (p) { try { localStorage.setItem(PERSIST_KEY, JSON.stringify({ user: p.user, savedAt: Date.now() })); } catch (e) {} }
     },
     logout: function () {
       try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+      try { localStorage.removeItem(PERSIST_KEY); } catch (e) {}
+    },
+    // preferência "Manter conectado" (a marcação, não a sessão) e CPF lembrado
+    getRemember: function () {
+      try { return localStorage.getItem(REMEMBER_KEY) === "1"; } catch (e) { return false; }
+    },
+    setRemember: function (on, cpfDigits) {
+      try {
+        localStorage.setItem(REMEMBER_KEY, on ? "1" : "0");
+        if (on && cpfDigits) localStorage.setItem(REMEMBER_CPF_KEY, cpfDigits);
+        else localStorage.removeItem(REMEMBER_CPF_KEY);
+      } catch (e) {}
+    },
+    getRememberedCpf: function () {
+      try { return localStorage.getItem(REMEMBER_CPF_KEY) || ""; } catch (e) { return ""; }
     },
     isLoginPage: function () {
       return /login\.html/.test(location.pathname);
@@ -123,9 +186,16 @@
       // inexistente/apagada, OU (o caso mais comum na prática) o cache
       // local desta página simplesmente não sincronizou a tempo ainda.
       // Confirma direto no servidor antes de derrubar a sessão.
+      //
+      // 03/10/2026 — só derruba a sessão se o servidor RESPONDER que a
+      // conta não existe/está inativa. Se não deu para falar com o servidor
+      // (rede instável no celular), mantém a sessão: antes, qualquer falha
+      // de rede aqui era tratada como "conta inexistente" e a pessoa era
+      // jogada de volta para o login mesmo com tudo certo.
       if (global.DB && DB.hasRemote()) {
-        DB.fetchFresh("users", session.id).then(function (fresh) {
-          if (fresh && fresh.active) proceed(fresh);
+        DB.lookupUser(session.id).then(function (r) {
+          if (r.status === "ok") proceed(r.user);
+          else if (r.status === "unknown") proceed(null);
           else goLogin();
         });
       } else {
@@ -133,6 +203,8 @@
       }
 
       function proceed(dbUser) {
+        CurrentUser.touch();
+        if (!dbUser) return; // sem confirmação do servidor (rede) — segue com a sessão atual
         if (session.role !== dbUser.role || session.firstName !== dbUser.firstName || session.lastName !== dbUser.lastName) {
           // keep session display fields fresh if an admin edited this user
           session.role = dbUser.role; session.firstName = dbUser.firstName; session.lastName = dbUser.lastName;

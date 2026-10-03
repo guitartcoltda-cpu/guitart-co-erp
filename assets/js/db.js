@@ -470,6 +470,18 @@
 
   bootstrapOnline();
 
+  // Ver DB.lookupUser/DB.lookupUserByCpf (API pública, mais abaixo).
+  function lookupUserRemote(applyFilter) {
+    if (!supa) return Promise.resolve({ status: "unknown", user: null });
+    return Promise.resolve(applyFilter(supa.from("users").select("data"))).then(function (res) {
+      if (res.error) return { status: "unknown", user: null };
+      var row = res.data && res.data[0];
+      var user = row && row.data;
+      if (!user) return { status: "missing", user: null };
+      return { status: user.active ? "ok" : "inactive", user: user };
+    }).catch(function () { return { status: "unknown", user: null }; });
+  }
+
   function load() { return _cache; }
 
   // ---------------------------------------------------------------
@@ -895,6 +907,22 @@
         if (res.error) throw res.error;
         return (res.data && res.data[0] && res.data[0].data) || null;
       }).catch(function () { return null; });
+    },
+
+    // 03/10/2026 — Busca LEVE de usuário direto no servidor, para o login e
+    // para o guard de sessão (auth.js). Diferente de fetchFresh, distingue
+    // "o servidor respondeu que não existe" de "não consegui falar com o
+    // servidor" (rede instável, comum no celular): resolve sempre como
+    // { status, user }, com status "ok" | "inactive" | "missing" |
+    // "unknown" ("unknown" = falha de rede/sem Supabase — quem chama deve
+    // ser tolerante e NÃO derrubar a sessão por isso). Não depende de
+    // DB.ready (não usa o cache) — o login precisa funcionar mesmo
+    // enquanto a busca completa das 21 tabelas ainda está em andamento.
+    lookupUser: function (id) {
+      return lookupUserRemote(function (q) { return q.eq("id", id); });
+    },
+    lookupUserByCpf: function (cpfDigits) {
+      return lookupUserRemote(function (q) { return q.eq("data->>cpf", cpfDigits); });
     },
 
     // Força uma nova tentativa de sincronização remota de um registro já

@@ -1,20 +1,52 @@
 (function () {
   "use strict";
 
-  document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
+  // 03/10/2026 — CORREÇÃO (relato recorrente, só no celular: "toco em
+  // Entrar, a página meio que recarrega sem reconhecer o login, e tenho que
+  // ficar tentando até entrar"). Causa raiz: antes, o handler do formulário
+  // só era ligado DEPOIS de DB.ready — e DB.ready, na tela de login, espera
+  // a busca completa das 21 tabelas do sistema (milhares de linhas). No
+  // celular, em rede lenta, isso leva vários segundos; nesse intervalo o
+  // botão "Entrar" existia, mas sem handler nenhum, então o navegador fazia
+  // o envio nativo do <form> — que simplesmente recarrega a página (limpando
+  // CPF/senha). A pessoa tentava de novo e de novo até a busca terminar.
+  // Agora: (1) o handler é ligado na hora, antes de qualquer rede; (2) a
+  // conferência de CPF/senha usa uma consulta leve só ao usuário
+  // (DB.lookupUserByCpf), sem esperar as 21 tabelas; (3) "Manter conectado
+  // neste aparelho" guarda a sessão (não a senha) para não precisar logar
+  // de novo toda vez que o celular descarta a aba.
+  document.addEventListener("DOMContentLoaded", init);
+
+  var dbReadyFlag = false;
+  function whenDbReady(maxMs) {
+    var ready = DB.ready.then(function () { dbReadyFlag = true; return true; });
+    if (!maxMs) return ready;
+    return Promise.race([ready, new Promise(function (resolve) { setTimeout(function () { resolve(dbReadyFlag); }, maxMs); })]);
+  }
+  DB.ready.then(function () { dbReadyFlag = true; });
 
   function init() {
-    // if already logged in, skip straight past the login screen
-    var existing = CurrentUser.get();
-    if (existing && DB.get("users", existing.id) && DB.get("users", existing.id).active) {
-      goToRedirect();
-      return;
-    }
+    // já logado (sessão da aba ou "Manter conectado")? pula direto — a
+    // página de destino revalida a conta (auth.js), não precisa esperar aqui
+    if (CurrentUser.get()) { goToRedirect(); return; }
 
     var form = document.getElementById("login-form");
     var cpfInput = document.getElementById("li-cpf");
     var passInput = document.getElementById("li-pass");
+    var rememberInput = document.getElementById("li-remember");
     var errEl = document.getElementById("li-error");
+    var submitBtn = document.getElementById("li-submit");
+    var busy = false;
+
+    // "Manter conectado": a marcação fica lembrada (uma vez marcada,
+    // continua marcada nas próximas vezes até a pessoa desmarcar) e o CPF
+    // também é pré-preenchido.
+    rememberInput.checked = CurrentUser.getRemember();
+    var savedCpf = CurrentUser.getRememberedCpf();
+    if (rememberInput.checked && savedCpf) {
+      cpfInput.value = savedCpf.length === 11 ? Utils.fmtCPF(savedCpf) : savedCpf;
+      passInput.focus();
+    }
 
     cpfInput.addEventListener("input", function (e) {
       var digits = Utils.onlyDigits(e.target.value).slice(0, 11);
@@ -26,40 +58,68 @@
 
     form.addEventListener("submit", function (e) {
       e.preventDefault();
+      if (busy) return;
       errEl.classList.remove("show");
 
       var cpf = Utils.onlyDigits(cpfInput.value);
       var pass = passInput.value;
       if (!cpf || !pass) { showError("Informe CPF e senha."); return; }
 
-      var user = DB.findOne("users", function (u) { return u.cpf === cpf; });
-      if (!user) { showError("CPF não encontrado."); return; }
-      if (!user.active) { showError("Este acesso está inativo. Fale com um administrador."); return; }
-
-      var submitBtn = form.querySelector('[type="submit"]');
-      if (submitBtn) submitBtn.disabled = true;
-
-      Utils.verifyPassword(pass, user.password).then(function (ok) {
-        if (!ok) {
-          if (submitBtn) submitBtn.disabled = false;
-          showError("Senha incorreta.");
-          return;
-        }
-
-        // migração silenciosa: se a senha ainda estava em texto puro, salva já com hash
-        var migrate = Utils.isHashedPassword(user.password) ? Promise.resolve() :
-          Utils.hashPassword(pass).then(function (hashed) { return DB.update("users", user.id, { password: hashed }); });
-
-        migrate.catch(function () { /* falha na migração silenciosa não deve bloquear o login */ }).then(function () {
-          CurrentUser.set({ id: user.id, firstName: user.firstName, lastName: user.lastName, role: user.role });
-          DB.log("Acesso", user.firstName + " " + user.lastName + " entrou no sistema");
-          goToRedirect();
+      setBusy(true);
+      findUser(cpf).then(function (found) {
+        if (found.error) { setBusy(false); showError(found.error); return; }
+        var user = found.user;
+        return Utils.verifyPassword(pass, user.password).then(function (ok) {
+          if (!ok) { setBusy(false); showError("Senha incorreta."); return; }
+          return finishLogin(user, pass, cpf);
         });
       }).catch(function () {
-        if (submitBtn) submitBtn.disabled = false;
-        showError("Não foi possível validar a senha. Tente novamente.");
+        setBusy(false);
+        showError("Não foi possível entrar agora. Verifique a internet e tente novamente.");
       });
     });
+
+    // Procura o usuário pelo CPF: primeiro no servidor (consulta leve);
+    // se o servidor não responder ou não achar, cai para a cópia local
+    // (esperando a busca completa terminar, como era antes).
+    function findUser(cpf) {
+      return DB.lookupUserByCpf(cpf).then(function (r) {
+        if (r.status === "ok") return { user: r.user };
+        if (r.status === "inactive") return { error: "Este acesso está inativo. Fale com um administrador." };
+        return DB.ready.then(function () {
+          var local = DB.findOne("users", function (u) { return u.cpf === cpf; });
+          if (local) return local.active ? { user: local } : { error: "Este acesso está inativo. Fale com um administrador." };
+          return { error: r.status === "unknown" ? "Sem conexão com o servidor. Verifique a internet e tente novamente." : "CPF não encontrado." };
+        });
+      });
+    }
+
+    function finishLogin(user, pass, cpf) {
+      var remember = !!rememberInput.checked;
+      CurrentUser.setRemember(remember, cpf);
+      CurrentUser.set({ id: user.id, firstName: user.firstName, lastName: user.lastName, role: user.role }, { persist: remember });
+      // Migração silenciosa de senha (texto puro → hash) e registro no log
+      // de acesso precisam do cache completo do DB; espera um pouco por ele
+      // (até 4s) mas não segura o login se a rede estiver lenta — nesse
+      // caso a migração acontece no próximo login e o registro de acesso
+      // desta vez é pulado, o que é preferível a deixar a pessoa esperando.
+      return whenDbReady(4000).then(function (ready) {
+        if (!ready) return;
+        var migrate;
+        try {
+          migrate = Utils.isHashedPassword(user.password) ? Promise.resolve() :
+            Utils.hashPassword(pass).then(function (hashed) { return DB.update("users", user.id, { password: hashed }); });
+        } catch (e) { migrate = Promise.resolve(); }
+        return migrate.catch(function () { /* falha na migração silenciosa não deve bloquear o login */ }).then(function () {
+          DB.log("Acesso", user.firstName + " " + user.lastName + " entrou no sistema");
+        });
+      }).catch(function () {}).then(function () { goToRedirect(); });
+    }
+
+    function setBusy(on) {
+      busy = on;
+      if (submitBtn) { submitBtn.disabled = on; submitBtn.textContent = on ? "Entrando..." : "Entrar"; }
+    }
 
     function showError(msg) {
       errEl.textContent = msg;
@@ -99,7 +159,7 @@
       errEl.classList.remove("show");
       sendBtn.disabled = true;
       sendBtn.textContent = "Enviando...";
-      ResetSenha.requestReset(cpfInput.value).then(function (r) {
+      DB.ready.then(function () { return ResetSenha.requestReset(cpfInput.value); }).then(function (r) {
         openVerifyModal(r.userId, r.maskedEmail);
       }).catch(function (err) {
         sendBtn.disabled = false;
