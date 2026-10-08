@@ -333,6 +333,49 @@
       });
     },
 
+    // Máscara de hora "HH:MM" (08/10/2026 — jornada de trabalho em
+    // Funcionários): ao começar a digitar números o campo já vira hora, a
+    // pontuação ":" é inserida sozinha (digitar "0940" forma "09:40") e
+    // qualquer hora/minuto válido é aceito (00:00 a 23:59) — inclusive
+    // horários quebrados como 09:40 ou 17:25, não só múltiplos de 30.
+    // Digitar só "9" vira "09" (hora com 2 dígitos); horas acima de 23 e
+    // minutos acima de 59 são ajustados para o máximo válido. Ao sair do
+    // campo, "9" vira "09:00", "093" vira "09:30" etc. Usar
+    // `Utils.timeToMin(valor)` para ler o valor (null se vazio/incompleto).
+    wireTimeMask: function (input) {
+      if (!input) return;
+      input.setAttribute("maxlength", "5");
+      input.setAttribute("inputmode", "numeric");
+      input.setAttribute("autocomplete", "off");
+      if (!input.getAttribute("placeholder")) input.setAttribute("placeholder", "00:00");
+      function build(raw) {
+        var d = Utils.onlyDigits(raw).slice(0, 4);
+        if (d.length >= 1 && d.charAt(0) > "2") d = "0" + d;           // "9" → "09"
+        if (d.length >= 2 && d.charAt(0) === "2" && d.charAt(1) > "3") d = "23" + d.slice(2); // hora máx. 23
+        if (d.length >= 3 && d.charAt(2) > "5") d = d.slice(0, 2) + "5" + d.slice(3);         // minuto máx. 59
+        d = d.slice(0, 4);
+        return d.length >= 3 ? d.slice(0, 2) + ":" + d.slice(2) : d;
+      }
+      input.addEventListener("input", function (e) { e.target.value = build(e.target.value); });
+      input.addEventListener("blur", function (e) {
+        var d = Utils.onlyDigits(e.target.value);
+        if (!d) { e.target.value = ""; return; }
+        var v = build(e.target.value);
+        var digits = Utils.onlyDigits(v);
+        if (digits.length <= 2) digits = digits.padStart(2, "0") + "00";           // "09" → "09:00"
+        else if (digits.length === 3) digits = digits + "0";                        // "09:4" → "09:40"
+        e.target.value = digits.slice(0, 2) + ":" + digits.slice(2, 4);
+      });
+    },
+
+    // "09:40" → 580 (minutos desde 00:00); null se vazio, incompleto ou inválido.
+    timeToMin: function (value) {
+      var m = String(value == null ? "" : value).trim().match(/^(\d{2}):(\d{2})$/);
+      if (!m) return null;
+      var h = Number(m[1]), min = Number(m[2]);
+      return h > 23 || min > 59 ? null : h * 60 + min;
+    },
+
     // Máscara de valor em reais (campos "... (R$)" do sistema): o campo
     // vira um <input type="text">, e cada dígito digitado entra pela
     // direita como centavo — igual ao padrão usado em apps de banco/

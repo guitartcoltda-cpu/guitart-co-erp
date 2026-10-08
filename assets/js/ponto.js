@@ -294,10 +294,20 @@
   function hhmm(rec) { return rec ? new Date(rec.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "-"; }
 
   function dayRowHtml(d) {
+    var wd = d.date ? PontoCalc.WEEKDAY_SHORT[new Date(d.date + "T12:00:00").getDay()] : "";
+    var dateCell = '<td class="text-num">' + Utils.fmtDate(d.date) + (wd ? ' <span class="small text-muted">' + wd + '</span>' : '') + '</td>';
+    if (d.status === "folga_semanal") {
+      return '<tr class="ponto-row-folga">' + dateCell +
+        '<td colspan="5"><span class="badge badge-gray"><i class="fa-solid fa-store-slash"></i> Salão fechado — folga semanal</span></td><td class="text-num">-</td></tr>';
+    }
+    if (d.status === "sem_registro" || d.status === "aguardando") {
+      return '<tr class="ponto-row-pend">' + dateCell +
+        '<td colspan="5"><span class="badge ' + (d.status === "aguardando" ? "badge-info" : "badge-warning") + '">' + d.statusLabel + '</span>' +
+        (d.expectedMin ? '<span class="small text-muted"> · previsto ' + PontoCalc.fmtHM(d.expectedMin) + '</span>' : '') + '</td><td class="text-num">-</td></tr>';
+    }
     if (d.occurrence) {
       var kind = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
-      return '<tr>' +
-        '<td class="text-num">' + Utils.fmtDate(d.date) + '</td>' +
+      return '<tr>' + dateCell +
         '<td colspan="5"><span class="badge ' + (kind.badge || "badge-gray") + '"><i class="fa-solid ' + (kind.icon || "fa-circle-info") + '"></i> ' + (kind.label || d.occurrence.type) + '</span>' +
           (d.occurrence.note ? '<span class="small text-muted"> — ' + Utils.escapeHtml(d.occurrence.note) + '</span>' : '') +
         '</td>' +
@@ -305,10 +315,9 @@
       '</tr>';
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
-    return '<tr>' +
-      '<td class="text-num">' + Utils.fmtDate(d.date) + '</td>' +
+    return '<tr>' + dateCell +
       '<td class="text-num">' + hhmm(d.entrada) + '</td>' +
-      '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? hhmm(d.saidaAlmoco) + ' → ' + hhmm(d.voltaAlmoco) : '-') + '</td>' +
+      '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? hhmm(d.saidaAlmoco) + ' → ' + hhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +
       '<td class="text-num">' + hhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +

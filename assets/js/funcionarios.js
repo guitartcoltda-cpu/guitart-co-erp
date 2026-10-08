@@ -185,6 +185,127 @@
       '<div class="kpi-label">' + label + '</div><div class="kpi-value">' + value + '</div></div>';
   }
 
+  // ---------------- Jornada de trabalho (controle de ponto) ----------------
+  // 08/10/2026 — horário fixo por dia da semana (employee.workSchedule, ver
+  // assets/js/ponto-calc.js): dias de trabalho, entrada/saída de cada dia
+  // e duração do intervalo (almoço flexível — só a duração conta). Os
+  // horários usam a máscara HH:MM (Utils.wireTimeMask): digitar números já
+  // vira hora e qualquer hora/minuto válido é aceito.
+  var SCHED_DEFAULT_DAYS = { 1: false, 2: true, 3: true, 4: true, 5: true, 6: true, 0: false }; // seg..dom: salão fecha dom e seg
+  var SCHED_DEFAULT_START = "09:00", SCHED_DEFAULT_END = "18:00";
+
+  function scheduleBlockHtml(e) {
+    var hasSched = !!(e && window.PontoCalc && PontoCalc.hasSchedule(e));
+    var ws = hasSched ? e.workSchedule : null;
+    var fixedMode = hasSched || !e; // cadastro novo já começa pelo horário fixo; legado sem horário continua como estava
+    var lunchMin = ws && Number(ws.lunchMin) >= 0 ? Number(ws.lunchMin) : 60;
+    var legacyMin = Math.round(((e && e.dailyWorkHours) ? Number(e.dailyWorkHours) : 8) * 60);
+    var rows = PontoCalc.WEEK_ORDER.map(function (wd) {
+      var d = ws ? ws.days[String(wd)] : null;
+      var checked = ws ? !!d : SCHED_DEFAULT_DAYS[wd];
+      var start = d ? d.start : SCHED_DEFAULT_START, end = d ? d.end : SCHED_DEFAULT_END;
+      return '<div class="em-sched-row" data-wd="' + wd + '">' +
+        '<label class="em-sched-day"><input type="checkbox" class="em-sched-on"' + (checked ? " checked" : "") + '> <span>' + PontoCalc.WEEKDAY_NAMES[wd] + '</span></label>' +
+        '<input type="text" class="em-sched-start" value="' + start + '" aria-label="Entrada ' + PontoCalc.WEEKDAY_NAMES[wd] + '">' +
+        '<span class="em-sched-sep">às</span>' +
+        '<input type="text" class="em-sched-end" value="' + end + '" aria-label="Saída ' + PontoCalc.WEEKDAY_NAMES[wd] + '">' +
+        '<span class="em-sched-off small text-muted">Folga — salão fechado</span>' +
+      '</div>';
+    }).join("");
+    return '<div class="form-field full">' +
+      '<label>Jornada de trabalho (controle de ponto)</label>' +
+      '<select id="em-sched-mode"><option value="fixed"' + (fixedMode ? " selected" : "") + '>Horário fixo por dia da semana</option>' +
+        '<option value="simple"' + (!fixedMode ? " selected" : "") + '>Só carga horária diária (sem horário fixo)</option></select>' +
+      '<div id="em-sched-simple" style="margin-top:8px;display:' + (fixedMode ? "none" : "") + ';">' +
+        '<div style="display:flex;align-items:center;gap:8px;"><input type="text" id="em-workhours-hm" value="' + PontoCalc.fmtClock(legacyMin) + '" style="max-width:110px;"> <span class="small text-muted">horas por dia (HH:MM)</span></div>' +
+        '<div class="hint">Usada para calcular horas extras/faltantes e o saldo no espelho de ponto. Sem horário fixo, só aparecem os dias que têm algum registro.</div>' +
+      '</div>' +
+      '<div id="em-sched-fixed" style="margin-top:8px;display:' + (fixedMode ? "" : "none") + ';">' +
+        '<div class="em-sched-grid">' + rows + '</div>' +
+        '<div style="margin-top:8px;"><button type="button" class="btn btn-sm btn-outline" id="em-sched-copy"><i class="fa-solid fa-copy"></i> Copiar o 1º dia marcado para os demais dias marcados</button></div>' +
+        '<div class="em-sched-lunch">' +
+          '<div><label class="small">Duração do intervalo</label><input type="text" id="em-sched-lunchdur" value="' + PontoCalc.fmtClock(lunchMin) + '"></div>' +
+          '<div><label class="small">Janela sugerida: de</label><input type="text" id="em-sched-lunchfrom" value="' + (ws && ws.lunchFrom ? ws.lunchFrom : "12:00") + '"></div>' +
+          '<div><label class="small">até</label><input type="text" id="em-sched-lunchto" value="' + (ws && ws.lunchTo ? ws.lunchTo : "13:00") + '"></div>' +
+        '</div>' +
+        '<div class="hint">O almoço é flexível: pode ser tirado a qualquer hora, só a <b>duração</b> conta (tirar mais que o previsto desconta, menos soma). A janela é só uma referência. Entrada e saída fora do horário previsto entram no banco de horas, minuto a minuto. Dia desmarcado é folga semanal (salão fechado, sem desconto).</div>' +
+        '<div id="em-sched-summary" class="small" style="margin-top:8px;font-weight:600;"></div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Lê o bloco de jornada do formulário. Devolve { ok:true, schedule, dailyWorkHours }
+  // ou { ok:false, error }.
+  function readScheduleBlock(box) {
+    var mode = box.querySelector("#em-sched-mode").value;
+    if (mode === "simple") {
+      var m = Utils.timeToMin(box.querySelector("#em-workhours-hm").value);
+      if (!m || m < 60) return { ok: false, error: "Informe a carga horária diária no formato HH:MM (ex.: 08:00)" };
+      return { ok: true, schedule: null, dailyWorkHours: Math.round(m / 60 * 100) / 100 };
+    }
+    var days = {}, anyDay = false, firstExpected = null;
+    var lunchMin = Utils.timeToMin(box.querySelector("#em-sched-lunchdur").value);
+    if (lunchMin == null) return { ok: false, error: "Informe a duração do intervalo no formato HH:MM (ex.: 01:00)" };
+    var lunchFrom = box.querySelector("#em-sched-lunchfrom").value, lunchTo = box.querySelector("#em-sched-lunchto").value;
+    var lf = Utils.timeToMin(lunchFrom), lt = Utils.timeToMin(lunchTo);
+    if ((lunchFrom && lf == null) || (lunchTo && lt == null)) return { ok: false, error: "A janela sugerida do almoço precisa estar no formato HH:MM" };
+    var error = null;
+    PontoCalc.WEEK_ORDER.forEach(function (wd) {
+      var row = box.querySelector('.em-sched-row[data-wd="' + wd + '"]');
+      if (!row.querySelector(".em-sched-on").checked) { days[String(wd)] = null; return; }
+      var st = Utils.timeToMin(row.querySelector(".em-sched-start").value), en = Utils.timeToMin(row.querySelector(".em-sched-end").value);
+      if (st == null || en == null) { error = error || ("Preencha entrada e saída de " + PontoCalc.WEEKDAY_NAMES[wd] + " no formato HH:MM"); return; }
+      if (en <= st) { error = error || ("Em " + PontoCalc.WEEKDAY_NAMES[wd] + " a saída precisa ser depois da entrada"); return; }
+      if (lunchMin >= en - st) { error = error || ("Em " + PontoCalc.WEEKDAY_NAMES[wd] + " o intervalo é maior que a jornada"); return; }
+      days[String(wd)] = { start: PontoCalc.fmtClock(st), end: PontoCalc.fmtClock(en) };
+      anyDay = true;
+      if (firstExpected == null) firstExpected = en - st - lunchMin;
+    });
+    if (error) return { ok: false, error: error };
+    if (!anyDay) return { ok: false, error: "Marque pelo menos um dia de trabalho na jornada" };
+    return {
+      ok: true,
+      schedule: { days: days, lunchMin: lunchMin, lunchFrom: lf != null ? PontoCalc.fmtClock(lf) : null, lunchTo: lt != null ? PontoCalc.fmtClock(lt) : null },
+      dailyWorkHours: Math.round(firstExpected / 60 * 100) / 100
+    };
+  }
+
+  function wireScheduleBlock(box) {
+    var modeSel = box.querySelector("#em-sched-mode");
+    var fixedBox = box.querySelector("#em-sched-fixed"), simpleBox = box.querySelector("#em-sched-simple");
+    var summary = box.querySelector("#em-sched-summary");
+    Utils.qsa(".em-sched-start, .em-sched-end, #em-sched-lunchdur, #em-sched-lunchfrom, #em-sched-lunchto, #em-workhours-hm", box).forEach(function (inp) { Utils.wireTimeMask(inp); });
+
+    function refresh() {
+      var fixed = modeSel.value === "fixed";
+      fixedBox.style.display = fixed ? "" : "none";
+      simpleBox.style.display = fixed ? "none" : "";
+      Utils.qsa(".em-sched-row", box).forEach(function (row) {
+        var on = row.querySelector(".em-sched-on").checked;
+        row.classList.toggle("is-off", !on);
+        row.querySelector(".em-sched-start").disabled = !on;
+        row.querySelector(".em-sched-end").disabled = !on;
+      });
+      if (fixed && summary) {
+        var r = readScheduleBlock(box);
+        summary.className = "small " + (r.ok ? "text-success" : "text-danger");
+        summary.textContent = r.ok ? ("Jornada prevista: " + PontoCalc.scheduleSummary({ workSchedule: r.schedule })) : r.error;
+      }
+    }
+    modeSel.addEventListener("change", refresh);
+    fixedBox.addEventListener("input", refresh);
+    fixedBox.addEventListener("change", refresh);
+    fixedBox.addEventListener("focusout", refresh);
+    box.querySelector("#em-sched-copy").addEventListener("click", function () {
+      var rows = Utils.qsa(".em-sched-row", box).filter(function (r) { return r.querySelector(".em-sched-on").checked; });
+      if (rows.length < 2) { Toast.show("Marque pelo menos 2 dias para copiar o horário", "info"); return; }
+      var st = rows[0].querySelector(".em-sched-start").value, en = rows[0].querySelector(".em-sched-end").value;
+      rows.slice(1).forEach(function (r) { r.querySelector(".em-sched-start").value = st; r.querySelector(".em-sched-end").value = en; });
+      refresh();
+    });
+    refresh();
+  }
+
   function openEmpModal(id) {
     var e = id ? DB.get("employees", id) : null;
     var roles = DB.getRoles();
@@ -227,8 +348,7 @@
         '<div class="hint">Só quem tem essa opção em "Sim" ganha uma coluna própria na Visão do Dia da Agenda. Útil para marcar um assistente que também atende sozinho.</div></div>' +
       '<div class="form-field"><label>Bate ponto pelo sistema?</label><select id="em-timeclock"><option value="1"' + (requiresTimeClock ? " selected" : "") + '>Sim</option><option value="0"' + (!requiresTimeClock ? " selected" : "") + '>Não</option></select>' +
         '<div class="hint">Só quem tem essa opção em "Sim" aparece na lista de nomes da tela Ponto.</div></div>' +
-      '<div class="form-field"><label>Carga Horária Diária (horas)</label><input type="number" min="1" max="14" step="0.5" id="em-workhours" value="' + (e && e.dailyWorkHours ? e.dailyWorkHours : 8) + '">' +
-        '<div class="hint">Usada para calcular horas extras/faltantes e o saldo no espelho de ponto do funcionário.</div></div>' +
+      scheduleBlockHtml(e) +
       '<div class="form-field"><label>Telefone (com DDD)</label><input type="tel" id="em-phone" placeholder="(11) 98765-4321" value="' + (e ? Utils.escapeHtml(e.phone) : "") + '"></div>' +
       '<div class="form-field"><label>E-mail</label><input type="email" id="em-email" value="' + (e ? Utils.escapeHtml(e.email) : "") + '"></div>' +
       '<div class="form-field"><label>CPF</label><input type="text" id="em-cpf" placeholder="000.000.000-00" value="' + (e && e.cpf ? Utils.fmtCPF(e.cpf) : "") + '"></div>' +
@@ -259,6 +379,7 @@
     var box = Modal.open({ title: e ? "Editar Funcionário" : "Novo Funcionário", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wirePhoneMask(box.querySelector("#em-phone"));
     Utils.wireMoneyMask(box.querySelector("#em-salary"), e ? e.baseSalary : 0);
+    wireScheduleBlock(box);
     box.querySelector("#em-acc-pass").addEventListener("input", function (ev) {
       ev.target.value = Utils.onlyDigits(ev.target.value).slice(0, 20);
     });
@@ -338,6 +459,9 @@
       if (!empPhone) { Toast.show("Informe o telefone do funcionário, com DDD", "danger"); return; }
       if (!Utils.isValidPhoneBR(empPhone)) { Toast.show("Telefone inválido — informe com DDD (ex.: (11) 98765-4321)", "danger"); return; }
 
+      var sched = readScheduleBlock(box);
+      if (!sched.ok) { Toast.show(sched.error, "danger"); return; }
+
       // Acesso ao sistema (login) — validado antes de gravar qualquer coisa,
       // pra não deixar o funcionário salvo com um acesso pela metade.
       var hasAccessVal = box.querySelector("#em-has-access").value === "1";
@@ -372,7 +496,8 @@
         commissionRate: parseFloat(box.querySelector("#em-comm").value) || 0,
         performsServices: box.querySelector("#em-performs").value === "1",
         requiresTimeClock: box.querySelector("#em-timeclock").value === "1",
-        dailyWorkHours: parseFloat(box.querySelector("#em-workhours").value) || 8,
+        dailyWorkHours: sched.dailyWorkHours,
+        workSchedule: sched.schedule,
         photoDataUrl: photoDataUrl
       };
       var savedEmp;

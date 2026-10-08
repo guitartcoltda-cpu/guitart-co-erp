@@ -169,7 +169,9 @@
       var d = PontoCalc.computeDay(today, dayEntries, e);
       if (d.status === "em_andamento") workingNow.push(e);
     });
-    var absentNoRecord = eligible.filter(function (e) { return !enteredToday[e.id] && !occurrenceToday[e.id]; });
+    // Dia de folga semanal (salão fechado) não conta como ausência.
+    var closedToday = eligible.filter(function (e) { return !PontoCalc.isWorkingDay(e, today); });
+    var absentNoRecord = eligible.filter(function (e) { return PontoCalc.isWorkingDay(e, today) && !enteredToday[e.id] && !occurrenceToday[e.id]; });
 
     var flaggedPending = allEntries.filter(function (t) { return t.flagged && !t.reviewed; });
     var requestsPending = pendingAdjustRequests();
@@ -184,7 +186,7 @@
     var problems = absentNoRecord.length + flaggedPending.length + requestsPending.length;
     var statusCls = (absentNoRecord.length || flaggedPending.length) ? "danger" : (problems ? "warn" : "ok");
     var statusIcon = statusCls === "ok" ? "fa-circle-check" : statusCls === "warn" ? "fa-triangle-exclamation" : "fa-circle-exclamation";
-    var statusMsg = statusCls === "ok" ? "Tudo normal — nenhuma pendência para hoje."
+    var statusMsg = statusCls === "ok" ? (closedToday.length === eligible.length && eligible.length ? "Salão fechado hoje — folga semanal." : "Tudo normal — nenhuma pendência para hoje.")
       : (absentNoRecord.length ? absentNoRecord.length + " colaborador(es) sem nenhum registro hoje. " : "") +
         (flaggedPending.length ? flaggedPending.length + " registro(s) sinalizado(s). " : "") +
         (requestsPending.length ? requestsPending.length + " solicitação(ões) esperando decisão." : "");
@@ -809,6 +811,7 @@
     if (d.status === "em_andamento") return '<span class="badge badge-info">Trabalhando</span>';
     if (d.status === "completo") return '<span class="badge badge-success">Concluído</span>';
     if (d.status === "incompleto") return '<span class="badge badge-warning">Incompleto</span>';
+    if (!PontoCalc.isWorkingDay(e, Utils.todayISO())) return '<span class="badge badge-gray"><i class="fa-solid fa-store-slash"></i> Folga semanal</span>';
     return '<span class="badge badge-gray">Sem registro</span>';
   }
 
@@ -946,10 +949,21 @@
   }
 
   function pgDayRowHtml(d) {
+    var wd = d.date ? PontoCalc.WEEKDAY_SHORT[new Date(d.date + "T12:00:00").getDay()] : "";
+    var dateCell = '<td class="text-num">' + Utils.fmtDate(d.date) + (wd ? ' <span class="small text-muted">' + wd + '</span>' : '') + '</td>';
+    if (d.status === "folga_semanal") {
+      return '<tr class="ponto-row-folga">' + dateCell +
+        '<td colspan="5"><span class="badge badge-gray"><i class="fa-solid fa-store-slash"></i> Salão fechado — folga semanal</span>' +
+        '<span class="small text-muted"> · sem desconto</span></td><td class="text-num">-</td></tr>';
+    }
+    if (d.status === "sem_registro" || d.status === "aguardando") {
+      return '<tr class="ponto-row-pend">' + dateCell +
+        '<td colspan="5"><span class="badge ' + (d.status === "aguardando" ? "badge-info" : "badge-warning") + '">' + d.statusLabel + '</span>' +
+        (d.expectedMin ? '<span class="small text-muted"> · previsto ' + PontoCalc.fmtHM(d.expectedMin) + '</span>' : '') + '</td><td class="text-num">-</td></tr>';
+    }
     if (d.occurrence) {
       var kind = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
-      return '<tr>' +
-        '<td class="text-num">' + Utils.fmtDate(d.date) + '</td>' +
+      return '<tr>' + dateCell +
         '<td colspan="5"><span class="badge ' + (kind.badge || "badge-gray") + '"><i class="fa-solid ' + (kind.icon || "fa-circle-info") + '"></i> ' + (kind.label || d.occurrence.type) + '</span>' +
           (d.occurrence.note ? '<span class="small text-muted"> — ' + Utils.escapeHtml(d.occurrence.note) + '</span>' : '') +
         '</td>' +
@@ -957,10 +971,9 @@
       '</tr>';
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
-    return '<tr>' +
-      '<td class="text-num">' + Utils.fmtDate(d.date) + '</td>' +
+    return '<tr>' + dateCell +
       '<td class="text-num">' + pgHhmm(d.entrada) + '</td>' +
-      '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : '-') + '</td>' +
+      '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +
       '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
@@ -1132,6 +1145,7 @@
     { key: "extras", label: "HORAS EXTRAS" },
     { key: "faltantes", label: "HORAS FALTANTES" },
     { key: "falta", label: "FALTA / ATESTADO" },
+    { key: "sem_registro", label: "SEM REGISTRO" },
     { key: "sinalizados", label: "SINALIZADOS" }
   ];
 
@@ -1148,6 +1162,11 @@
         var dayEntries = allEntries.filter(function (t) { return t.employeeId === e.id && t.date === d.date; });
         var punchCount = dayEntries.filter(function (t) { return PontoCalc.isPunchType(t.type); }).length;
         var flaggedHere = dayEntries.some(function (t) { return t.flagged; });
+        if (d.status === "sem_registro") {
+          list.push({ sev: "sev-med", kind: "sem_registro", icon: "fa-calendar-xmark", employee: e, date: d.date, label: "Sem registro — pendente de justificativa" });
+          return;
+        }
+        if (d.placeholder) return;
         if (d.occurrence) {
           if (d.occurrence.type === "falta_justificada" && !d.occurrence.reviewed) {
             list.push({ sev: "sev-low", kind: "falta", icon: "fa-user-slash", employee: e, date: d.date, label: "Falta Justificada — ainda não conferida" });
@@ -1389,7 +1408,7 @@
       doc.text("Funcionário: " + emp.name + (emp.role ? " — " + emp.role : ""), marginX, y);
       doc.text("Mês de referência: " + monthLabel, tableEnd, y, { align: "right" });
       y += 15;
-      doc.text("Carga horária diária: " + (PontoCalc.dailyExpectedMin(emp) / 60) + "h", marginX, y);
+      doc.text(PontoCalc.hasSchedule(emp) ? "Jornada: " + PontoCalc.scheduleSummary(emp) : "Carga horária diária: " + (PontoCalc.dailyExpectedMin(emp) / 60) + "h", marginX, y);
       doc.text("Período fechado em: " + Utils.fmtDate(cutoff), tableEnd, y, { align: "right" });
       y += 15;
       doc.text("Gerado em " + Utils.fmtDate(Utils.todayISO()) + " por " + currentUserDisplayName(), marginX, y);
@@ -1408,10 +1427,21 @@
       } else {
         days.forEach(function (d) {
           y = ensureSpace(y, 14, true);
-          if (d.occurrence) {
+          var wdName = PontoCalc.WEEKDAY_SHORT[new Date(d.date + "T12:00:00").getDay()];
+          if (d.status === "folga_semanal") {
+            doc.setTextColor(120);
+            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
+            doc.text(wdName + " — Salão fechado (folga semanal), sem desconto", FOLHA_COLS[1].x, y);
+            doc.setTextColor(0);
+          } else if (d.status === "sem_registro" || d.status === "aguardando") {
+            doc.setTextColor(150, 90, 0);
+            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
+            doc.text(wdName + " — " + d.statusLabel + (d.expectedMin ? " (previsto " + PontoCalc.fmtHM(d.expectedMin) + ")" : ""), FOLHA_COLS[1].x, y);
+            doc.setTextColor(0);
+          } else if (d.occurrence) {
             var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            var obsTxt = (k.label || d.occurrence.type) + (d.occurrence.note ? " — " + d.occurrence.note : "");
+            var obsTxt = wdName + " · " + (k.label || d.occurrence.type) + (d.occurrence.note ? " — " + d.occurrence.note : "");
             doc.text(obsTxt, FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           } else {
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
@@ -1423,7 +1453,7 @@
             doc.text(d.workedMin != null ? "+" + PontoCalc.fmtHM(d.extraMin) : "-", FOLHA_COLS[6].x, y);
             doc.text(d.workedMin != null ? "-" + PontoCalc.fmtHM(d.missingMin) : "-", FOLHA_COLS[7].x, y);
             doc.text(d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-", FOLHA_COLS[8].x, y);
-            if (d.status !== "completo") doc.text(d.statusLabel, FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
+            doc.text(wdName + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           }
           y += 14;
         });
@@ -1439,6 +1469,12 @@
       doc.text("+" + PontoCalc.fmtHM(data.totals.extraMin), FOLHA_COLS[6].x, y);
       doc.text("-" + PontoCalc.fmtHM(data.totals.missingMin), FOLHA_COLS[7].x, y);
       doc.text(PontoCalc.fmtHM(data.totals.saldoMin), FOLHA_COLS[8].x, y);
+      if (PontoCalc.hasSchedule(emp)) {
+        y += 14;
+        doc.setFont("helvetica", "normal");
+        doc.text("Folgas semanais (salão fechado): " + data.totals.folgaDays + " dia(s), sem desconto" +
+          (data.totals.pendingDays ? " · Dias úteis sem registro, pendentes de justificativa: " + data.totals.pendingDays : ""), FOLHA_COLS[0].x, y);
+      }
 
       y = ensureSpace(y, 70, false);
       y += 50;
