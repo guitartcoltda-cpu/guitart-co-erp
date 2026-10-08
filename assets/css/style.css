@@ -1121,3 +1121,23 @@ body.modal-open-lock { overflow: hidden; }
 /* ---- NameCombo (campo de nome com digitação livre + sugestões) ---- */
 .name-combo-item:hover { background: var(--gray-100, #f2f2f2); }
 .name-combo-input:focus { border-color: var(--color-accent, #0eb8d9); }
+
+/* ---- Horário de trabalho por dia da semana (Funcionários) ---- */
+.em-sched-grid { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border-color); border-radius: 10px; padding: 10px; background: var(--gray-50); }
+.em-sched-row { display: grid; grid-template-columns: 130px 86px 24px 86px 1fr; align-items: center; gap: 8px; }
+.em-sched-day { display: flex; align-items: center; gap: 6px; font-weight: 600; margin: 0; cursor: pointer; }
+.em-sched-row input[type="text"] { text-align: center; font-variant-numeric: tabular-nums; padding: 6px 8px; }
+.em-sched-sep { text-align: center; color: var(--gray-500, #888); font-size: 12px; }
+.em-sched-off { display: none; }
+.em-sched-row.is-off .em-sched-off { display: inline; }
+.em-sched-row.is-off input[type="text"], .em-sched-row.is-off .em-sched-sep { opacity: .35; }
+.em-sched-lunch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+.em-sched-lunch input { text-align: center; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .em-sched-row { grid-template-columns: 1fr 76px 18px 76px; }
+  .em-sched-off { grid-column: 2 / -1; }
+  .em-sched-lunch { grid-template-columns: 1fr; }
+}
+/* ---- Espelho: dias de folga semanal / pendentes ---- */
+.ponto-row-folga td { background: var(--gray-50); color: var(--gray-500, #7a7a7a); }
+.ponto-row-pend td { background: #fff8e6; }
