@@ -106,12 +106,19 @@
     var cats = {};
     DB.all("categories").forEach(function (c) { cats[c.id] = c.name || ""; });
     var st = state(emp.id);
+    // Lançamentos antigos nem sempre têm funcionário vinculado (ex.: "VALE/ADIANTAMENTO LUIZA"):
+    // nesse caso reconhece pelo primeiro nome na descrição, se ele for único entre os ativos.
+    var norm = function (s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); };
+    var first = norm(emp.name).split(/\s+/)[0];
+    var sameFirst = DB.all("employees").filter(function (e) { return e.status !== "inativo" && norm(e.name).split(/\s+/)[0] === first; }).length;
     return DB.all("transactions").filter(function (t) {
-      if (t.type !== "despesa" || t.employeeId !== emp.id) return false;
+      if (t.type !== "despesa") return false;
       if (!t.date || t.date < mi.start || t.date > mi.end) return false;
       var cat = cats[t.categoryId] || "";
       if (/comiss/i.test(cat)) return false;
-      return /vale|adiant/i.test((t.description || "") + " " + cat);
+      if (!/\bvale\b|adiant/i.test(norm((t.description || "") + " " + cat))) return false;
+      if (t.employeeId) return t.employeeId === emp.id;
+      return sameFirst === 1 && first && new RegExp("\\b" + first + "\\b").test(norm(t.description));
     }).sort(function (a, b) { return a.date.localeCompare(b.date); }).map(function (t) {
       return { id: t.id, description: (t.description || "Vale") + " (" + Utils.fmtDate(t.date) + ")", amount: Number(t.amount) || 0, included: st.vales[t.id] !== false, status: t.status };
     });
