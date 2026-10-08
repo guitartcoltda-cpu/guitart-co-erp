@@ -24,6 +24,7 @@
     { page: "relatorio-vendas", href: "relatorio-vendas.html", icon: "fa-chart-column", label: "Relatório de Vendas" },
     { page: "conciliacao", href: "conciliacao.html", icon: "fa-building-columns", label: "Conciliação Bancária" },
     { page: "dre", href: "dre.html", icon: "fa-chart-line", label: "Fluxo de Caixa / DRE" },
+    { page: "folha-pagamento", href: "folha-pagamento.html", icon: "fa-money-bill-wave", label: "Folha de Pagamento", adminOnly: true },
     { section: "Operações" },
     { page: "estoque", href: "estoque.html", icon: "fa-boxes-stacked", label: "Estoque" },
     { page: "ponto-gestao", href: "ponto-gestao.html", icon: "fa-user-clock", label: "Gestão de Ponto" },
@@ -42,6 +43,12 @@
     var cu = global.CurrentUser;
     var filtered = NAV.filter(function (item) {
       if (item.section) return true;
+      // adminOnly (Folha de Pagamento, 08/10/2026): só aparece para quem tem perfil
+      // Administrador/Desenvolvedor, mesmo que o acesso seja "total".
+      if (item.adminOnly) {
+        var u = cu && cu.get ? cu.get() : null;
+        if (!u || ["Administrador", "Desenvolvedor"].indexOf(u.role) === -1) return false;
+      }
       return !cu || cu.canAccess(item.href);
     });
     var result = [];

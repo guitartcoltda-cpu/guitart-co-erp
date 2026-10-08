@@ -24,7 +24,25 @@
     return r.saldo <= 0.01 ? '<span class="badge badge-success">Pago</span>' : (r.pago > 0.005 ? '<span class="badge badge-warning">Parcial</span>' : '<span class="badge badge-danger">A Pagar</span>');
   }
 
-  document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
+  document.addEventListener("DOMContentLoaded", function () {
+    // 08/10/2026: este arquivo também é carregado pela Folha de Pagamento
+    // (só para reaproveitar computeRows via ComissoesCalc, abaixo) — nessa
+    // tela não existe a interface de Comissionamento, então não inicializa.
+    if (!document.getElementById("com-summary")) return;
+    DB.ready.then(function () { setTimeout(init, 0); });
+  });
+
+  // Comissão apurada (Devido/Pago por profissional) de um intervalo
+  // qualquer, pelo MESMO cálculo da tela de Comissionamento — usado pela
+  // Folha de Pagamento para o holerite nunca divergir daqui. Não mexe no
+  // intervalo exibido na tela (restaura o anterior ao terminar).
+  window.ComissoesCalc = {
+    rowsForRange: function (start, end) {
+      var prev = customRange;
+      customRange = { start: start, end: end };
+      try { return computeRows(); } finally { customRange = prev; }
+    }
+  };
 
   function init() {
     var today = Utils.todayISO();
