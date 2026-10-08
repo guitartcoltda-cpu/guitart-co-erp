@@ -21,7 +21,10 @@ function build(role) {
     transactions: [
       { id: "t1", type: "despesa", employeeId: "e1", description: "Vale adiantamento", amount: 200, date: month + "-05", status: "pago", categoryId: "c1" },
       { id: "t2", type: "despesa", employeeId: "e1", description: "Comissão semanal", amount: 100, date: month + "-05", categoryId: "c2" },
-      { id: "t3", type: "despesa", employeeId: "e2", description: "Aluguel", amount: 999, date: month + "-05", categoryId: "c1" }
+      { id: "t3", type: "despesa", employeeId: "e2", description: "Aluguel", amount: 999, date: month + "-05", categoryId: "c1" },
+      // lançamentos antigos sem funcionário vinculado: reconhece pelo primeiro nome; "Valente" não é "vale"
+      { id: "t4", type: "despesa", employeeId: null, description: "VALE/ADIANTAMENTO VITÓRIA", amount: 50, date: month + "-06", status: "pago", categoryId: "c1" },
+      { id: "t5", type: "despesa", employeeId: null, description: "Corte Feminino - Cleonice Valente", amount: 120, date: month + "-06", categoryId: "c1" }
     ],
     categories: [{ id: "c1", name: "Despesas" }, { id: "c2", name: "Comissões" }],
     timeClockEntries: []
@@ -72,7 +75,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const nz = x => x.replace(/\s+/g, " ");
   const txt = nz(rows[0].textContent);
   ok(txt.indexOf(nz(t.w.Utils.fmtMoney(expectedNet))) !== -1, "líquido da Luiza = " + t.w.Utils.fmtMoney(expectedNet) + " | " + txt);
-  ok(rows[1].textContent.indexOf(t.w.Utils.fmtMoney(1621 - FC.inss(1621))) !== -1, "Vitória: só salário − INSS (vale/aluguel dela não entra: 'Aluguel' não é vale)");
+  ok(nz(rows[1].textContent).indexOf(nz(t.w.Utils.fmtMoney(1621 - FC.inss(1621) - 50))) !== -1, "Vitória: salário − INSS − vale sem vínculo reconhecido pelo nome (Aluguel e 'Valente' não entram)");
   ok(d.getElementById("fp-summary").children.length === 4, "4 KPIs");
 
   // ---- detalhes ----

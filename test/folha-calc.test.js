@@ -71,5 +71,17 @@ near(p.earnings[0].amount, 3100 * 11 / 31, "salário proporcional 11/31");
 p = F.computePayslip({ monthKey: "2026-10", regime: "clt", baseSalary: 1621, hireDate: null, commissionDevido: 0, commissionPago: 0, vales: [{ amount: 5000, included: true }], extras: [] });
 ok(p.net < 0 && p.warnings.length === 1, "líquido negativo avisa");
 
+// horas negativas em folha: valor-hora = salário ÷ 220; reduz a base do INSS
+p = F.computePayslip({ monthKey: "2026-10", regime: "clt", baseSalary: 2200, hireDate: null, commissionDevido: 0, vales: [], extras: [], hoursDiscountMin: 510 });
+near(p.hoursDiscount, 8.5 * 10, "8h30 × (2.200 ÷ 220 = 10/h) = 85,00");
+ok(p.deductions.some(d => d.code === "horas_descontadas" && Math.abs(d.amount - 85) < 0.011), "linha de desconto de horas no holerite");
+near(p.taxableBase, 2200 - 85, "base tributável reduzida");
+near(p.inss, F.inss(2115), "INSS sobre a base reduzida");
+near(p.net, 2200 - 85 - F.inss(2115) - p.deductions.filter(d => d.code === "irrf").reduce((s, d) => s + d.amount, 0), "líquido");
+p = F.computePayslip({ monthKey: "2026-10", regime: "clt", baseSalary: 1800, hireDate: null, commissionDevido: 0, vales: [], extras: [], hoursDiscountMin: 0 });
+ok(!p.deductions.some(d => d.code === "horas_descontadas"), "sem horas negativas não há linha de desconto");
+p = F.computePayslip({ monthKey: "2026-10", regime: "clt", baseSalary: 220, hireDate: null, commissionDevido: 0, vales: [], extras: [], hoursDiscountMin: 100000 });
+ok(p.hoursDiscount <= 220, "desconto de horas nunca passa do salário base");
+
 console.log("\n" + passed + " passaram, " + failed + " falharam");
 process.exit(failed ? 1 : 0);

@@ -142,5 +142,67 @@ eq(PC.scheduleSummary(LUIZA), "Ter–Sáb · 09:40–19:00 · almoço 1h00 (12:0
   eq(none.days.length, 0, "funcionário sem nenhum registro: nada a preencher");
 })();
 
+// ---------------------------------------------------------------
+// Horas negativas (debito_horas) — 08/10/2026
+// ---------------------------------------------------------------
+(function () {
+  const mk = (empId, dateIso, extra) => Object.assign({ id: "x" + Math.random(), employeeId: empId, date: dateIso, type: "debito_horas", timestamp: ts(dateIso, "00:00") }, extra);
+  eq(PC.isAdjustType("debito_horas"), true, "debito_horas é tipo de ajuste");
+  eq(PC.isOccurrenceType("debito_horas"), false, "…mas não é ocorrência");
+  eq(PC.isPunchType("debito_horas"), false, "…nem batida");
+
+  // Vitória: falta (ocorrência "outro") em 29/09 (terça) + 8h30 descontadas do banco
+  const e1 = [
+    mk(VITORIA.id, "2026-09-29", { type: "outro", note: "FALTA" }),
+    mk(VITORIA.id, "2026-09-29", { debitMin: 510, useBank: true, note: "Falta" })
+  ];
+  const d1 = PC.computeDay("2026-09-29", e1, VITORIA);
+  eq(d1.status, "outro", "o dia continua marcado pela ocorrência");
+  eq(d1.adjustMin, -510, "−8h30 no banco");
+  eq(d1.adjustPayMin, 0, "nada em folha");
+  eq(PC.dayBank(d1).min, -510, "saldo do dia = −8h30");
+  eq(PC.dayBank(d1).show, true, "dia mostra saldo");
+
+  // dia só com horas negativas (sem batida nem ocorrência)
+  const d2 = PC.computeDay("2026-09-30", [mk(VITORIA.id, "2026-09-30", { debitMin: 60, useBank: true })], VITORIA);
+  eq(d2.status, "ajuste", "só horas negativas → status ajuste (não 'incompleto')");
+  eq(d2.adjustMin, -60, "−1h no banco");
+
+  // não usa o banco → desconto em folha, banco intacto
+  const d3 = PC.computeDay("2026-09-30", [mk(VITORIA.id, "2026-09-30", { debitMin: 90, useBank: false })], VITORIA);
+  eq(d3.adjustMin, 0, "sem banco: saldo intacto");
+  eq(d3.adjustPayMin, 90, "sem banco: 1h30 vão para a folha");
+  eq(PC.dayBank(d3).show, false, "sem banco e sem batida: nada de saldo para mostrar");
+
+  // useBank ausente (registro antigo) conta como banco
+  eq(PC.computeDay("2026-09-30", [mk(VITORIA.id, "2026-09-30", { debitMin: 30 })], VITORIA).adjustMin, -30, "useBank ausente = usa o banco");
+  // minutos inválidos não contam
+  eq(PC.computeDay("2026-09-30", [mk(VITORIA.id, "2026-09-30", { debitMin: -5, useBank: true })], VITORIA).adjustMin, 0, "minutos negativos/zerados são ignorados");
+
+  // dia completo + horas negativas no mesmo dia: soma
+  const full = ["entrada:09:30", "saida_almoco:13:00", "volta_almoco:14:00", "saida:19:00"].map(function (x, i) {
+    const [t, hm] = x.split(":"); const hh = hm + ":" + (i === 0 ? "00" : "00");
+    return { id: "p" + i, employeeId: VITORIA.id, date: "2026-09-30", type: t, timestamp: ts("2026-09-30", x.slice(x.indexOf(":") + 1)) };
+  });
+  const d4 = PC.computeDay("2026-09-30", full.concat([mk(VITORIA.id, "2026-09-30", { debitMin: 30, useBank: true })]), VITORIA);
+  eq(d4.status, "completo", "dia completo continua completo");
+  eq(d4.saldoMin, 0, "batidas no horário: saldo de batidas 0");
+  eq(PC.dayBank(d4).min, -30, "saldo do dia com o desconto = −30");
+
+  // espelho: totais incluem as horas negativas
+  const all = [].concat(full, e1, [mk(VITORIA.id, "2026-09-30", { debitMin: 90, useBank: false })]);
+  const r = PC.espelho(VITORIA.id, "2026-09-29", "2026-09-30", VITORIA, all, { today: "2026-10-08" });
+  eq(r.days.length, 2, "2 dias no espelho");
+  eq(r.totals.saldoMin, -510, "saldo do período = 0 (batidas) − 8h30 (banco); a 1h30 em folha não entra");
+  eq(r.totals.adjustMin, -510, "total de horas negativas no banco");
+  eq(r.totals.adjustPayMin, 90, "total de horas negativas em folha");
+  eq(r.totals.pendingDays, 0, "dias com horas negativas não viram 'sem registro'");
+
+  // dia só com ajuste não vira dia 'incompleto' no espelho de um funcionário sem horário fixo
+  const old = PC.espelho(LEGADO.id, "2026-09-01", "2026-09-30", LEGADO, [mk(LEGADO.id, "2026-09-10", { debitMin: 120, useBank: true })], { today: "2026-10-08" });
+  eq(old.days[0].status, "ajuste", "legado: status ajuste");
+  eq(old.totals.saldoMin, -120, "legado: saldo −2h");
+})();
+
 console.log("\n=== Resultado: " + passed + " passaram, " + failed + " falharam (" + (passed + failed) + " no total) ===");
 process.exit(failed ? 1 : 0);
