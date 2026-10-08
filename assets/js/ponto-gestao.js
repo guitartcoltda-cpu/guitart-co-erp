@@ -554,7 +554,7 @@
     }
 
     var summaryHtml = '<div class="flex mb-16" style="gap:24px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;background:var(--gray-50);font-size:13px;">' +
-      '<div><b>Jornada prevista:</b> ' + (PontoCalc.dailyExpectedMin(employee) / 60) + 'h/dia</div>' +
+      '<div><b>Jornada prevista:</b> ' + jornadaText(employee) + '</div>' +
       '<div><b>Trabalhado:</b> ' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + '</div>' +
       '<div><b>Saldo:</b> <span class="' + (d.workedMin != null && d.saldoMin < 0 ? "text-danger" : "text-success") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</span></div>' +
       (d.status !== "completo" ? '<div>' + d.statusLabel + '</div>' : '') +
@@ -804,6 +804,13 @@
   // 3) COLABORADORES — roster focado em ponto (não recadastro; dados
   //    cadastrais completos continuam só em Funcionários)
   // ================================================================
+  // "Ter–Sáb · 09:40–19:00 · almoço 1h00 (12:00–13:00) · 8h20/dia" (horário fixo)
+  // ou "8h00/dia" (só carga horária diária).
+  function jornadaText(e) {
+    if (PontoCalc.hasSchedule(e)) return Utils.escapeHtml(PontoCalc.scheduleSummary(e));
+    return PontoCalc.fmtHM(PontoCalc.dailyExpectedMin(e)) + '/dia';
+  }
+
   function employeeTodayBadge(e, todays) {
     var dayEntries = todays.filter(function (t) { return t.employeeId === e.id; });
     var d = PontoCalc.computeDay(Utils.todayISO(), dayEntries, e);
@@ -889,7 +896,7 @@
     var allEntries = DB.all("timeClockEntries");
     var data = PontoCalc.espelho(employee.id, monthRange.start, monthRange.end, employee, allEntries);
     var last7 = PontoCalc.espelho(employee.id, Utils.addDays(today, -6), today, employee, allEntries).days;
-    return '<div class="mb-16"><div class="small text-muted">Jornada prevista</div><div class="font-bold">' + (PontoCalc.dailyExpectedMin(employee) / 60) + 'h por dia</div></div>' +
+    return '<div class="mb-16"><div class="small text-muted">Jornada prevista</div><div class="font-bold">' + jornadaText(employee) + '</div></div>' +
       '<div class="mb-16"><div class="small text-muted">Saldo do mês (' + capFirst(monthRange.label) + ')</div><div class="font-bold ' + (data.totals.saldoMin < 0 ? "text-danger" : "text-success") + '" style="font-size:20px;">' + PontoCalc.fmtHM(data.totals.saldoMin) + '</div></div>' +
       '<div class="small text-muted mb-8">Últimos 7 dias</div>' +
       (last7.length ? last7.map(function (d) {
