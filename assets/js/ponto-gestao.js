@@ -701,7 +701,7 @@
       (isAdj
         ? '<div class="flex gap-16"><div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>' +
             '<div class="form-field"><label>Horas a descontar (HH:MM)</label><input type="text" id="pg-debit" value="' + PontoCalc.fmtClock(PontoCalc.debitMinOf(t)) + '"></div></div>' +
-          '<div class="form-field full checkbox-wrap"><input type="checkbox" id="pg-usebank" ' + (t.useBank === false ? "" : "checked") + '><label for="pg-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
+          '<div class="form-field full checkbox-wrap" style="flex-direction:row;"><input type="checkbox" id="pg-usebank" ' + (t.useBank === false ? "" : "checked") + '><label for="pg-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
           '<div class="small text-muted mb-16">Desmarcado: não mexe no banco; o valor é descontado na Folha de Pagamento.</div>'
         : isOcc
         ? '<div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>'
@@ -808,7 +808,7 @@
       '<div id="me-debit-wrap" style="display:none;">' +
         '<div class="form-field full"><label>Horas a descontar (HH:MM)</label><input type="text" id="me-debit" placeholder="08:30"></div>' +
         '<div class="small text-muted mb-8" id="me-debit-hint"></div>' +
-        '<div class="form-field full checkbox-wrap"><input type="checkbox" id="me-usebank" checked><label for="me-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
+        '<div class="form-field full checkbox-wrap" style="flex-direction:row;"><input type="checkbox" id="me-usebank" checked><label for="me-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
         '<div class="small text-muted mb-16">Marcado: as horas saem do saldo do banco — se o saldo não cobrir, o restante fica como banco de horas negativo. Desmarcado: o banco não muda e o valor é descontado na Folha de Pagamento.</div>' +
       '</div>' +
       '<div id="me-attach-wrap" style="display:none;">' + Utils.attachmentFieldHtml("me", "Anexo (opcional)") + '</div>' +
