@@ -114,10 +114,21 @@
   }
 
   function anyTypeLabel(type) {
+    if (PontoCalc.isAdjustType(type)) return PontoCalc.ADJUST_LABEL;
     return TYPE_LABELS[type] || (PontoCalc.OCCURRENCE_KINDS[type] && PontoCalc.OCCURRENCE_KINDS[type].label) || type;
   }
 
+  // "-8h30 no banco de horas" / "-1h00 em folha" de um registro de horas negativas.
+  function adjustText(t) {
+    var m = PontoCalc.debitMinOf(t);
+    return "-" + PontoCalc.fmtHM(m) + (t.useBank === false ? " em folha de pagamento (não usa o banco)" : " no banco de horas");
+  }
+  function adjustBadgeHtml(t) {
+    return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + PontoCalc.ADJUST_LABEL + ': ' + adjustText(t) + '</span>';
+  }
+
   function typeBadge(type) {
+    if (PontoCalc.isAdjustType(type)) return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + PontoCalc.ADJUST_LABEL + '</span>';
     if (PontoCalc.isOccurrenceType(type)) {
       var k = PontoCalc.OCCURRENCE_KINDS[type];
       return '<span class="badge ' + k.badge + '"><i class="fa-solid ' + k.icon + '"></i> ' + k.label + '</span>';
@@ -139,6 +150,7 @@
   function thumbHtml(t, cls) {
     var wrapCls = cls || "ponto-thumb";
     if (t.selfieDataUrl) return '<div class="' + wrapCls + '" data-zoom="' + t.id + '" style="background-image:url(\'' + t.selfieDataUrl + '\');"></div>';
+    if (PontoCalc.isAdjustType(t.type)) return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" title="' + PontoCalc.ADJUST_LABEL + '"><i class="fa-solid fa-hourglass-end"></i></div>';
     if (PontoCalc.isOccurrenceType(t.type)) {
       var k = PontoCalc.OCCURRENCE_KINDS[t.type];
       return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" title="' + k.label + '"><i class="fa-solid ' + k.icon + '"></i></div>';
@@ -359,12 +371,22 @@
         '<td>' + nameCell + '</td>' +
         '<td colspan="4"><span class="badge ' + (k.badge || "badge-gray") + '"><i class="fa-solid ' + (k.icon || "fa-circle-info") + '"></i> ' + (k.label || d.occurrence.type) + '</span>' +
           (d.occurrence.note ? '<span class="small text-muted"> — ' + Utils.escapeHtml(d.occurrence.note) + '</span>' : '') +
+          (d.adjustEntries.length ? '<div class="mt-4">' + d.adjustEntries.map(adjustBadgeHtml).join(" ") + '</div>' : '') +
         '</td>' +
         '<td>' + reviewBadge + '</td>' +
         '<td>' + openBtn + '</td>' +
         '</tr>';
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
+    if (d.status === "ajuste") {
+      return '<tr>' +
+        '<td class="text-num">' + Utils.fmtDate(row.date) + '</td>' +
+        '<td>' + nameCell + '</td>' +
+        '<td colspan="4">' + d.adjustEntries.map(adjustBadgeHtml).join(" ") + '</td>' +
+        '<td>' + reviewBadge + '</td>' +
+        '<td>' + openBtn + '</td>' +
+        '</tr>';
+    }
     return '<tr>' +
       '<td class="text-num">' + Utils.fmtDate(row.date) + '</td>' +
       '<td>' + nameCell + '</td>' +
@@ -373,6 +395,7 @@
       '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') +
         (d.workedMin != null ? '<div class="small ' + (d.saldoMin < 0 ? "text-danger" : "text-success") + '">saldo ' + PontoCalc.fmtHM(d.saldoMin) + '</div>' : '') +
+        (d.adjustEntries.length ? '<div class="small text-danger">' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') +
       '</td>' +
       '<td>' + reviewBadge + '</td>' +
       '<td>' + openBtn + '</td>' +
@@ -542,6 +565,19 @@
     var employeeName = (employee && employee.name) || (dayEntries[0] && dayEntries[0].employeeName) || "-";
     var d = PontoCalc.computeDay(date, dayEntries, employee);
 
+    // horas negativas lançadas no dia (aparecem com ou sem batida/ocorrência)
+    var adjustHtml = d.adjustEntries.map(function (t) {
+      return '<div class="ponto-request-row">' + reviewedCheckboxHtml(t) + thumbHtml(t) +
+        '<div class="ponto-request-body"><div class="font-bold">' + PontoCalc.ADJUST_LABEL + '</div>' +
+        '<div class="small text-danger">' + adjustText(t) + '</div>' +
+        (t.note ? '<div class="small text-muted">' + Utils.escapeHtml(t.note) + '</div>' : '') +
+        '<div class="small text-muted mt-4">' + statusChipHtml(t) + '</div></div>' +
+        '<button class="btn btn-icon btn-ghost" data-tl-entry="' + t.id + '" title="Ver / conferir"><i class="fa-solid fa-magnifying-glass"></i></button>' +
+        '</div>';
+    }).join("");
+
+    if (d.status === "ajuste") return adjustHtml;
+
     if (d.occurrence) {
       var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
       return '<div class="ponto-request-row">' + reviewedCheckboxHtml(d.occurrence) + thumbHtml(d.occurrence) +
@@ -550,13 +586,14 @@
         (d.occurrence.attachment ? '<div class="mt-4">' + attachmentLinkHtml(d.occurrence.attachment) + '</div>' : '') +
         '<div class="small text-muted mt-4">' + statusChipHtml(d.occurrence) + '</div></div>' +
         '<button class="btn btn-icon btn-ghost" data-tl-entry="' + d.occurrence.id + '" title="Ver / conferir"><i class="fa-solid fa-magnifying-glass"></i></button>' +
-        '</div>';
+        '</div>' + adjustHtml;
     }
 
     var summaryHtml = '<div class="flex mb-16" style="gap:24px;flex-wrap:wrap;padding:10px 12px;border-radius:8px;background:var(--gray-50);font-size:13px;">' +
       '<div><b>Jornada prevista:</b> ' + jornadaText(employee) + '</div>' +
       '<div><b>Trabalhado:</b> ' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + '</div>' +
       '<div><b>Saldo:</b> <span class="' + (d.workedMin != null && d.saldoMin < 0 ? "text-danger" : "text-success") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</span></div>' +
+      (d.adjustEntries.length ? '<div class="text-danger"><b>Horas negativas:</b> ' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') +
       (d.status !== "completo" ? '<div>' + d.statusLabel + '</div>' : '') +
       '</div>';
 
@@ -577,7 +614,7 @@
         '</div>';
     }).join("") : '<div class="small text-muted">Nenhuma marcação neste dia.</div>';
 
-    return summaryHtml + '<div class="ponto-timeline">' + itemsHtml + '</div>';
+    return summaryHtml + '<div class="ponto-timeline">' + itemsHtml + '</div>' + adjustHtml;
   }
 
   function wireTimelineBody(box) {
@@ -643,7 +680,8 @@
     var t = DB.get("timeClockEntries", id);
     if (!t) return;
     var e = DB.get("employees", t.employeeId);
-    var isOcc = PontoCalc.isOccurrenceType(t.type);
+    var isAdj = PontoCalc.isAdjustType(t.type);
+    var isOcc = PontoCalc.isOccurrenceType(t.type) || isAdj; // só data (sem hora)
     var d = new Date(t.timestamp);
     var hh = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
     var attachHtml = t.attachment ? '<div class="form-field full"><label>Anexo</label>' +
@@ -660,7 +698,12 @@
           (t.origin && ORIGIN_LABELS[t.origin] ? '<div class="small text-muted">' + ORIGIN_LABELS[t.origin] + '</div>' : '') +
         '</div>' +
       '</div>' +
-      (isOcc
+      (isAdj
+        ? '<div class="flex gap-16"><div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>' +
+            '<div class="form-field"><label>Horas a descontar (HH:MM)</label><input type="text" id="pg-debit" value="' + PontoCalc.fmtClock(PontoCalc.debitMinOf(t)) + '"></div></div>' +
+          '<div class="form-field full checkbox-wrap"><input type="checkbox" id="pg-usebank" ' + (t.useBank === false ? "" : "checked") + '><label for="pg-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
+          '<div class="small text-muted mb-16">Desmarcado: não mexe no banco; o valor é descontado na Folha de Pagamento.</div>'
+        : isOcc
         ? '<div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>'
         : '<div class="flex gap-16">' +
             '<div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>' +
@@ -676,7 +719,8 @@
       '<button class="btn btn-secondary" data-close-modal>Fechar</button>' +
       '<button class="btn ' + (t.flagged ? "btn-secondary" : "btn-danger") + '" id="pg-flag">' + (t.flagged ? "Remover Sinalização" : "Sinalizar") + '</button>' +
       '<button class="btn btn-primary" id="pg-save">Salvar Alterações</button>';
-    var box = Modal.open({ title: isOcc ? "Ocorrência de Ponto" : "Registro de Ponto", bodyHtml: body, footHtml: foot });
+    var box = Modal.open({ title: isAdj ? "Horas Negativas" : isOcc ? "Ocorrência de Ponto" : "Registro de Ponto", bodyHtml: body, footHtml: foot });
+    if (isAdj) Utils.wireTimeMask(box.querySelector("#pg-debit"));
 
     var photoEl = box.querySelector("[data-zoom-photo]");
     if (photoEl) photoEl.addEventListener("click", function () { openPhotoZoom(photoEl.getAttribute("data-zoom-photo"), t.employeeName); });
@@ -716,6 +760,12 @@
         note: note || null,
         reviewed: reviewed
       };
+      if (isAdj) {
+        var debitMin = PontoCalc.parseHM(box.querySelector("#pg-debit").value);
+        if (!debitMin) { Toast.show("Informe as horas a descontar (HH:MM, maior que 00:00)", "danger"); return; }
+        patch.debitMin = debitMin;
+        patch.useBank = box.querySelector("#pg-usebank").checked;
+      }
       DB.mergeRecordUpdate("timeClockEntries", t.id, function () { return patch; });
       DB.log("Ponto", (timeChanged ? "Ajustou o horário do registro de ponto de " + t.employeeName + " para " + Utils.fmtDate(newDate) + " " + newTime : "Atualizou o registro de ponto de " + t.employeeName));
       Toast.show("Alterações salvas", "success");
@@ -746,12 +796,21 @@
         '<optgroup label="Ocorrência">' +
           Object.keys(PontoCalc.OCCURRENCE_KINDS).map(function (k) { return '<option value="' + k + '">' + PontoCalc.OCCURRENCE_KINDS[k].label + '</option>'; }).join("") +
         '</optgroup>' +
+        '<optgroup label="Banco de Horas">' +
+          '<option value="' + PontoCalc.ADJUST_TYPE + '">' + PontoCalc.ADJUST_LABEL + '</option>' +
+        '</optgroup>' +
       '</select></div>' +
       '<div class="flex gap-16" id="me-time-row">' +
         '<div class="form-field"><label>Data</label><input type="date" id="me-date" value="' + Utils.todayISO() + '"></div>' +
         '<div class="form-field"><label>Hora</label><input type="time" id="me-time" value="' + nowTime + '"></div>' +
       '</div>' +
       '<div class="form-field full" id="me-date-only" style="display:none;"><label>Data</label><input type="date" id="me-date2" value="' + Utils.todayISO() + '"></div>' +
+      '<div id="me-debit-wrap" style="display:none;">' +
+        '<div class="form-field full"><label>Horas a descontar (HH:MM)</label><input type="text" id="me-debit" placeholder="08:30"></div>' +
+        '<div class="small text-muted mb-8" id="me-debit-hint"></div>' +
+        '<div class="form-field full checkbox-wrap"><input type="checkbox" id="me-usebank" checked><label for="me-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
+        '<div class="small text-muted mb-16">Marcado: as horas saem do saldo do banco — se o saldo não cobrir, o restante fica como banco de horas negativo. Desmarcado: o banco não muda e o valor é descontado na Folha de Pagamento.</div>' +
+      '</div>' +
       '<div id="me-attach-wrap" style="display:none;">' + Utils.attachmentFieldHtml("me", "Anexo (opcional)") + '</div>' +
       '<div class="form-field full"><label>Motivo (opcional)</label><textarea id="me-reason" rows="2" placeholder="Ex.: esqueceu de bater o ponto na entrada"></textarea></div>';
     var foot =
@@ -761,11 +820,27 @@
     var attachmentCtl = Utils.wireAttachmentField(box, "me", null);
     var typeSel = box.querySelector("#me-type");
 
+    Utils.wireTimeMask(box.querySelector("#me-debit"));
+    // sugere a jornada do dia (um dia inteiro de falta) como horas a descontar
+    function suggestDebit() {
+      var empE = DB.get("employees", box.querySelector("#me-employee").value);
+      var dt = box.querySelector("#me-date2").value;
+      var min = empE && dt ? PontoCalc.dailyExpectedMin(empE, dt) : 0;
+      box.querySelector("#me-debit-hint").textContent = min ? "Jornada prevista nesse dia: " + PontoCalc.fmtHM(min) + " (sugerida abaixo — troque pelo valor que quer descontar)." : "";
+      var inp = box.querySelector("#me-debit");
+      if (!inp.getAttribute("data-touched")) inp.value = min ? PontoCalc.fmtClock(min) : "";
+    }
+    box.querySelector("#me-debit").addEventListener("input", function (e) { e.target.setAttribute("data-touched", "1"); });
+    box.querySelector("#me-employee").addEventListener("change", suggestDebit);
+    box.querySelector("#me-date2").addEventListener("change", suggestDebit);
     function syncFieldsForType() {
-      var isOcc = PontoCalc.isOccurrenceType(typeSel.value);
+      var isAdj = PontoCalc.isAdjustType(typeSel.value);
+      var isOcc = PontoCalc.isOccurrenceType(typeSel.value) || isAdj; // só data, sem hora
       box.querySelector("#me-time-row").style.display = isOcc ? "none" : "";
       box.querySelector("#me-date-only").style.display = isOcc ? "" : "none";
-      box.querySelector("#me-attach-wrap").style.display = isOcc ? "" : "none";
+      box.querySelector("#me-attach-wrap").style.display = isOcc && !isAdj ? "" : "none";
+      box.querySelector("#me-debit-wrap").style.display = isAdj ? "" : "none";
+      if (isAdj) suggestDebit();
     }
     typeSel.addEventListener("change", syncFieldsForType);
     syncFieldsForType();
@@ -774,12 +849,20 @@
       var employeeId = box.querySelector("#me-employee").value;
       var emp = DB.get("employees", employeeId);
       var type = typeSel.value;
-      var isOcc = PontoCalc.isOccurrenceType(type);
+      var isAdj = PontoCalc.isAdjustType(type);
+      var isOcc = PontoCalc.isOccurrenceType(type) || isAdj;
       var date = isOcc ? box.querySelector("#me-date2").value : box.querySelector("#me-date").value;
       var time = isOcc ? "00:00" : box.querySelector("#me-time").value;
       var reason = box.querySelector("#me-reason").value.trim();
       if (!emp || !date || (!isOcc && !time)) { Toast.show("Preencha funcionário, data" + (isOcc ? "" : " e hora"), "danger"); return; }
-      var dup = DB.all("timeClockEntries").some(function (x) { return x.employeeId === employeeId && x.date === date && x.type === type; });
+      var debitMin = 0, useBank = true;
+      if (isAdj) {
+        debitMin = PontoCalc.parseHM(box.querySelector("#me-debit").value) || 0;
+        useBank = box.querySelector("#me-usebank").checked;
+        if (debitMin <= 0) { Toast.show("Informe as horas a descontar (HH:MM, maior que 00:00)", "danger"); return; }
+      }
+      // horas negativas podem ser lançadas mais de uma vez no mesmo dia (cada uma é um desconto)
+      var dup = !isAdj && DB.all("timeClockEntries").some(function (x) { return x.employeeId === employeeId && x.date === date && x.type === type; });
       if (dup) { Toast.show("Esse funcionário já tem um registro desse tipo nessa data — edite o registro existente em vez de duplicar.", "danger", 4500); return; }
       DB.insert("timeClockEntries", {
         employeeId: employeeId,
@@ -791,11 +874,17 @@
         reviewed: true,
         origin: "manual",
         note: reason || null,
-        attachment: isOcc ? (attachmentCtl.get() || null) : undefined
+        attachment: isOcc && !isAdj ? (attachmentCtl.get() || null) : undefined,
+        debitMin: isAdj ? debitMin : undefined,
+        useBank: isAdj ? useBank : undefined
       });
-      var typeLabel = isOcc ? PontoCalc.OCCURRENCE_KINDS[type].label : PontoCalc.PUNCH_LABELS[type];
-      DB.log("Ponto", "Lançou manualmente " + (isOcc ? "a ocorrência" : "o ponto") + " de " + emp.name + " (" + typeLabel + " em " + Utils.fmtDate(date) + (isOcc ? "" : " às " + time) + ")" + (reason ? " — Motivo: " + reason : ""));
-      Toast.show(isOcc ? "Ocorrência lançada" : "Ponto lançado", "success");
+      var typeLabel = isAdj ? PontoCalc.ADJUST_LABEL : isOcc ? PontoCalc.OCCURRENCE_KINDS[type].label : PontoCalc.PUNCH_LABELS[type];
+      if (isAdj) {
+        DB.log("Ponto", "Lançou horas negativas de " + emp.name + " (-" + PontoCalc.fmtHM(debitMin) + " em " + Utils.fmtDate(date) + ", " + (useBank ? "descontado do banco de horas" : "descontado em folha") + ")" + (reason ? " — Motivo: " + reason : ""));
+      } else {
+        DB.log("Ponto", "Lançou manualmente " + (isOcc ? "a ocorrência" : "o ponto") + " de " + emp.name + " (" + typeLabel + " em " + Utils.fmtDate(date) + (isOcc ? "" : " às " + time) + ")" + (reason ? " — Motivo: " + reason : ""));
+      }
+      Toast.show(isAdj ? "Horas negativas lançadas" : isOcc ? "Ocorrência lançada" : "Ponto lançado", "success");
       Modal.close(); renderAll();
     });
   }
@@ -902,8 +991,8 @@
       (last7.length ? last7.map(function (d) {
         return '<div class="ponto-request-row" style="padding:8px 0;">' +
           '<div class="ponto-request-body"><div class="font-bold">' + Utils.fmtDate(d.date) + '</div>' +
-          '<div class="small text-muted">' + (d.occurrence ? (PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {}).label : d.statusLabel) + '</div></div>' +
-          '<div class="text-num ' + (d.workedMin != null && d.saldoMin < 0 ? "text-danger" : "text-success") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</div>' +
+          '<div class="small text-muted">' + (d.occurrence ? (PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {}).label : d.statusLabel) + (d.adjustEntries && d.adjustEntries.length && d.occurrence ? ' · ' + PontoCalc.ADJUST_LABEL : '') + '</div></div>' +
+          '<div class="text-num ' + (PontoCalc.dayBank(d).min < 0 ? "text-danger" : "text-success") + '">' + (PontoCalc.dayBank(d).show ? PontoCalc.fmtHM(PontoCalc.dayBank(d).min) : "-") + '</div>' +
           '</div>';
       }).join("") : '<div class="small text-muted">Nenhum registro nos últimos 7 dias.</div>');
   }
@@ -968,13 +1057,21 @@
         '<td colspan="5"><span class="badge ' + (d.status === "aguardando" ? "badge-info" : "badge-warning") + '">' + d.statusLabel + '</span>' +
         (d.expectedMin ? '<span class="small text-muted"> · previsto ' + PontoCalc.fmtHM(d.expectedMin) + '</span>' : '') + '</td><td class="text-num">-</td></tr>';
     }
+    var bk = PontoCalc.dayBank(d);
+    if (d.status === "ajuste") {
+      return '<tr>' + dateCell +
+        '<td colspan="5">' + d.adjustEntries.map(adjustBadgeHtml).join(" ") + '</td>' +
+        '<td class="text-num ' + (bk.min < 0 ? "text-danger" : "") + '">' + (bk.adjustMin ? PontoCalc.fmtHM(bk.min) : "0h00") + '</td>' +
+      '</tr>';
+    }
     if (d.occurrence) {
       var kind = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
       return '<tr>' + dateCell +
         '<td colspan="5"><span class="badge ' + (kind.badge || "badge-gray") + '"><i class="fa-solid ' + (kind.icon || "fa-circle-info") + '"></i> ' + (kind.label || d.occurrence.type) + '</span>' +
           (d.occurrence.note ? '<span class="small text-muted"> — ' + Utils.escapeHtml(d.occurrence.note) + '</span>' : '') +
+          (d.adjustEntries.length ? '<div class="mt-4">' + d.adjustEntries.map(adjustBadgeHtml).join(" ") + '</div>' : '') +
         '</td>' +
-        '<td class="text-num">0h00</td>' +
+        '<td class="text-num ' + (bk.min < 0 ? "text-danger" : "") + '">' + (bk.adjustMin ? PontoCalc.fmtHM(bk.min) : "0h00") + '</td>' +
       '</tr>';
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
@@ -984,16 +1081,17 @@
       '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
-      '<td class="text-num ' + (d.workedMin != null ? (d.saldoMin < 0 ? "text-danger" : "text-success") : "") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</td>' +
+      '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") +
+        (d.adjustEntries.length ? '<div class="small text-danger">' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') + '</td>' +
     '</tr>';
   }
 
   function drawerOcorrenciasHtml(employee) {
-    var list = DB.all("timeClockEntries").filter(function (t) { return t.employeeId === employee.id && PontoCalc.isOccurrenceType(t.type); })
+    var list = DB.all("timeClockEntries").filter(function (t) { return t.employeeId === employee.id && (PontoCalc.isOccurrenceType(t.type) || PontoCalc.isAdjustType(t.type)); })
       .sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
     if (!list.length) return '<div class="small text-muted">Nenhuma ocorrência registrada para este colaborador.</div>';
     return list.map(function (t) {
-      var k = PontoCalc.OCCURRENCE_KINDS[t.type] || {};
+      var k = PontoCalc.isAdjustType(t.type) ? { label: PontoCalc.ADJUST_LABEL + ' (' + adjustText(t) + ')' } : (PontoCalc.OCCURRENCE_KINDS[t.type] || {});
       return '<div class="ponto-request-row">' + thumbHtml(t) +
         '<div class="ponto-request-body"><div class="font-bold">' + (k.label || t.type) + '</div>' +
         '<div class="small text-muted">' + Utils.fmtDate(t.date) + (t.note ? ' · ' + Utils.escapeHtml(t.note) : '') + '</div>' +
@@ -1445,10 +1543,16 @@
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
             doc.text(wdName + " — " + d.statusLabel + (d.expectedMin ? " (previsto " + PontoCalc.fmtHM(d.expectedMin) + ")" : ""), FOLHA_COLS[1].x, y);
             doc.setTextColor(0);
+          } else if (d.status === "ajuste") {
+            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
+            doc.text(PontoCalc.fmtHM(PontoCalc.dayBank(d).min), FOLHA_COLS[8].x, y);
+            doc.text(wdName + " · " + d.adjustEntries.map(function (t) { return PontoCalc.ADJUST_LABEL + " " + adjustText(t); }).join(" · "), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           } else if (d.occurrence) {
             var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            var obsTxt = wdName + " · " + (k.label || d.occurrence.type) + (d.occurrence.note ? " — " + d.occurrence.note : "");
+            var obsTxt = wdName + " · " + (k.label || d.occurrence.type) + (d.occurrence.note ? " — " + d.occurrence.note : "") +
+              (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : "");
+            if (d.adjustMin) doc.text(PontoCalc.fmtHM(d.adjustMin), FOLHA_COLS[8].x, y);
             doc.text(obsTxt, FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           } else {
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
@@ -1459,8 +1563,8 @@
             doc.text(d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-", FOLHA_COLS[5].x, y);
             doc.text(d.workedMin != null ? "+" + PontoCalc.fmtHM(d.extraMin) : "-", FOLHA_COLS[6].x, y);
             doc.text(d.workedMin != null ? "-" + PontoCalc.fmtHM(d.missingMin) : "-", FOLHA_COLS[7].x, y);
-            doc.text(d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-", FOLHA_COLS[8].x, y);
-            doc.text(wdName + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
+            doc.text(PontoCalc.dayBank(d).show ? PontoCalc.fmtHM(PontoCalc.dayBank(d).min) : "-", FOLHA_COLS[8].x, y);
+            doc.text(wdName + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")) + (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : ""), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           }
           y += 14;
         });

@@ -50,7 +50,8 @@
       reductionA: 978.62,
       reductionB: 0.133145
     },
-    fgtsRate: 0.08
+    fgtsRate: 0.08,
+    monthlyHours: 220                         // divisor do valor-hora do mensalista (44h/semana)
   };
 
   function round2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
@@ -114,6 +115,8 @@
   //   vales: [{ id, description, amount, included }],
   //   extras: [{ kind: "provento"|"desconto", label, amount, taxable: bool }],
   //   bank: { monthMin, totalMin }  (informativo)
+  //   hoursDiscountMin: minutos de "horas negativas" lançadas SEM usar o banco (viram desconto:
+  //     valor-hora = salário base ÷ TABLES.monthlyHours; reduz a base do INSS/IRRF)
   // }
   function computePayslip(input) {
     var regime = input.regime === "none" ? "none" : "clt";
@@ -126,7 +129,10 @@
     (input.extras || []).forEach(function (x) {
       if (x.kind === "provento" && num(x.amount) > 0) earnings.push({ code: "extra", label: x.label || "Outro provento", amount: round2(x.amount), taxable: x.taxable !== false });
     });
-    var taxableBase = round2(earnings.reduce(function (s, e) { return s + (e.taxable ? e.amount : 0); }, 0));
+    var hoursMin = Math.max(0, Math.round(num(input.hoursDiscountMin)));
+    var hourly = TABLES.monthlyHours > 0 ? num(input.baseSalary) / TABLES.monthlyHours : 0;
+    var hoursDiscount = hoursMin > 0 ? round2(Math.min(salary, hoursMin / 60 * hourly)) : 0;
+    var taxableBase = round2(Math.max(0, earnings.reduce(function (s, e) { return s + (e.taxable ? e.amount : 0); }, 0) - hoursDiscount));
     var totalEarnings = round2(earnings.reduce(function (s, e) { return s + e.amount; }, 0));
 
     var deductions = [];
@@ -138,6 +144,7 @@
       if (irrfInfo.tax > 0) deductions.push({ code: "irrf", label: "IRRF", amount: irrfInfo.tax });
       fgts = round2(taxableBase * TABLES.fgtsRate);
     }
+    if (hoursDiscount > 0) deductions.push({ code: "horas_descontadas", label: "Horas negativas (desconto em folha)", amount: hoursDiscount });
     var valesTotal = 0;
     (input.vales || []).forEach(function (v) {
       if (v.included && num(v.amount) > 0) { valesTotal += num(v.amount); deductions.push({ code: "vale", label: v.description || "Vale / adiantamento", amount: round2(v.amount) }); }
@@ -153,6 +160,7 @@
       monthKey: input.monthKey, regime: regime, fraction: frac,
       earnings: earnings, deductions: deductions,
       totalEarnings: totalEarnings, totalDeductions: totalDeductions, net: net,
+      hoursDiscount: hoursDiscount, hoursDiscountMin: hoursMin,
       taxableBase: taxableBase, inss: inssValue, irrf: irrfInfo, fgts: fgts,
       bank: input.bank || null,
       warnings: net < 0 ? ["Líquido negativo: os descontos (vales/comissão já paga) superam os proventos do mês."] : []

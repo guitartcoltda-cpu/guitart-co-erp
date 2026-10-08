@@ -37,6 +37,15 @@
      ocorrência ou lançar a batida).
    Quem NÃO tem horário fixo continua exatamente como antes: carga
    horária diária única e só os dias que têm algum registro.
+
+   HORAS NEGATIVAS (08/10/2026) — terceiro tipo de registro, `debito_horas`
+   (ver ADJUST_TYPE): um desconto de horas lançado à mão pela Gestão de
+   Ponto (ex.: uma falta que precisa ser descontada). Guarda `debitMin`
+   (minutos, positivo) e `useBank`: true = sai do saldo do banco de horas
+   (se o saldo não cobrir, o banco fica negativo); false = não mexe no
+   banco, vira desconto em folha (ver folha-calc.js). Não é batida nem
+   ocorrência: convive com elas no mesmo dia (ex.: a ocorrência "FALTA"
+   continua marcando o dia e o débito diz quantas horas descontar).
    ============================================================ */
 (function (global) {
   "use strict";
@@ -55,6 +64,14 @@
     folga_abono: { label: "Folga / Abono", icon: "fa-umbrella-beach", badge: "badge-gray" },
     outro: { label: "Outra Ocorrência", icon: "fa-circle-info", badge: "badge-gray" }
   };
+
+  // Horas negativas (desconto) — ver cabeçalho. Não entra em PUNCH_TYPES nem
+  // em OCCURRENCE_KINDS de propósito: não é batida e não "justifica" o dia.
+  var ADJUST_TYPE = "debito_horas";
+  var ADJUST_LABEL = "Horas negativas (desconto)";
+  function isAdjustType(type) { return type === ADJUST_TYPE; }
+  // minutos de um registro de horas negativas (sempre >= 0)
+  function debitMinOf(t) { var n = Math.round(Number(t && t.debitMin) || 0); return n > 0 ? n : 0; }
 
   function isPunchType(type) { return PUNCH_TYPES.indexOf(type) !== -1; }
   function isOccurrenceType(type) { return !!OCCURRENCE_KINDS[type]; }
@@ -186,6 +203,13 @@
     dayEntries.filter(function (t) { return isPunchType(t.type); }).forEach(function (t) {
       if (!punches[t.type]) punches[t.type] = t;
     });
+    // horas negativas do dia: as que saem do banco (adjustMin, negativo) e as
+    // que viram desconto em folha (adjustPayMin, positivo)
+    var adjustEntries = dayEntries.filter(function (t) { return isAdjustType(t.type); });
+    var adjustMin = 0, adjustPayMin = 0;
+    adjustEntries.forEach(function (t) {
+      if (t.useBank === false) adjustPayMin += debitMinOf(t); else adjustMin -= debitMinOf(t);
+    });
 
     var result = {
       date: date,
@@ -202,6 +226,9 @@
       extraMin: 0,
       missingMin: 0,
       saldoMin: 0,
+      adjustEntries: adjustEntries,
+      adjustMin: adjustMin,
+      adjustPayMin: adjustPayMin,
       status: "incompleto",
       statusLabel: "Incompleto"
     };
@@ -235,9 +262,12 @@
     } else if (result.entrada && !result.saida) {
       result.status = "em_andamento";
       result.statusLabel = "Em andamento";
-    } else if (dayEntries.length) {
+    } else if (dayEntries.length > adjustEntries.length) {
       result.status = "incompleto";
       result.statusLabel = "Incompleto";
+    } else if (adjustEntries.length) {
+      result.status = "ajuste";
+      result.statusLabel = ADJUST_LABEL;
     }
     return result;
   }
@@ -260,7 +290,7 @@
     return {
       date: date, entrada: null, saidaAlmoco: null, voltaAlmoco: null, saida: null, occurrence: null,
       schedule: sc, expectedMin: sc ? sc.expectedMin : 0, lunchMinActual: null, lunchAssumed: false,
-      workedMin: null, extraMin: 0, missingMin: 0, saldoMin: 0, status: status, statusLabel: label, placeholder: true
+      workedMin: null, extraMin: 0, missingMin: 0, saldoMin: 0, adjustEntries: [], adjustMin: 0, adjustPayMin: 0, status: status, statusLabel: label, placeholder: true
     };
   }
 
@@ -309,11 +339,24 @@
       acc.extraMin += d.extraMin;
       acc.missingMin += d.missingMin;
       if (d.status === "completo") acc.saldoMin += d.saldoMin;
+      // horas negativas que saem do banco entram no saldo (mesmo em dia sem batida/com ocorrência)
+      acc.saldoMin += d.adjustMin || 0;
+      acc.adjustMin += d.adjustMin || 0;
+      acc.adjustPayMin += d.adjustPayMin || 0;
       if (d.status === "folga_semanal") acc.folgaDays++;
       if (d.status === "sem_registro") acc.pendingDays++;
       return acc;
-    }, { workedMin: 0, extraMin: 0, missingMin: 0, saldoMin: 0, folgaDays: 0, pendingDays: 0 });
+    }, { workedMin: 0, extraMin: 0, missingMin: 0, saldoMin: 0, adjustMin: 0, adjustPayMin: 0, folgaDays: 0, pendingDays: 0 });
     return { days: days, totals: totals };
+  }
+
+  // Saldo do dia no banco de horas, já com as horas negativas que saíram do
+  // banco. `show` = tem algo para mostrar (dia com batidas completas ou com
+  // horas negativas lançadas).
+  function dayBank(d) {
+    var punch = d.workedMin != null ? d.saldoMin : 0;
+    var adj = d.adjustMin || 0;
+    return { min: punch + adj, show: d.workedMin != null || adj !== 0, adjustMin: adj, adjustPayMin: d.adjustPayMin || 0 };
   }
 
   // Intervalo (datas ISO) do mês de `ref` (Date ou "yyyy-mm-dd"; padrão hoje).
@@ -332,6 +375,11 @@
     OCCURRENCE_KINDS: OCCURRENCE_KINDS,
     isPunchType: isPunchType,
     isOccurrenceType: isOccurrenceType,
+    ADJUST_TYPE: ADJUST_TYPE,
+    ADJUST_LABEL: ADJUST_LABEL,
+    isAdjustType: isAdjustType,
+    debitMinOf: debitMinOf,
+    dayBank: dayBank,
     dailyExpectedMin: dailyExpectedMin,
     WEEKDAY_NAMES: WEEKDAY_NAMES,
     WEEKDAY_SHORT: WEEKDAY_SHORT,

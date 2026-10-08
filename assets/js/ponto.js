@@ -305,13 +305,21 @@
         '<td colspan="5"><span class="badge ' + (d.status === "aguardando" ? "badge-info" : "badge-warning") + '">' + d.statusLabel + '</span>' +
         (d.expectedMin ? '<span class="small text-muted"> · previsto ' + PontoCalc.fmtHM(d.expectedMin) + '</span>' : '') + '</td><td class="text-num">-</td></tr>';
     }
+    var bk = PontoCalc.dayBank(d);
+    var adjTxt = function (t) { return PontoCalc.ADJUST_LABEL + ": -" + PontoCalc.fmtHM(PontoCalc.debitMinOf(t)) + (t.useBank === false ? " em folha" : " no banco de horas"); };
+    var adjBadges = d.adjustEntries.map(function (t) { return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + adjTxt(t) + '</span>'; }).join(" ");
+    if (d.status === "ajuste") {
+      return '<tr>' + dateCell + '<td colspan="5">' + adjBadges + '</td>' +
+        '<td class="text-num ' + (bk.min < 0 ? "text-danger" : "") + '">' + (bk.adjustMin ? PontoCalc.fmtHM(bk.min) : "0h00") + '</td></tr>';
+    }
     if (d.occurrence) {
       var kind = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
       return '<tr>' + dateCell +
         '<td colspan="5"><span class="badge ' + (kind.badge || "badge-gray") + '"><i class="fa-solid ' + (kind.icon || "fa-circle-info") + '"></i> ' + (kind.label || d.occurrence.type) + '</span>' +
           (d.occurrence.note ? '<span class="small text-muted"> — ' + Utils.escapeHtml(d.occurrence.note) + '</span>' : '') +
+          (adjBadges ? '<div class="mt-4">' + adjBadges + '</div>' : '') +
         '</td>' +
-        '<td class="text-num">0h00</td>' +
+        '<td class="text-num ' + (bk.min < 0 ? "text-danger" : "") + '">' + (bk.adjustMin ? PontoCalc.fmtHM(bk.min) : "0h00") + '</td>' +
       '</tr>';
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
@@ -321,7 +329,7 @@
       '<td class="text-num">' + hhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
-      '<td class="text-num ' + (d.workedMin != null ? (d.saldoMin < 0 ? "text-danger" : "text-success") : "") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</td>' +
+      '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") + (adjBadges ? '<div class="small">' + adjBadges + '</div>' : '') + '</td>' +
     '</tr>';
   }
 

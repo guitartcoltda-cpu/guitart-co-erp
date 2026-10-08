@@ -76,7 +76,10 @@
       try {
         var month = PontoCalc.espelho(emp.id, r.start, r.end, emp, allEntries).totals;
         var total = PontoCalc.espelho(emp.id, "2000-01-01", r.end, emp, allEntries).totals;
-        bank[emp.id] = { monthMin: month.saldoMin, totalMin: total.saldoMin };
+        // horas negativas lançadas SEM usar o banco viram desconto em folha — pelo mês inteiro
+        var full = FolhaCalc.monthInfo(monthKey);
+        var monthFull = PontoCalc.espelho(emp.id, full.start, full.end, emp, allEntries).totals;
+        bank[emp.id] = { monthMin: month.saldoMin, totalMin: total.saldoMin, payMin: monthFull.adjustPayMin || 0 };
       } catch (e2) { bank[emp.id] = null; }
     });
     cache = { monthKey: monthKey, commission: commission, bank: bank, range: r };
@@ -133,7 +136,8 @@
       monthKey: monthKey, regime: cfg.regime || "clt", baseSalary: emp.baseSalary, hireDate: emp.hireDate,
       dependents: cfg.dependents || 0,
       commissionDevido: com ? com.devido : 0, commissionPago: com ? com.pago : 0,
-      vales: valeCandidates(emp), extras: st.extras || [], bank: c.bank[emp.id]
+      vales: valeCandidates(emp), extras: st.extras || [], bank: c.bank[emp.id],
+      hoursDiscountMin: c.bank[emp.id] ? c.bank[emp.id].payMin : 0
     });
   }
 
@@ -251,7 +255,8 @@
       });
       return FolhaCalc.computePayslip({
         monthKey: monthKey, regime: tmp.payroll.regime, baseSalary: emp.baseSalary, hireDate: emp.hireDate, dependents: tmp.payroll.dependents,
-        commissionDevido: com ? com.devido : 0, commissionPago: com ? com.pago : 0, vales: valesNow, extras: extras, bank: c.bank[emp.id]
+        commissionDevido: com ? com.devido : 0, commissionPago: com ? com.pago : 0, vales: valesNow, extras: extras, bank: c.bank[emp.id],
+        hoursDiscountMin: c.bank[emp.id] ? c.bank[emp.id].payMin : 0
       });
     }
     function redraw() {
