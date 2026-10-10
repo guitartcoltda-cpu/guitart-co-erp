@@ -49,6 +49,11 @@
 
   function summarize(payload) {
     var kind = effectiveKind(payload);
+    if (kind === "saida_antecipada") {
+      var dia = global.Utils ? Utils.fmtDate(payload.date) : payload.date;
+      return "Saída antecipada — " + payload.employeeName + " em " + dia + ": saiu às " + payload.exitTime +
+        (payload.earlyMin ? " (" + payload.earlyMin + " min antes do fim da jornada)" : "");
+    }
     if (kind === "ponto_novo" || kind === "ponto_corrigir") {
       var quando = (global.Utils ? Utils.fmtDate(payload.date) : payload.date) + " às " + payload.requestedTime;
       return (kind === "ponto_corrigir" ? "Corrigir horário — " : "Registro que faltou — ") +
@@ -70,6 +75,16 @@
   function apply(payload) {
     if (!payload) return;
     var kind = effectiveKind(payload);
+
+    // SAÍDA ANTECIPADA (10/10/2026): aprovar = ABONAR. A batida de saída já
+    // existe (foi feita pelo funcionário); só muda o status dela de
+    // "pendente" para "abonada", e o cálculo do dia passa a não descontar
+    // o tempo que faltou. Usa mergeRecordUpdate para não apagar edições
+    // concorrentes na mesma batida.
+    if (kind === "saida_antecipada") {
+      decideEarlyLeave(payload, "abonada");
+      return;
+    }
 
     if (kind === "ponto_corrigir") {
       var entry = DB.get("timeClockEntries", payload.targetEntryId);
@@ -144,12 +159,53 @@
     });
   }
 
+  function decideEarlyLeave(payload, status) {
+    if (!payload || !payload.entryId) return;
+    var entry = DB.get("timeClockEntries", payload.entryId);
+    if (!entry) return; // batida apagada nesse meio-tempo: nada a decidir
+    var who = global.CurrentUser && CurrentUser.get ? CurrentUser.get() : null;
+    DB.mergeRecordUpdate("timeClockEntries", payload.entryId, function (fresh) {
+      var base = (fresh && fresh.earlyLeave) || {};
+      return {
+        earlyLeave: Object.assign({}, base, {
+          status: status,
+          decidedAt: DB.nowISO(),
+          decidedByName: who ? ([who.firstName, who.lastName].filter(Boolean).join(" ") || who.name || null) : null
+        })
+      };
+    });
+  }
+
+  // Roda quando a solicitação é RECUSADA (Approvals.reject chama): a saída
+  // antecipada deixa de ser neutra e passa a contar normalmente no banco.
+  function onReject(payload) {
+    if (!payload) return;
+    if (effectiveKind(payload) === "saida_antecipada") decideEarlyLeave(payload, "recusada");
+  }
+
+  // Cria a solicitação de aprovação de uma saída antecipada já registrada.
+  function requestEarlyLeave(info) {
+    return request({
+      kind: "saida_antecipada",
+      entryId: info.entryId,
+      employeeId: info.employeeId,
+      employeeName: info.employeeName,
+      date: info.date,
+      exitTime: info.exitTime,
+      earlyMin: info.earlyMin,
+      claimedAuthorized: !!info.claimedAuthorized,
+      reason: info.reason || ""
+    });
+  }
+
   global.PontoAjustes = {
     TYPE: TYPE,
     buildTimestamp: buildTimestamp,
     effectiveKind: effectiveKind,
     summarize: summarize,
     request: request,
+    requestEarlyLeave: requestEarlyLeave,
+    onReject: onReject,
     apply: apply
   };
 })(window);

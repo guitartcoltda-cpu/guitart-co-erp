@@ -38,6 +38,16 @@
    Quem NÃO tem horário fixo continua exatamente como antes: carga
    horária diária única e só os dias que têm algum registro.
 
+   SAÍDA ANTECIPADA (10/10/2026) — ao bater a saída mais de 10 minutos antes
+   do fim da jornada do dia (EARLY_TOLERANCE_MIN), a pessoa informa o motivo
+   e se foi liberada pela gerência (ponto.js). A batida é concluída e o
+   registro "saida" ganha `earlyLeave: { status, claimedAuthorized, reason }`
+   e uma solicitação de aprovação (ponto-ajustes.js, kind "saida_antecipada").
+   Efeito no banco de horas conforme o `status`: "pendente" (ainda sem
+   decisão) e "abonada" (gerência aprovou) NEUTRALIZAM o trecho que faltou
+   (o saldo do dia é calculado como se tivesse saído no horário); "recusada"
+   conta normalmente (cai no banco como saldo negativo, como sempre).
+
    HORAS NEGATIVAS (08/10/2026) — terceiro tipo de registro, `debito_horas`
    (ver ADJUST_TYPE): um desconto de horas lançado à mão pela Gestão de
    Ponto (ex.: uma falta que precisa ser descontada). Guarda `debitMin`
@@ -75,6 +85,14 @@
 
   function isPunchType(type) { return PUNCH_TYPES.indexOf(type) !== -1; }
   function isOccurrenceType(type) { return !!OCCURRENCE_KINDS[type]; }
+
+  // Saída final até 10 min antes do fim da jornada não pergunta nada (conta normal).
+  var EARLY_TOLERANCE_MIN = 10;
+  var EARLY_LABELS = {
+    pendente: { label: "Saída antecipada — aguardando a gerência", badge: "badge-warning" },
+    abonada: { label: "Saída antecipada autorizada (sem desconto)", badge: "badge-success" },
+    recusada: { label: "Saída antecipada recusada (conta no banco)", badge: "badge-danger" }
+  };
 
   // ---------------- Jornada (employee.workSchedule) ----------------
   var WEEKDAY_NAMES = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
@@ -136,6 +154,20 @@
     var h = employee && Number(employee.dailyWorkHours);
     if (!h || h <= 0) h = 8;
     return h * 60;
+  }
+
+  // Minutos que a saída (timestamp ISO ou Date) ficou ANTES do fim previsto do dia
+  // (0 se não há horário fixo, é folga ou saiu no horário/depois).
+  function earlyMinutes(employee, dateIso, saidaTimestamp) {
+    var sc = scheduleFor(employee, dateIso);
+    if (!sc || !sc.working || !saidaTimestamp) return 0;
+    var d = new Date(saidaTimestamp);
+    var min = d.getHours() * 60 + d.getMinutes();
+    return Math.max(0, sc.endMin - min);
+  }
+  // Essa saída (feita agora ou no timestamp dado) precisa de justificativa? (> tolerância)
+  function needsEarlyLeaveReason(employee, dateIso, saidaTimestamp) {
+    return earlyMinutes(employee, dateIso, saidaTimestamp) > EARLY_TOLERANCE_MIN;
   }
 
   // Texto resumo da jornada, ex.: "Ter–Sáb · 09:40–19:00 · almoço 1h00 (12:00–13:00) · 8h20/dia".
@@ -226,6 +258,8 @@
       extraMin: 0,
       missingMin: 0,
       saldoMin: 0,
+      earlyLeave: null,
+      earlyLeaveMin: 0,
       adjustEntries: adjustEntries,
       adjustMin: adjustMin,
       adjustPayMin: adjustPayMin,
@@ -254,9 +288,17 @@
       }
       var workedMin = Math.max(0, Math.round(workedMs / 60000));
       result.workedMin = workedMin;
-      result.extraMin = Math.max(0, workedMin - expectedMin);
-      result.missingMin = Math.max(0, expectedMin - workedMin);
-      result.saldoMin = workedMin - expectedMin;
+      // Saída antecipada justificada: "pendente" e "abonada" neutralizam o trecho
+      // que faltou; "recusada" (ou sem justificativa) conta normal.
+      var el = result.saida && result.saida.earlyLeave;
+      var early = 0;
+      if (el && (el.status === "pendente" || el.status === "abonada")) early = earlyMinutes(employee, date, result.saida.timestamp);
+      result.earlyLeave = el ? { status: el.status, claimedAuthorized: !!el.claimedAuthorized, reason: el.reason || "", min: earlyMinutes(employee, date, result.saida.timestamp) } : null;
+      result.earlyLeaveMin = early;
+      var effective = workedMin + early;
+      result.extraMin = Math.max(0, effective - expectedMin);
+      result.missingMin = Math.max(0, expectedMin - effective);
+      result.saldoMin = effective - expectedMin;
       result.status = "completo";
       result.statusLabel = "Completo";
     } else if (result.entrada && !result.saida) {
@@ -290,7 +332,7 @@
     return {
       date: date, entrada: null, saidaAlmoco: null, voltaAlmoco: null, saida: null, occurrence: null,
       schedule: sc, expectedMin: sc ? sc.expectedMin : 0, lunchMinActual: null, lunchAssumed: false,
-      workedMin: null, extraMin: 0, missingMin: 0, saldoMin: 0, adjustEntries: [], adjustMin: 0, adjustPayMin: 0, status: status, statusLabel: label, placeholder: true
+      workedMin: null, extraMin: 0, missingMin: 0, saldoMin: 0, earlyLeave: null, earlyLeaveMin: 0, adjustEntries: [], adjustMin: 0, adjustPayMin: 0, status: status, statusLabel: label, placeholder: true
     };
   }
 
@@ -359,6 +401,14 @@
     return { min: punch + adj, show: d.workedMin != null || adj !== 0, adjustMin: adj, adjustPayMin: d.adjustPayMin || 0 };
   }
 
+  // Selo da saída antecipada de um dia (ou null): { label, badge, status, min, reason }.
+  function earlyLeaveMeta(d) {
+    if (!d || !d.earlyLeave) return null;
+    var m = EARLY_LABELS[d.earlyLeave.status];
+    if (!m) return null;
+    return { label: m.label, badge: m.badge, status: d.earlyLeave.status, min: d.earlyLeave.min, reason: d.earlyLeave.reason, claimedAuthorized: d.earlyLeave.claimedAuthorized };
+  }
+
   // Intervalo (datas ISO) do mês de `ref` (Date ou "yyyy-mm-dd"; padrão hoje).
   function monthRange(ref) {
     var d = typeof ref === "string" ? new Date(ref + "T00:00:00") : (ref instanceof Date ? ref : new Date());
@@ -375,6 +425,10 @@
     OCCURRENCE_KINDS: OCCURRENCE_KINDS,
     isPunchType: isPunchType,
     isOccurrenceType: isOccurrenceType,
+    EARLY_TOLERANCE_MIN: EARLY_TOLERANCE_MIN,
+    earlyMinutes: earlyMinutes,
+    needsEarlyLeaveReason: needsEarlyLeaveReason,
+    earlyLeaveMeta: earlyLeaveMeta,
     ADJUST_TYPE: ADJUST_TYPE,
     ADJUST_LABEL: ADJUST_LABEL,
     isAdjustType: isAdjustType,

@@ -163,9 +163,23 @@
       document.getElementById("ponto-selfie-input").addEventListener("change", function (ev) {
         var file = ev.target.files && ev.target.files[0];
         if (!file) return;
+        var input = ev.target;
         document.getElementById("ponto-saving").style.display = "";
         Utils.fileToAvatarDataUrl(file, 240, function (dataUrl) {
           if (!dataUrl) { Toast.show("Não foi possível carregar a selfie — tente de novo", "danger"); document.getElementById("ponto-saving").style.display = "none"; return; }
+          // SAÍDA ANTECIPADA (10/10/2026): saída final mais de 10 min antes do
+          // fim da jornada pede "liberada pela gerência? + motivo" ANTES de
+          // registrar. Cancelar não registra nada (a selfie é descartada).
+          var step = selectedStep;
+          if (step && step.type === "saida" && PontoCalc.needsEarlyLeaveReason(e, Utils.todayISO(), new Date())) {
+            document.getElementById("ponto-saving").style.display = "none";
+            try { input.value = ""; } catch (err) { /* ignora */ }
+            openEarlyLeaveModal(e, function (info) {
+              document.getElementById("ponto-saving").style.display = "";
+              saveEntry(e, step, dataUrl, info);
+            });
+            return;
+          }
           saveEntry(e, selectedStep, dataUrl);
         });
       });
@@ -173,7 +187,34 @@
     renderEspelho();
   }
 
-  function saveEntry(e, step, selfieDataUrl) {
+  // Pergunta à funcionária, ao bater a saída final antes do horário.
+  function openEarlyLeaveModal(e, onConfirm) {
+    var earlyNow = PontoCalc.earlyMinutes(e, Utils.todayISO(), new Date());
+    var body =
+      '<p>Você está batendo a saída <strong>' + PontoCalc.fmtHM(earlyNow) + ' antes</strong> do fim da sua jornada. ' +
+      'Conte pra gente o que aconteceu — sua saída será registrada e a gerência confirma depois.</p>' +
+      '<div class="form-field full"><label>Você foi liberada pela gerência?</label>' +
+        '<div class="flex gap-16" style="flex-wrap:wrap;">' +
+          '<label style="display:flex;flex-direction:row;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="el-auth" value="sim"> Sim, fui liberada</label>' +
+          '<label style="display:flex;flex-direction:row;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="el-auth" value="nao"> Não</label>' +
+        '</div></div>' +
+      '<div class="form-field full mt-8"><label>Motivo (opcional)</label>' +
+        '<textarea id="el-reason" rows="2" placeholder="Ex.: agenda tranquila, consulta médica..."></textarea></div>' +
+      '<div class="small text-muted mt-8">Enquanto a gerência não decidir, esta saída não altera seu banco de horas.</div>';
+    var foot =
+      '<button class="btn btn-secondary" data-close-modal>Cancelar (não registrar)</button>' +
+      '<button class="btn btn-primary" id="el-confirm">Registrar Saída</button>';
+    var box = Modal.open({ title: "Saída antes do horário", bodyHtml: body, footHtml: foot });
+    box.querySelector("#el-confirm").addEventListener("click", function () {
+      var sel = box.querySelector('input[name="el-auth"]:checked');
+      if (!sel) { Toast.show("Responda se você foi liberada pela gerência", "danger"); return; }
+      var info = { claimedAuthorized: sel.value === "sim", reason: box.querySelector("#el-reason").value.trim() };
+      Modal.close();
+      onConfirm(info);
+    });
+  }
+
+  function saveEntry(e, step, selfieDataUrl, earlyInfo) {
     // Rechecagem de última hora: se essa pessoa bateu esse mesmo passo em
     // outra aba/aparelho nos segundos entre abrir a tela e tirar a selfie,
     // não deixa duplicar.
@@ -192,7 +233,18 @@
       selfieDataUrl: selfieDataUrl,
       reviewed: false
     };
+    var earlyMin = (earlyInfo && step.type === "saida") ? PontoCalc.earlyMinutes(e, record.date, record.timestamp) : 0;
+    if (earlyMin > 0) {
+      record.earlyLeave = { status: "pendente", claimedAuthorized: !!earlyInfo.claimedAuthorized, reason: earlyInfo.reason || "" };
+    }
     DB.insert("timeClockEntries", record);
+    if (earlyMin > 0 && window.PontoAjustes) {
+      PontoAjustes.requestEarlyLeave({
+        entryId: record.id, employeeId: e.id, employeeName: e.name, date: record.date,
+        exitTime: new Date(record.timestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+        earlyMin: earlyMin, claimedAuthorized: !!earlyInfo.claimedAuthorized, reason: earlyInfo.reason || ""
+      });
+    }
     DB.log("Ponto", e.name + " registrou: " + step.label);
     // BUG CORRIGIDO (18/09/2026): "tiramos a foto, enviamos, mas não dá
     // baixa" — antes, a tela mostrava "Ponto registrado!" na hora (padrão
@@ -211,7 +263,7 @@
     var savingEl = document.getElementById("ponto-saving");
     if (savingEl) { savingEl.style.display = ""; savingEl.textContent = "Confirmando envio..."; }
     DB.confirmSaved("timeClockEntries", record.id).then(function (ok) {
-      if (ok) showDone(e, step);
+      if (ok) showDone(e, step, record);
       else showSyncFailure(e, step, record);
     });
   }
@@ -236,7 +288,7 @@
     document.getElementById("ponto-retry-back").addEventListener("click", function () { renderDay(); });
   }
 
-  function showDone(e, step) {
+  function showDone(e, step, record) {
     showOnly("ponto-done");
     var now = new Date();
     document.getElementById("ponto-done-body").innerHTML =
@@ -244,6 +296,7 @@
         '<div class="es-icon" style="color:var(--color-success);"><i class="fa-solid fa-circle-check"></i></div>' +
         '<h4>Registrado, ' + Utils.escapeHtml(e.name.split(" ")[0]) + '!</h4>' +
         '<p class="small text-muted">' + Utils.escapeHtml(step.label) + ' às ' + now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) + '</p>' +
+        (record && record.earlyLeave ? '<p class="small text-muted mt-8">Sua saída antecipada foi enviada para a gerência confirmar. Até lá, ela não altera seu banco de horas.</p>' : '') +
       '</div>';
     Toast.show("Ponto registrado: " + step.label, "success");
     setTimeout(renderPicker, 4000);
@@ -323,6 +376,8 @@
       '</tr>';
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
+    var elMeta = PontoCalc.earlyLeaveMeta(d);
+    if (elMeta) statusBadge += '<div><span class="badge ' + elMeta.badge + '"><i class="fa-solid fa-door-open"></i> ' + elMeta.label + '</span></div>';
     return '<tr>' + dateCell +
       '<td class="text-num">' + hhmm(d.entrada) + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? hhmm(d.saidaAlmoco) + ' → ' + hhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +

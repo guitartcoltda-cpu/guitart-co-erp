@@ -127,6 +127,22 @@
     return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + PontoCalc.ADJUST_LABEL + ': ' + adjustText(t) + '</span>';
   }
 
+  // SAÍDA ANTECIPADA (10/10/2026): selo/texto do dia quando a saída foi
+  // antes do fim da jornada e o funcionário informou o motivo.
+  function earlyBadgeHtml(d) {
+    var m = PontoCalc.earlyLeaveMeta(d);
+    if (!m) return "";
+    return '<span class="badge ' + m.badge + '" title="' + Utils.escapeHtml(earlyDetailText(m)) + '"><i class="fa-solid fa-door-open"></i> ' + m.label + '</span>';
+  }
+  function earlyDetailText(m) {
+    return PontoCalc.fmtHM(m.min) + ' antes do fim da jornada · informou ' + (m.claimedAuthorized ? 'liberada pela gerência' : 'não liberada pela gerência') +
+      (m.reason ? ' · motivo: ' + m.reason : '');
+  }
+  function earlyText(d) {
+    var m = PontoCalc.earlyLeaveMeta(d);
+    return m ? m.label + " (" + PontoCalc.fmtHM(m.min) + ")" : "";
+  }
+
   function typeBadge(type) {
     if (PontoCalc.isAdjustType(type)) return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + PontoCalc.ADJUST_LABEL + '</span>';
     if (PontoCalc.isOccurrenceType(type)) {
@@ -395,6 +411,7 @@
       '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') +
         (d.workedMin != null ? '<div class="small ' + (d.saldoMin < 0 ? "text-danger" : "text-success") + '">saldo ' + PontoCalc.fmtHM(d.saldoMin) + '</div>' : '') +
+        (d.earlyLeave ? '<div class="mt-4">' + earlyBadgeHtml(d) + '</div>' : '') +
         (d.adjustEntries.length ? '<div class="small text-danger">' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') +
       '</td>' +
       '<td>' + reviewBadge + '</td>' +
@@ -595,6 +612,7 @@
       '<div><b>Saldo:</b> <span class="' + (d.workedMin != null && d.saldoMin < 0 ? "text-danger" : "text-success") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</span></div>' +
       (d.adjustEntries.length ? '<div class="text-danger"><b>Horas negativas:</b> ' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') +
       (d.status !== "completo" ? '<div>' + d.statusLabel + '</div>' : '') +
+      (d.earlyLeave ? '<div>' + earlyBadgeHtml(d) + '<div class="small text-muted mt-4">' + Utils.escapeHtml(earlyDetailText(PontoCalc.earlyLeaveMeta(d))) + '</div></div>' : '') +
       '</div>';
 
     var punches = dayEntries.filter(function (t) { return PontoCalc.isPunchType(t.type); })
@@ -1082,6 +1100,7 @@
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
       '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") +
+        (d.earlyLeave ? '<div class="mt-4">' + earlyBadgeHtml(d) + '</div>' : '') +
         (d.adjustEntries.length ? '<div class="small text-danger">' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') + '</td>' +
     '</tr>';
   }
@@ -1152,7 +1171,7 @@
     var p = a.payload || {};
     var kind = PontoAjustes.effectiveKind(p);
     var kindMeta = PontoCalc.OCCURRENCE_KINDS[kind];
-    var icon = kindMeta ? kindMeta.icon : (kind === "ponto_corrigir" ? "fa-pen" : "fa-clock");
+    var icon = kindMeta ? kindMeta.icon : (kind === "saida_antecipada" ? "fa-door-open" : (kind === "ponto_corrigir" ? "fa-pen" : "fa-clock"));
     var actions = canApprove
       ? '<div class="flex gap-6">' +
           '<button class="btn btn-sm btn-primary" data-approve-req="' + a.id + '">Aprovar</button>' +
@@ -1163,7 +1182,9 @@
       '<div class="ponto-request-icon"><i class="fa-solid ' + icon + '"></i></div>' +
       '<div class="ponto-request-body">' +
         '<div class="font-bold">' + Utils.escapeHtml(a.summary || "-") + '</div>' +
+        (kind === "saida_antecipada" ? '<div class="small">Informou: <b>' + (p.claimedAuthorized ? 'liberada pela gerência' : 'NÃO liberada pela gerência') + '</b></div>' : '') +
         (p.reason ? '<div class="small text-muted">Motivo: ' + Utils.escapeHtml(p.reason) + '</div>' : '') +
+        (kind === "saida_antecipada" ? '<div class="small text-muted">Enquanto pendente, o saldo do dia fica neutro. <b>Aprovar</b> = abona (sem desconto). <b>Recusar</b> = o tempo conta normalmente no banco.</div>' : '') +
         '<div class="small text-muted">Solicitado por ' + Utils.escapeHtml(a.requestedByName || "-") + ' · ' + Utils.fmtDateTime(a.createdAt) + '</div>' +
         (p.attachment ? '<div class="mt-4">' + attachmentLinkHtml(p.attachment) + '</div>' : '') +
         (canApprove ? '<textarea class="mt-8" data-comment-for="' + a.id + '" rows="1" placeholder="Comentário (opcional, fica registrado na decisão)" style="width:100%;font-size:12.5px;"></textarea>' : '') +
@@ -1564,7 +1585,7 @@
             doc.text(d.workedMin != null ? "+" + PontoCalc.fmtHM(d.extraMin) : "-", FOLHA_COLS[6].x, y);
             doc.text(d.workedMin != null ? "-" + PontoCalc.fmtHM(d.missingMin) : "-", FOLHA_COLS[7].x, y);
             doc.text(PontoCalc.dayBank(d).show ? PontoCalc.fmtHM(PontoCalc.dayBank(d).min) : "-", FOLHA_COLS[8].x, y);
-            doc.text(wdName + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")) + (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : ""), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
+            doc.text(wdName + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")) + (d.earlyLeave ? " · " + earlyText(d) : "") + (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : ""), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           }
           y += 14;
         });

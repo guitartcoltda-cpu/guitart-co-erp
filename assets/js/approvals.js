@@ -104,13 +104,20 @@
     });
   }
 
-  function reject(id, reason) {
+  // SAÍDA ANTECIPADA (10/10/2026): alguns tipos precisam reagir também à
+  // RECUSA (ex.: marcar a saída antecipada como "recusada"). `onReject` é
+  // opcional; se não vier e a solicitação for um ajuste de ponto, usa o
+  // PontoAjustes.onReject — assim todos os pontos que recusam (Gestão de
+  // Ponto e Configurações) passam a tratar isso sem precisar mudar.
+  function reject(id, reason, onReject) {
     var a = DB.get("approvals", id);
     if (!a || a.status !== "pendente") return Promise.resolve({ ok: false, reason: "not_pending_local" });
     return DB.fetchFresh("approvals", id).then(function (fresh) {
       if (fresh && fresh.status !== "pendente") {
         return { ok: false, reason: "already_decided", status: fresh.status };
       }
+      if (typeof onReject !== "function" && a.type === "ajuste_ponto" && global.PontoAjustes) onReject = global.PontoAjustes.onReject;
+      if (typeof onReject === "function") onReject(a.payload, a);
       var updated = DB.update("approvals", id, {
         status: "recusada",
         decidedBy: (global.CurrentUser && global.CurrentUser.get()) ? global.CurrentUser.get().id : null,
