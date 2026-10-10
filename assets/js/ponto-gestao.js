@@ -413,9 +413,9 @@
     return '<tr>' +
       '<td class="text-num">' + Utils.fmtDate(row.date) + '</td>' +
       '<td>' + nameCell + '</td>' +
-      '<td class="text-num">' + pgHhmm(d.entrada) + (d.entradaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.entrada) + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : '-') + '</td>' +
-      '<td class="text-num">' + pgHhmm(d.saida) + (d.saidaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') +
         (d.workedMin != null ? '<div class="small ' + (d.saldoMin < 0 ? "text-danger" : "text-success") + '">saldo ' + PontoCalc.fmtHM(d.saldoMin) + '</div>' : '') +
         (d.earlyLeave ? '<div class="mt-4">' + earlyBadgeHtml(d) + '</div>' : '') +
@@ -1288,9 +1288,9 @@
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
     return '<tr>' + dateCell +
-      '<td class="text-num">' + pgHhmm(d.entrada) + (d.entradaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.entrada) + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +
-      '<td class="text-num">' + pgHhmm(d.saida) + (d.saidaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
       '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") +

@@ -428,9 +428,9 @@
     var elMeta = PontoCalc.earlyLeaveMeta(d);
     if (elMeta) statusBadge += '<div><span class="badge ' + elMeta.badge + '"><i class="fa-solid fa-door-open"></i> ' + elMeta.label + '</span></div>';
     return '<tr>' + dateCell +
-      '<td class="text-num">' + hhmm(d.entrada) + (d.entradaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
+      '<td class="text-num">' + hhmm(d.entrada) + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? hhmm(d.saidaAlmoco) + ' → ' + hhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +
-      '<td class="text-num">' + hhmm(d.saida) + (d.saidaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
+      '<td class="text-num">' + hhmm(d.saida) + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
       '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") + (adjBadges ? '<div class="small">' + adjBadges + '</div>' : '') + '</td>' +

@@ -462,9 +462,6 @@
     needsEarlyLeaveReason: needsEarlyLeaveReason,
     earlyLeaveMeta: earlyLeaveMeta,
     PUNCH_TOLERANCE_MIN: PUNCH_TOLERANCE_MIN,
-    tolMarkHtml: function () {
-      return ' <span class="tol-mark" title="Dentro da tolerância de ' + PUNCH_TOLERANCE_MIN + ' min — contado como no horário previsto">(tol.)</span>';
-    },
     ADJUST_TYPE: ADJUST_TYPE,
     ADJUST_LABEL: ADJUST_LABEL,
     isAdjustType: isAdjustType,

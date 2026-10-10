@@ -278,7 +278,6 @@
         c[7] = d.workedMin != null ? "-" + PC.fmtHM(d.missingMin) : "-";
         c[8] = bank.show ? PC.fmtHM(bank.min) : "-";
         c[9] = wd + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")) +
-          (d.entradaTolerada || d.saidaTolerada ? " · tol. " + PC.PUNCH_TOLERANCE_MIN + "min" : "") +
           (d.earlyLeave ? " · " + earlyText(d) : "") +
           (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : "");
       }
