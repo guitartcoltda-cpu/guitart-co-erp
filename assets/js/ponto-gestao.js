@@ -53,7 +53,9 @@
       empSel.value = ""; Utils.qs("#pg-start").value = ""; Utils.qs("#pg-end").value = ""; Utils.qs("#pg-type").value = "";
       renderControleDePonto();
     });
-    Utils.qs("#btn-new-manual-entry").addEventListener("click", function () { openManualEntryModal(); });
+    var manualBtn = Utils.qs("#btn-new-manual-entry");
+    if (!canManage()) manualBtn.style.display = "none";
+    manualBtn.addEventListener("click", function () { openManualEntryModal(); });
     var folhaBtn = Utils.qs("#btn-folha-ponto");
     if (folhaBtn) folhaBtn.addEventListener("click", openFolhaModal);
 
@@ -529,9 +531,19 @@
   // Checkbox de conferência rápida, direto na timeline — para não precisar
   // abrir "Ver / conferir" registro por registro só para flegar o que já foi
   // conferido. Lido em lote por applyTimelineReviewedChecks() ao salvar.
+  // PERMISSÃO (10/10/2026): editar/excluir marcações, lançar ponto manual, ajustar
+  // saldo do banco e conferir marcações é só para Administrador/Desenvolvedor
+  // (mesma regra da Folha de Pagamento). Os demais com acesso à tela só
+  // visualizam; decidir as solicitações continua por "Pode aprovar solicitações".
+  function canManage() {
+    var u = window.CurrentUser && CurrentUser.get ? CurrentUser.get() : null;
+    return !!(u && ["Administrador", "Desenvolvedor"].indexOf(u.role) !== -1);
+  }
+  function denyManage() { Toast.show("Somente administradores podem alterar o ponto.", "danger"); }
+
   function reviewedCheckboxHtml(t) {
-    return '<label class="tl-check-wrap" title="Marcar como conferido">' +
-      '<input type="checkbox" class="tl-check" data-tl-check="' + t.id + '" ' + (t.reviewed ? "checked" : "") + '>' +
+    return '<label class="tl-check-wrap" title="' + (canManage() ? "Marcar como conferido" : "Somente administradores conferem marcações") + '">' +
+      '<input type="checkbox" class="tl-check" data-tl-check="' + t.id + '" ' + (t.reviewed ? "checked" : "") + (canManage() ? "" : " disabled") + '>' +
       '</label>';
   }
 
@@ -540,6 +552,7 @@
   // (compara com o valor já salvo), sem exigir abrir cada registro.
   function applyTimelineReviewedChecks(container) {
     var changed = 0;
+    if (!canManage()) return 0;
     Utils.qsa("[data-tl-check]", container).forEach(function (el) {
       var id = el.getAttribute("data-tl-check");
       var rec = DB.get("timeClockEntries", id);
@@ -681,6 +694,7 @@
   }
 
   function confirmDeleteEntry(id) {
+    if (!canManage()) { denyManage(); return; }
     var t = DB.get("timeClockEntries", id);
     if (!t) return;
     Modal.confirm({
@@ -817,7 +831,8 @@
       '<div class="form-field full"><label>Observação (opcional)</label><textarea id="pg-note" rows="2">' + Utils.escapeHtml(t.note || "") + '</textarea></div>' +
       '<div class="form-field full checkbox-wrap"><input type="checkbox" id="pg-reviewed" ' + (t.reviewed ? "checked" : "") + '><label for="pg-reviewed" style="font-weight:600;">Marcar como conferido</label></div>' +
       histHtml;
-    var foot =
+    var readOnly = !canManage();
+    var foot = readOnly ? '<button class="btn btn-secondary" data-close-modal>Fechar</button>' :
       '<button class="btn btn-danger" id="pg-delete" style="margin-right:auto;">Excluir</button>' +
       '<button class="btn btn-secondary" data-close-modal>Fechar</button>' +
       '<button class="btn ' + (t.flagged ? "btn-secondary" : "btn-danger") + '" id="pg-flag">' + (t.flagged ? "Remover Sinalização" : "Sinalizar") + '</button>' +
@@ -827,6 +842,15 @@
 
     var photoEl = box.querySelector("[data-zoom-photo]");
     if (photoEl) photoEl.addEventListener("click", function () { openPhotoZoom(photoEl.getAttribute("data-zoom-photo"), t.employeeName); });
+
+    if (readOnly) {
+      Array.prototype.forEach.call(box.querySelectorAll(".modal-body input, .modal-body select, .modal-body textarea"), function (el) { el.disabled = true; });
+      var ro = document.createElement("div");
+      ro.className = "small text-muted mb-8";
+      ro.textContent = "Somente administradores podem alterar o ponto — você está só visualizando.";
+      box.querySelector(".modal-body").insertBefore(ro, box.querySelector(".modal-body").firstChild);
+      return;
+    }
 
     var typeSel = box.querySelector("#pg-etype");
     if (typeSel && isPunch) typeSel.addEventListener("change", function () {
@@ -949,6 +973,7 @@
 
   // ---------------- Lançamento manual (batida ou ocorrência) ----------------
   function openManualEntryModal(preselectEmployeeId, preselectType) {
+    if (!canManage()) { denyManage(); return; }
     var emps = activeTimeClockEmployees();
     if (!emps.length) { Toast.show("Nenhum funcionário está marcado para bater ponto (Funcionários → editar → \"Bate ponto pelo sistema?\")", "danger", 4500); return; }
     var now = new Date();
@@ -1535,8 +1560,8 @@
     }, { extraMin: 0, missingMin: 0, saldoMin: 0, positivos: 0, negativos: 0 });
 
     document.getElementById("pg-banco-kpis").innerHTML =
-      kpi("Saldo Positivo", agg.positivos + " colaborador(es)", "fa-arrow-trend-up", "#0e9c5b", "#e2f5ec") +
-      kpi("Saldo Negativo", agg.negativos + " colaborador(es)", "fa-arrow-trend-down", "#c0392b", "#fbe3e0") +
+      kpi("Colaboradores com saldo positivo", String(agg.positivos), "fa-arrow-trend-up", "#0e9c5b", "#e2f5ec") +
+      kpi("Colaboradores com saldo negativo", String(agg.negativos), "fa-arrow-trend-down", "#c0392b", "#fbe3e0") +
       kpi("Horas Extras (total)", "+" + PontoCalc.fmtHM(agg.extraMin), "fa-clock", "#0eb8d9", "#dbf7fc") +
       kpi("Horas Compensadas / Faltantes", "-" + PontoCalc.fmtHM(agg.missingMin), "fa-clock-rotate-left", "#7a4fc9", "#ece4f8");
 
@@ -1559,7 +1584,7 @@
           '<td class="text-num text-danger" data-label="Faltantes">-' + PontoCalc.fmtHM(r.totals.missingMin) + '</td>' +
           '<td class="text-num ' + (r.totals.saldoMin < 0 ? "text-danger" : "text-success") + '" data-label="Saldo">' + PontoCalc.fmtHM(r.totals.saldoMin) + '</td>' +
           '<td class="tc-actions"><button class="btn btn-sm btn-outline" data-banco-open="' + r.employee.id + '">Ver detalhes</button> ' +
-            '<button class="btn btn-sm btn-outline" data-banco-adjust="' + r.employee.id + '" title="Lançar desconto ou crédito de horas neste colaborador"><i class="fa-solid fa-scale-balanced"></i> Ajustar saldo</button></td>' +
+            (canManage() ? '<button class="btn btn-sm btn-outline" data-banco-adjust="' + r.employee.id + '" title="Lançar desconto ou crédito de horas neste colaborador"><i class="fa-solid fa-scale-balanced"></i> Ajustar saldo</button>' : '') + '</td>' +
           '</tr>';
       }).join("") + '</tbody>';
     Utils.wireSortHeaders(tbl, pgBancoSort, function () { renderBancoHorasTable(pgBancoRangeCtl.getRange()); });
