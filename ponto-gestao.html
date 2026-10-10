@@ -72,6 +72,7 @@
           <button class="tab-btn" data-panel="pg-p-solicitacoes" id="pg-tab-btn-solicitacoes">Solicitações</button>
           <button class="tab-btn" data-panel="pg-p-ocorrencias">Ocorrências</button>
           <button class="tab-btn" data-panel="pg-p-banco">Banco de Horas</button>
+          <button class="tab-btn" data-panel="pg-p-assinaturas" id="pg-tab-btn-assinaturas">Assinaturas</button>
           <button class="tab-btn" data-panel="pg-p-relatorios">Relatórios</button>
         </div>
 
@@ -176,6 +177,11 @@
           </div>
         </div>
 
+        <!-- ===== Assinaturas (folha de ponto fechada → assinatura da colaboradora e da gerência) ===== -->
+        <div class="tab-panel" id="pg-p-assinaturas">
+          <div id="pg-assinaturas-root"></div>
+        </div>
+
         <!-- ===== Relatórios ===== -->
         <div class="tab-panel" id="pg-p-relatorios">
           <div class="card">
@@ -199,6 +205,7 @@
   <script src="assets/js/utils.js"></script>
   <script src="assets/js/period-filter.js"></script>
   <script src="assets/js/ponto-calc.js"></script>
+  <script src="assets/js/folha-ponto.js"></script>
   <script src="assets/js/approvals.js"></script>
   <script src="assets/js/ponto-ajustes.js"></script>
   <script src="assets/js/recorrencia.js"></script>
