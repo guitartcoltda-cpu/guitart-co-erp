@@ -1209,3 +1209,43 @@ body.modal-open-lock { overflow: hidden; }
 body[data-page="ponto"] .gap-12, body[data-page="ponto-gestao"] .gap-12 { gap: 12px; }
 body[data-page="ponto"] .gap-16, body[data-page="ponto-gestao"] .gap-16 { gap: 16px; }
 @media (max-width: 640px) { .ponto-request-row > .ponto-request-body { flex: 1 1 0; } }
+
+/* Marca de tolerância de ponto (±10 min) */
+.tol-mark { font-size: 11px; color: var(--text-muted, #8a8f98); white-space: nowrap; cursor: help; }
+
+/* ============================================================
+   Folha de Ponto — assinatura eletrônica (10/10/2026)
+   ============================================================ */
+.ponto-tabs { margin-bottom: 16px; }
+.ponto-tabs .tab-btn { flex: 1 1 auto; text-align: center; }
+.ponto-tab-count {
+  display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px;
+  border-radius: 9px; background: var(--color-danger, #d64545); color: #fff;
+  font-size: 11px; line-height: 18px; font-weight: 700;
+}
+.fp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.fp-sigs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.fp-sigs .badge { white-space: normal; text-align: left; }
+.fp-warn {
+  padding: 10px 12px; border-radius: 8px; margin: 8px 0;
+  background: rgba(214, 150, 40, 0.14); border: 1px solid rgba(214, 150, 40, 0.45);
+  font-size: 13px; line-height: 1.45;
+}
+.fp-totals { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--gray-100, #f2f3f5); font-size: 13px; overflow-wrap: anywhere; }
+.fp-table td, .fp-table th { font-size: 12.5px; }
+.fp-sign-summary { padding: 12px; border-radius: 8px; background: var(--gray-100, #f2f3f5); margin: 8px 0 14px; line-height: 1.7; }
+.fp-agree { display: flex; flex-direction: row; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 14px; }
+.fp-agree input { margin-top: 3px; }
+.fp-card { border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; margin: 8px 0; }
+.fp-card.needs-sign { border-color: rgba(214, 150, 40, 0.7); background: rgba(214, 150, 40, 0.07); }
+.fp-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.fp-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.fpp-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.fpp-row { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; }
+.fpp-row.is-done { opacity: 0.6; }
+.fpp-name { font-weight: 600; flex: 1 1 140px; }
+@media (max-width: 640px) {
+  .fp-card-actions .btn { flex: 1 1 auto; }
+  .fp-list .tc-actions .btn { margin: 2px 4px 2px 0; }
+}
+#fpm-search { padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: #fff; min-width: 200px; }
