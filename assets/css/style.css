@@ -1141,3 +1141,61 @@ body.modal-open-lock { overflow: hidden; }
 /* ---- Espelho: dias de folga semanal / pendentes ---- */
 .ponto-row-folga td { background: var(--gray-50); color: var(--gray-500, #7a7a7a); }
 .ponto-row-pend td { background: #fff8e6; }
+
+/* ---------------- Tabelas em CARTÕES no celular (10/10/2026) ----------------
+   Tabelas com a classe .table-cards viram uma lista de cartões em telas
+   estreitas: cada linha vira um cartão e cada célula mostra o nome da coluna
+   à esquerda (data-label, preenchido sozinho por Utils.cardifyTables a partir
+   do cabeçalho). Células com colspan ocupam o cartão inteiro; a primeira
+   (data/funcionário) vira o título; a coluna sem cabeçalho (botões) vira a
+   barra de ações. Usada no espelho de ponto e nas telas de Gestão de Ponto. */
+@media (max-width: 640px) {
+  .table-wrap:has(> table.table-cards) { overflow-x: visible; }
+  .table-wrap:has(> table.table-cards)::after { display: none; }
+  table.table-cards, table.table-cards tbody, table.table-cards tfoot, table.table-cards tr { display: block; width: 100%; }
+  table.table-cards thead { display: none; }
+  table.table-cards tbody tr, table.table-cards tfoot tr {
+    border: 1px solid var(--border-color); border-radius: 12px; margin: 0 0 10px; padding: 8px 14px;
+    background: var(--bg-card);
+  }
+  table.table-cards tbody tr:hover { background: var(--bg-card); }
+  table.data-table.table-cards tbody td, table.data-table.table-cards tfoot td {
+    display: flex; width: 100%; border: none; padding: 6px 0; justify-content: space-between; align-items: flex-start;
+    gap: 4px 14px; text-align: right; font-size: 14px; flex-wrap: wrap;
+  }
+  table.data-table.table-cards td[data-label]::before {
+    content: attr(data-label); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+    color: var(--gray-500); text-align: left; flex: 0 0 auto; padding-top: 2px;
+  }
+  table.data-table.table-cards td[data-label] > div { flex: 0 0 100%; text-align: right; }
+  table.data-table.table-cards tbody td.tc-title, table.data-table.table-cards tfoot td.tc-title {
+    display: block; text-align: left; font-weight: 700; font-size: 15px; padding-top: 4px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--gray-100); margin-bottom: 4px;
+  }
+  table.data-table.table-cards td.tc-title:has(+ td.tc-title) { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  table.data-table.table-cards td.tc-title > div, table.data-table.table-cards td.tc-title .small { text-align: left; }
+  table.data-table.table-cards tbody td.tc-full, table.data-table.table-cards tfoot td.tc-full { display: block; text-align: left; }
+  table.data-table.table-cards tbody td.tc-actions { justify-content: flex-start; gap: 8px; padding-top: 10px; border-top: 1px solid var(--gray-100); margin-top: 4px; }
+  table.data-table.table-cards td.tc-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+  table.data-table.table-cards td.tc-actions .btn-icon[data-open-day]::after { content: "Ver marcações do dia"; margin-left: 8px; font-size: 13px; font-weight: 600; }
+  table.data-table.table-cards td:empty { display: none; }
+  table.table-cards .badge { white-space: normal; }
+  table.table-cards.ponto-espelho-cards tfoot tr { background: var(--gray-50); border-width: 2px; }
+  table.table-cards tr.ponto-row-pend td.text-num, table.table-cards tr.ponto-row-folga td.text-num { display: none; }
+}
+
+/* ---- Edição de marcação / ajuste de saldo (Gestão de Ponto) ---- */
+.pg-row2 { display: flex; gap: 16px; }
+.pg-row2 > .form-field { flex: 1 1 0; min-width: 0; }
+@media (max-width: 640px) {
+  .pg-row2 { flex-direction: column; gap: 0; }
+  .ponto-request-row { flex-wrap: wrap; }
+  .ponto-request-row > .flex.gap-6 { width: 100%; }
+  .ponto-request-row > .flex.gap-6 .btn { flex: 1; min-height: 42px; justify-content: center; }
+  .modal-body input[type="time"], .modal-body input[type="date"], .modal-body select, .modal-body input[type="text"] { font-size: 16px; min-height: 44px; }
+}
+.pg-early-box { border: 1px dashed var(--border-color); border-radius: 10px; padding: 12px 14px; margin: 4px 0 14px; background: var(--gray-50); }
+.pg-history { margin: 8px 0 4px; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 10px; }
+.pg-history summary { cursor: pointer; }
+.modal-body > .form-field, .modal-body > div > .form-field, .modal-body .pg-row2 > .form-field, .pg-early-box > .form-field { margin-bottom: 12px; }
+.modal-body .checkbox-wrap { margin-bottom: 10px; }
