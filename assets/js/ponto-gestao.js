@@ -53,7 +53,7 @@
       empSel.value = ""; Utils.qs("#pg-start").value = ""; Utils.qs("#pg-end").value = ""; Utils.qs("#pg-type").value = "";
       renderControleDePonto();
     });
-    Utils.qs("#btn-new-manual-entry").addEventListener("click", openManualEntryModal);
+    Utils.qs("#btn-new-manual-entry").addEventListener("click", function () { openManualEntryModal(); });
     var folhaBtn = Utils.qs("#btn-folha-ponto");
     if (folhaBtn) folhaBtn.addEventListener("click", openFolhaModal);
 
@@ -121,10 +121,13 @@
   // "-8h30 no banco de horas" / "-1h00 em folha" de um registro de horas negativas.
   function adjustText(t) {
     var m = PontoCalc.debitMinOf(t);
+    if (PontoCalc.isCreditAdjust(t)) return "+" + PontoCalc.fmtHM(m) + " no banco de horas";
     return "-" + PontoCalc.fmtHM(m) + (t.useBank === false ? " em folha de pagamento (não usa o banco)" : " no banco de horas");
   }
+  function adjustClass(t) { return PontoCalc.isCreditAdjust(t) ? "text-success" : "text-danger"; }
   function adjustBadgeHtml(t) {
-    return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + PontoCalc.ADJUST_LABEL + ': ' + adjustText(t) + '</span>';
+    var credit = PontoCalc.isCreditAdjust(t);
+    return '<span class="badge ' + (credit ? "badge-success" : "badge-danger") + '"><i class="fa-solid ' + (credit ? "fa-hourglass-start" : "fa-hourglass-end") + '"></i> ' + PontoCalc.adjustLabelOf(t) + ': ' + adjustText(t) + '</span>';
   }
 
   // SAÍDA ANTECIPADA (10/10/2026): selo/texto do dia quando a saída foi
@@ -143,8 +146,8 @@
     return m ? m.label + " (" + PontoCalc.fmtHM(m.min) + ")" : "";
   }
 
-  function typeBadge(type) {
-    if (PontoCalc.isAdjustType(type)) return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + PontoCalc.ADJUST_LABEL + '</span>';
+  function typeBadge(type, rec) {
+    if (PontoCalc.isAdjustType(type)) return adjustBadgeHtml(rec || {});
     if (PontoCalc.isOccurrenceType(type)) {
       var k = PontoCalc.OCCURRENCE_KINDS[type];
       return '<span class="badge ' + k.badge + '"><i class="fa-solid ' + k.icon + '"></i> ' + k.label + '</span>';
@@ -166,7 +169,7 @@
   function thumbHtml(t, cls) {
     var wrapCls = cls || "ponto-thumb";
     if (t.selfieDataUrl) return '<div class="' + wrapCls + '" data-zoom="' + t.id + '" style="background-image:url(\'' + t.selfieDataUrl + '\');"></div>';
-    if (PontoCalc.isAdjustType(t.type)) return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" title="' + PontoCalc.ADJUST_LABEL + '"><i class="fa-solid fa-hourglass-end"></i></div>';
+    if (PontoCalc.isAdjustType(t.type)) return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" title="' + PontoCalc.adjustLabelOf(t) + '"><i class="fa-solid ' + (PontoCalc.isCreditAdjust(t) ? "fa-hourglass-start" : "fa-hourglass-end") + '"></i></div>';
     if (PontoCalc.isOccurrenceType(t.type)) {
       var k = PontoCalc.OCCURRENCE_KINDS[t.type];
       return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" title="' + k.label + '"><i class="fa-solid ' + k.icon + '"></i></div>';
@@ -412,7 +415,7 @@
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') +
         (d.workedMin != null ? '<div class="small ' + (d.saldoMin < 0 ? "text-danger" : "text-success") + '">saldo ' + PontoCalc.fmtHM(d.saldoMin) + '</div>' : '') +
         (d.earlyLeave ? '<div class="mt-4">' + earlyBadgeHtml(d) + '</div>' : '') +
-        (d.adjustEntries.length ? '<div class="small text-danger">' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') +
+        (d.adjustEntries.length ? '<div class="small">' + d.adjustEntries.map(function (t) { return '<span class="' + adjustClass(t) + '">' + adjustText(t) + '</span>'; }).join(" · ") + '</div>' : '') +
       '</td>' +
       '<td>' + reviewBadge + '</td>' +
       '<td>' + openBtn + '</td>' +
@@ -585,8 +588,8 @@
     // horas negativas lançadas no dia (aparecem com ou sem batida/ocorrência)
     var adjustHtml = d.adjustEntries.map(function (t) {
       return '<div class="ponto-request-row">' + reviewedCheckboxHtml(t) + thumbHtml(t) +
-        '<div class="ponto-request-body"><div class="font-bold">' + PontoCalc.ADJUST_LABEL + '</div>' +
-        '<div class="small text-danger">' + adjustText(t) + '</div>' +
+        '<div class="ponto-request-body"><div class="font-bold">' + PontoCalc.adjustLabelOf(t) + '</div>' +
+        '<div class="small ' + adjustClass(t) + '">' + adjustText(t) + '</div>' +
         (t.note ? '<div class="small text-muted">' + Utils.escapeHtml(t.note) + '</div>' : '') +
         '<div class="small text-muted mt-4">' + statusChipHtml(t) + '</div></div>' +
         '<button class="btn btn-icon btn-ghost" data-tl-entry="' + t.id + '" title="Ver / conferir"><i class="fa-solid fa-magnifying-glass"></i></button>' +
@@ -610,7 +613,7 @@
       '<div><b>Jornada prevista:</b> ' + jornadaText(employee) + '</div>' +
       '<div><b>Trabalhado:</b> ' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + '</div>' +
       '<div><b>Saldo:</b> <span class="' + (d.workedMin != null && d.saldoMin < 0 ? "text-danger" : "text-success") + '">' + (d.workedMin != null ? PontoCalc.fmtHM(d.saldoMin) : "-") + '</span></div>' +
-      (d.adjustEntries.length ? '<div class="text-danger"><b>Horas negativas:</b> ' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') +
+      (d.adjustEntries.length ? '<div><b>Ajustes de saldo:</b> ' + d.adjustEntries.map(function (t) { return '<span class="' + adjustClass(t) + '">' + adjustText(t) + '</span>'; }).join(" · ") + '</div>' : '') +
       (d.status !== "completo" ? '<div>' + d.statusLabel + '</div>' : '') +
       (d.earlyLeave ? '<div>' + earlyBadgeHtml(d) + '<div class="small text-muted mt-4">' + Utils.escapeHtml(earlyDetailText(PontoCalc.earlyLeaveMeta(d))) + '</div></div>' : '') +
       '</div>';
@@ -694,65 +697,152 @@
     });
   }
 
+  function pad2(n) { return String(n).padStart(2, "0"); }
+  function hmsOf(ts) { var d = new Date(ts); return pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()); }
+  function currentUserName() {
+    var u = window.CurrentUser && CurrentUser.get ? CurrentUser.get() : null;
+    return u ? ([u.firstName, u.lastName].filter(Boolean).join(" ") || u.name || "Usuário") : "Usuário";
+  }
+  var EARLY_STATUS_OPTS = [
+    ["", "Sem justificativa (conta normal)"],
+    ["pendente", "Aguardando a gerência (neutro)"],
+    ["abonada", "Abonada (sem desconto)"],
+    ["recusada", "Recusada (conta no banco)"]
+  ];
+
+  // Mantém as solicitações de "saída antecipada" coerentes quando a gestão muda
+  // o status direto no registro (sem passar pela tela de Solicitações).
+  function syncEarlyApprovals(entry, newStatus, note) {
+    if (!window.Approvals) return;
+    var pend = Approvals.listPending().filter(function (a) {
+      return a.type === PontoAjustes.TYPE && a.payload && a.payload.kind === "saida_antecipada" && a.payload.entryId === entry.id;
+    });
+    if (newStatus === "pendente") {
+      if (!pend.length) {
+        var emp = DB.get("employees", entry.employeeId);
+        var rec = DB.get("timeClockEntries", entry.id) || entry;
+        var el = rec.earlyLeave || {};
+        PontoAjustes.requestEarlyLeave({
+          entryId: entry.id, employeeId: rec.employeeId, employeeName: rec.employeeName, date: rec.date,
+          exitTime: pad2(new Date(rec.timestamp).getHours()) + ":" + pad2(new Date(rec.timestamp).getMinutes()),
+          earlyMin: PontoCalc.earlyMinutes(emp, rec.date, rec.timestamp), claimedAuthorized: !!el.claimedAuthorized, reason: el.reason || ""
+        });
+      }
+      return;
+    }
+    var u = window.CurrentUser && CurrentUser.get ? CurrentUser.get() : null;
+    pend.forEach(function (a) {
+      DB.update("approvals", a.id, {
+        status: newStatus === "abonada" ? "aprovada" : "recusada",
+        decidedBy: u ? u.id : null, decidedByName: currentUserName(), decidedAt: DB.nowISO(),
+        reviewerNote: note || "Decidido na edição do registro de ponto"
+      });
+    });
+  }
+
+  // EDIÇÃO COMPLETA (10/10/2026): gerência/administração pode alterar qualquer
+  // informação de uma marcação — funcionário, tipo, data, hora com segundos,
+  // observação, status da saída antecipada e, nos ajustes de saldo, a direção
+  // (desconto/crédito), as horas e se entra no banco. Cada alteração fica no
+  // histórico do registro (editHistory) e no log de atividade; a primeira
+  // mudança de horário guarda o horário original (originalTimestamp).
   function openReview(id) {
     var t = DB.get("timeClockEntries", id);
     if (!t) return;
     var e = DB.get("employees", t.employeeId);
     var isAdj = PontoCalc.isAdjustType(t.type);
-    var isOcc = PontoCalc.isOccurrenceType(t.type) || isAdj; // só data (sem hora)
-    var d = new Date(t.timestamp);
-    var hh = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    var isOcc = PontoCalc.isOccurrenceType(t.type);
+    var isPunch = PontoCalc.isPunchType(t.type);
+    var isDateOnly = isOcc || isAdj; // só data (sem hora)
+    var hms = hmsOf(t.timestamp);
+    var emps = DB.all("employees").filter(function (x) { return x.requiresTimeClock || x.id === t.employeeId; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); });
     var attachHtml = t.attachment ? '<div class="form-field full"><label>Anexo</label>' +
       ((t.attachment.type || "").indexOf("image/") === 0
         ? '<a href="' + (Utils.dataUrlToBlobUrl(t.attachment.dataUrl) || t.attachment.dataUrl) + '" target="_blank" rel="noopener"><img src="' + t.attachment.dataUrl + '" style="max-width:200px;max-height:150px;border-radius:8px;border:1px solid var(--border-color);"></a>'
         : attachmentLinkHtml(t.attachment)) +
       '</div>' : '';
+    var typeOpts = isPunch
+      ? PontoCalc.PUNCH_TYPES.map(function (k) { return '<option value="' + k + '"' + (k === t.type ? " selected" : "") + '>' + PontoCalc.PUNCH_LABELS[k] + '</option>'; }).join("")
+      : Object.keys(PontoCalc.OCCURRENCE_KINDS).map(function (k) { return '<option value="' + k + '"' + (k === t.type ? " selected" : "") + '>' + PontoCalc.OCCURRENCE_KINDS[k].label + '</option>'; }).join("");
+    var el = t.earlyLeave || null;
+    var earlyHtml = isPunch
+      ? '<div id="pg-early-wrap" class="pg-early-box" style="' + (t.type === "saida" ? "" : "display:none;") + '">' +
+          '<div class="font-bold small mb-8"><i class="fa-solid fa-door-open"></i> Saída antecipada</div>' +
+          '<div class="form-field full"><label>Situação</label><select id="pg-el-status">' +
+            EARLY_STATUS_OPTS.map(function (o) { return '<option value="' + o[0] + '"' + ((el ? el.status : "") === o[0] ? " selected" : "") + '>' + o[1] + '</option>'; }).join("") +
+          '</select></div>' +
+          '<div class="form-field full"><label>Funcionária informou que foi liberada pela gerência?</label><select id="pg-el-claim">' +
+            '<option value="sim"' + (el && el.claimedAuthorized ? " selected" : "") + '>Sim</option><option value="nao"' + (el && !el.claimedAuthorized ? " selected" : "") + '>Não</option>' +
+          '</select></div>' +
+          '<div class="form-field full"><label>Motivo informado</label><input type="text" id="pg-el-reason" value="' + Utils.escapeHtml((el && el.reason) || "") + '"></div>' +
+          '<div class="small text-muted">Abonada = não desconta do banco nem da folha. Recusada = conta normalmente. Aguardando = neutro até alguém decidir.</div>' +
+        '</div>'
+      : '';
+    var hist = (t.editHistory || []).slice().reverse();
+    var histHtml = (hist.length || t.originalTimestamp)
+      ? '<details class="pg-history"><summary class="small font-bold">Histórico de edições (' + hist.length + ')</summary>' +
+          (t.originalTimestamp ? '<div class="small text-muted">Horário original batido: ' + Utils.fmtDate(t.date) + ' ' + hmsOf(t.originalTimestamp) + '</div>' : '') +
+          hist.map(function (h) { return '<div class="small text-muted mt-4"><b>' + Utils.fmtDateTime(h.at) + '</b> · ' + Utils.escapeHtml(h.by || "-") + '<br>' + (h.changes || []).map(Utils.escapeHtml).join('<br>') + '</div>'; }).join("") +
+        '</details>'
+      : '';
     var body =
-      '<div class="flex items-center gap-16 mb-16">' +
-        (t.selfieDataUrl ? '<img src="' + t.selfieDataUrl + '" data-zoom-photo="' + t.selfieDataUrl + '" style="width:160px;height:160px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);cursor:zoom-in;" title="Clique para ampliar">' : Utils.avatarHtml(t.employeeName, e ? e.photoDataUrl : null, "avatar-lg")) +
+      '<div class="flex items-center mb-16" style="gap:14px;">' +
+        (t.selfieDataUrl ? '<img src="' + t.selfieDataUrl + '" data-zoom-photo="' + t.selfieDataUrl + '" style="width:120px;height:120px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);cursor:zoom-in;" title="Clique para ampliar">' : Utils.avatarHtml(t.employeeName, e ? e.photoDataUrl : null, "avatar-lg")) +
         '<div>' +
-          '<div class="font-bold">' + Utils.escapeHtml(t.employeeName || "-") + '</div>' +
-          '<div>' + typeBadge(t.type) + '</div>' +
+          '<div id="pg-badge-slot">' + typeBadge(t.type, t) + '</div>' +
           (t.origin && ORIGIN_LABELS[t.origin] ? '<div class="small text-muted">' + ORIGIN_LABELS[t.origin] + '</div>' : '') +
+          (t.editedAt ? '<div class="small text-muted">Editado por ' + Utils.escapeHtml(t.editedByName || "-") + ' em ' + Utils.fmtDateTime(t.editedAt) + '</div>' : '') +
         '</div>' +
       '</div>' +
+      '<div class="form-field full"><label>Funcionário</label><select id="pg-emp">' +
+        emps.map(function (x) { return '<option value="' + x.id + '"' + (x.id === t.employeeId ? " selected" : "") + '>' + Utils.escapeHtml(x.name) + '</option>'; }).join("") +
+      '</select></div>' +
       (isAdj
-        ? '<div class="flex gap-16"><div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>' +
-            '<div class="form-field"><label>Horas a descontar (HH:MM)</label><input type="text" id="pg-debit" value="' + PontoCalc.fmtClock(PontoCalc.debitMinOf(t)) + '"></div></div>' +
-          '<div class="form-field full checkbox-wrap" style="flex-direction:row;"><input type="checkbox" id="pg-usebank" ' + (t.useBank === false ? "" : "checked") + '><label for="pg-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
-          '<div class="small text-muted mb-16">Desmarcado: não mexe no banco; o valor é descontado na Folha de Pagamento.</div>'
-        : isOcc
-        ? '<div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>'
-        : '<div class="flex gap-16">' +
-            '<div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>' +
-            '<div class="form-field"><label>Hora</label><input type="time" id="pg-time" value="' + hh + '"></div>' +
-          '</div>' +
-          '<div class="small text-muted mt-8 mb-16">Ajuste a data/hora aqui se o registro foi batido errado ou precisa refletir o horário real do atendimento/expediente.</div>'
-      ) +
+        ? '<div class="form-field full"><label>Tipo de ajuste</label><select id="pg-dir">' +
+            '<option value="debito"' + (PontoCalc.isCreditAdjust(t) ? "" : " selected") + '>Horas negativas (desconto)</option>' +
+            '<option value="credito"' + (PontoCalc.isCreditAdjust(t) ? " selected" : "") + '>Horas positivas (crédito no banco)</option></select></div>'
+        : '<div class="form-field full"><label>Tipo</label><select id="pg-etype">' + typeOpts + '</select></div>') +
+      '<div class="pg-row2">' +
+        '<div class="form-field"><label>Data</label><input type="date" id="pg-date" value="' + t.date + '"></div>' +
+        (isDateOnly ? '' : '<div class="form-field"><label>Hora (HH:MM:SS)</label><input type="time" step="1" id="pg-time" value="' + hms + '"></div>') +
+      '</div>' +
+      (isAdj
+        ? '<div class="form-field full"><label>Horas (HH:MM)</label><input type="text" id="pg-debit" inputmode="numeric" value="' + PontoCalc.fmtClock(PontoCalc.debitMinOf(t)) + '"></div>' +
+          '<div id="pg-usebank-wrap"><div class="form-field full checkbox-wrap" style="flex-direction:row;"><input type="checkbox" id="pg-usebank" ' + (t.useBank === false ? "" : "checked") + '><label for="pg-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
+          '<div class="small text-muted mb-16">Desmarcado: não mexe no banco; o valor é descontado na Folha de Pagamento.</div></div>'
+        : '') +
+      earlyHtml +
       attachHtml +
       '<div class="form-field full"><label>Observação (opcional)</label><textarea id="pg-note" rows="2">' + Utils.escapeHtml(t.note || "") + '</textarea></div>' +
-      '<div class="form-field full checkbox-wrap"><input type="checkbox" id="pg-reviewed" ' + (t.reviewed ? "checked" : "") + '><label for="pg-reviewed" style="font-weight:600;">Marcar como conferido</label></div>';
+      '<div class="form-field full checkbox-wrap"><input type="checkbox" id="pg-reviewed" ' + (t.reviewed ? "checked" : "") + '><label for="pg-reviewed" style="font-weight:600;">Marcar como conferido</label></div>' +
+      histHtml;
     var foot =
       '<button class="btn btn-danger" id="pg-delete" style="margin-right:auto;">Excluir</button>' +
       '<button class="btn btn-secondary" data-close-modal>Fechar</button>' +
       '<button class="btn ' + (t.flagged ? "btn-secondary" : "btn-danger") + '" id="pg-flag">' + (t.flagged ? "Remover Sinalização" : "Sinalizar") + '</button>' +
       '<button class="btn btn-primary" id="pg-save">Salvar Alterações</button>';
-    var box = Modal.open({ title: isAdj ? "Horas Negativas" : isOcc ? "Ocorrência de Ponto" : "Registro de Ponto", bodyHtml: body, footHtml: foot });
+    var box = Modal.open({ title: isAdj ? "Ajuste de Saldo (banco de horas)" : isOcc ? "Ocorrência de Ponto" : "Registro de Ponto — " + (t.employeeName || ""), wide: true, bodyHtml: body, footHtml: foot });
     if (isAdj) Utils.wireTimeMask(box.querySelector("#pg-debit"));
 
     var photoEl = box.querySelector("[data-zoom-photo]");
     if (photoEl) photoEl.addEventListener("click", function () { openPhotoZoom(photoEl.getAttribute("data-zoom-photo"), t.employeeName); });
 
+    var typeSel = box.querySelector("#pg-etype");
+    if (typeSel && isPunch) typeSel.addEventListener("change", function () {
+      box.querySelector("#pg-early-wrap").style.display = typeSel.value === "saida" ? "" : "none";
+    });
+    var dirSel = box.querySelector("#pg-dir");
+    if (dirSel) dirSel.addEventListener("change", function () {
+      box.querySelector("#pg-usebank-wrap").style.display = dirSel.value === "credito" ? "none" : "";
+    });
+    if (dirSel && dirSel.value === "credito") box.querySelector("#pg-usebank-wrap").style.display = "none";
+
     // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
-    // tempo real"): tanto "Sinalizar" quanto "Salvar Alterações" liam/
-    // gravavam em cima do registro `t` capturado quando este modal abriu
-    // (CACHE LOCAL desta aba). Se outra pessoa tivesse mexido nesse MESMO
-    // registro de ponto nesse meio tempo (ex.: um gestor confere em lote
-    // pela timeline enquanto outro tem esse mesmo registro aberto aqui
-    // pela lupa), a gravação daqui sobrescrevia o registro inteiro a
-    // partir da cópia desatualizada, apagando a mudança da outra pessoa.
-    // Trocado por DB.mergeRecordUpdate: sempre busca o registro mais
-    // recente do SERVIDOR antes de aplicar o patch.
+    // tempo real"): tanto "Sinalizar" quanto "Salvar Alterações" gravavam o
+    // registro inteiro a partir do cache local; agora usam
+    // DB.mergeRecordUpdate (busca o registro mais recente do servidor antes
+    // de aplicar o patch).
     box.querySelector("#pg-flag").addEventListener("click", function () {
       var note = box.querySelector("#pg-note").value.trim();
       DB.mergeRecordUpdate("timeClockEntries", t.id, function (fresh) {
@@ -762,33 +852,93 @@
       Toast.show(t.flagged ? "Sinalização removida" : "Registro sinalizado", "success");
       Modal.close(); renderAll();
     });
-    // "Salvar Alterações" só salva — fica na mesma tela em vez de fechar,
-    // para não precisar reabrir o registro caso o gestor queira ajustar
-    // mais alguma coisa em seguida (ex.: conferir e só depois sinalizar).
+
+    // "Salvar Alterações" só salva — fica na mesma tela.
     box.querySelector("#pg-save").addEventListener("click", function () {
       var note = box.querySelector("#pg-note").value.trim();
       var newDate = box.querySelector("#pg-date").value || t.date;
       var timeEl = box.querySelector("#pg-time");
-      var newTime = timeEl ? (timeEl.value || hh) : hh;
+      var newTime = timeEl ? (timeEl.value || hms) : hms;
+      if (/^\d{2}:\d{2}$/.test(newTime)) newTime += ":00";
       var reviewed = box.querySelector("#pg-reviewed").checked;
-      var timeChanged = newDate !== t.date || newTime !== hh;
+      var newEmp = DB.get("employees", box.querySelector("#pg-emp").value) || e;
+      var newType = isAdj ? t.type : (typeSel ? typeSel.value : t.type);
+      var changes = [];
+      function chg(label, from, to) { if (String(from) !== String(to)) changes.push(label + ": " + from + " → " + to); }
+      var oldDirCredit = PontoCalc.isCreditAdjust(t);
+
       var patch = {
+        employeeId: newEmp ? newEmp.id : t.employeeId,
+        employeeName: newEmp ? newEmp.name : t.employeeName,
+        type: newType,
         date: newDate,
-        timestamp: PontoAjustes.buildTimestamp(newDate, newTime),
         note: note || null,
         reviewed: reviewed
       };
+      patch.timestamp = PontoAjustes.buildTimestamp(newDate, isDateOnly ? "00:00" : newTime);
+      chg("Funcionário", t.employeeName || "-", patch.employeeName || "-");
+      chg("Tipo", PontoCalc.PUNCH_LABELS[t.type] || (PontoCalc.OCCURRENCE_KINDS[t.type] || {}).label || t.type, PontoCalc.PUNCH_LABELS[newType] || (PontoCalc.OCCURRENCE_KINDS[newType] || {}).label || newType);
+      chg("Data", Utils.fmtDate(t.date), Utils.fmtDate(newDate));
+      if (!isDateOnly) chg("Hora", hms, newTime);
+      chg("Observação", t.note || "-", note || "-");
+
       if (isAdj) {
         var debitMin = PontoCalc.parseHM(box.querySelector("#pg-debit").value);
-        if (!debitMin) { Toast.show("Informe as horas a descontar (HH:MM, maior que 00:00)", "danger"); return; }
+        if (!debitMin) { Toast.show("Informe as horas (HH:MM, maior que 00:00)", "danger"); return; }
+        var credit = box.querySelector("#pg-dir").value === "credito";
         patch.debitMin = debitMin;
-        patch.useBank = box.querySelector("#pg-usebank").checked;
+        patch.direction = credit ? "credito" : null;
+        patch.useBank = credit ? true : box.querySelector("#pg-usebank").checked;
+        chg("Sentido", oldDirCredit ? "crédito" : "desconto", credit ? "crédito" : "desconto");
+        chg("Horas", PontoCalc.fmtClock(PontoCalc.debitMinOf(t)), PontoCalc.fmtClock(debitMin));
+        if (!credit) chg("Usa o banco", t.useBank === false ? "não (folha)" : "sim", patch.useBank ? "sim" : "não (folha)");
       }
-      DB.mergeRecordUpdate("timeClockEntries", t.id, function () { return patch; });
-      DB.log("Ponto", (timeChanged ? "Ajustou o horário do registro de ponto de " + t.employeeName + " para " + Utils.fmtDate(newDate) + " " + newTime : "Atualizou o registro de ponto de " + t.employeeName));
-      Toast.show("Alterações salvas", "success");
+
+      var newElStatus = null; // null = sem justificativa
+      if (isPunch) {
+        if (newType === "saida" && box.querySelector("#pg-el-status").value) {
+          newElStatus = box.querySelector("#pg-el-status").value;
+          patch.earlyLeave = {
+            status: newElStatus,
+            claimedAuthorized: box.querySelector("#pg-el-claim").value === "sim",
+            reason: box.querySelector("#pg-el-reason").value.trim()
+          };
+          if (el && (el.decidedAt || el.decidedByName) && el.status === newElStatus) {
+            patch.earlyLeave.decidedAt = el.decidedAt; patch.earlyLeave.decidedByName = el.decidedByName;
+          } else if (newElStatus !== "pendente") {
+            patch.earlyLeave.decidedAt = DB.nowISO(); patch.earlyLeave.decidedByName = currentUserName();
+          }
+        } else {
+          patch.earlyLeave = null;
+        }
+        var oldEl = el ? el.status : "";
+        chg("Saída antecipada", oldEl || "sem justificativa", newElStatus || "sem justificativa");
+        // duas marcações do mesmo tipo no mesmo dia: só a primeira entra no cálculo
+        var dupe = DB.all("timeClockEntries").some(function (x) { return x.id !== t.id && x.employeeId === patch.employeeId && x.date === newDate && x.type === newType; });
+        if (dupe) Toast.show("Atenção: esse funcionário já tem outra marcação desse tipo nesse dia — só a primeira conta no cálculo.", "danger", 5000);
+      }
+
+      var by = currentUserName();
+      var tsChanged = !isDateOnly && (newDate !== t.date || newTime !== hms);
+      DB.mergeRecordUpdate("timeClockEntries", t.id, function (fresh) {
+        var p = Object.assign({}, patch);
+        if (changes.length) {
+          p.editHistory = (fresh.editHistory || []).concat([{ at: DB.nowISO(), by: by, changes: changes }]).slice(-20);
+          p.editedAt = DB.nowISO(); p.editedByName = by;
+        }
+        if (tsChanged && !fresh.originalTimestamp) p.originalTimestamp = fresh.timestamp;
+        return p;
+      });
+      if (isPunch && (t.earlyLeave || patch.earlyLeave)) {
+        var finalRec = DB.get("timeClockEntries", t.id) || t;
+        syncEarlyApprovals(finalRec, newElStatus || "removida", "Decidido na edição do registro de ponto por " + by);
+      }
+      DB.log("Ponto", "Editou o registro de ponto de " + t.employeeName + (changes.length ? " — " + changes.join("; ") : " (sem mudanças)"));
+      Toast.show(changes.length ? "Alterações salvas" : "Nada mudou", changes.length ? "success" : "info");
       t = DB.get("timeClockEntries", t.id) || t;
-      hh = newTime;
+      hms = isDateOnly ? hms : newTime;
+      el = t.earlyLeave || null;
+      var slot = box.querySelector("#pg-badge-slot"); if (slot) slot.innerHTML = typeBadge(t.type, t);
       renderAll();
     });
     box.querySelector("#pg-delete").addEventListener("click", function () {
@@ -798,7 +948,7 @@
   }
 
   // ---------------- Lançamento manual (batida ou ocorrência) ----------------
-  function openManualEntryModal(preselectEmployeeId) {
+  function openManualEntryModal(preselectEmployeeId, preselectType) {
     var emps = activeTimeClockEmployees();
     if (!emps.length) { Toast.show("Nenhum funcionário está marcado para bater ponto (Funcionários → editar → \"Bate ponto pelo sistema?\")", "danger", 4500); return; }
     var now = new Date();
@@ -814,20 +964,22 @@
         '<optgroup label="Ocorrência">' +
           Object.keys(PontoCalc.OCCURRENCE_KINDS).map(function (k) { return '<option value="' + k + '">' + PontoCalc.OCCURRENCE_KINDS[k].label + '</option>'; }).join("") +
         '</optgroup>' +
-        '<optgroup label="Banco de Horas">' +
+        '<optgroup label="Ajuste de saldo do banco de horas">' +
           '<option value="' + PontoCalc.ADJUST_TYPE + '">' + PontoCalc.ADJUST_LABEL + '</option>' +
+          '<option value="credito_horas">' + PontoCalc.CREDIT_LABEL + '</option>' +
         '</optgroup>' +
       '</select></div>' +
-      '<div class="flex gap-16" id="me-time-row">' +
+      '<div class="pg-row2" id="me-time-row">' +
         '<div class="form-field"><label>Data</label><input type="date" id="me-date" value="' + Utils.todayISO() + '"></div>' +
-        '<div class="form-field"><label>Hora</label><input type="time" id="me-time" value="' + nowTime + '"></div>' +
+        '<div class="form-field"><label>Hora (HH:MM:SS)</label><input type="time" step="1" id="me-time" value="' + nowTime + ':00"></div>' +
       '</div>' +
       '<div class="form-field full" id="me-date-only" style="display:none;"><label>Data</label><input type="date" id="me-date2" value="' + Utils.todayISO() + '"></div>' +
       '<div id="me-debit-wrap" style="display:none;">' +
-        '<div class="form-field full"><label>Horas a descontar (HH:MM)</label><input type="text" id="me-debit" placeholder="08:30"></div>' +
+        '<div class="form-field full"><label id="me-debit-label">Horas a descontar (HH:MM)</label><input type="text" id="me-debit" inputmode="numeric" placeholder="08:30"></div>' +
         '<div class="small text-muted mb-8" id="me-debit-hint"></div>' +
-        '<div class="form-field full checkbox-wrap" style="flex-direction:row;"><input type="checkbox" id="me-usebank" checked><label for="me-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
-        '<div class="small text-muted mb-16">Marcado: as horas saem do saldo do banco — se o saldo não cobrir, o restante fica como banco de horas negativo. Desmarcado: o banco não muda e o valor é descontado na Folha de Pagamento.</div>' +
+        '<div id="me-bank-wrap"><div class="form-field full checkbox-wrap" style="flex-direction:row;"><input type="checkbox" id="me-usebank" checked><label for="me-usebank" style="font-weight:600;">Descontar do banco de horas</label></div>' +
+        '<div class="small text-muted mb-16">Marcado: as horas saem do saldo do banco — se o saldo não cobrir, o restante fica como banco de horas negativo. Desmarcado: o banco não muda e o valor é descontado na Folha de Pagamento.</div></div>' +
+        '<div class="small text-muted mb-16" id="me-credit-hint" style="display:none;">Crédito: soma essas horas ao saldo do banco de horas (use também para registrar um saldo que já existia antes do sistema).</div>' +
       '</div>' +
       '<div id="me-attach-wrap" style="display:none;">' + Utils.attachmentFieldHtml("me", "Anexo (opcional)") + '</div>' +
       '<div class="form-field full"><label>Motivo (opcional)</label><textarea id="me-reason" rows="2" placeholder="Ex.: esqueceu de bater o ponto na entrada"></textarea></div>';
@@ -840,7 +992,9 @@
 
     Utils.wireTimeMask(box.querySelector("#me-debit"));
     // sugere a jornada do dia (um dia inteiro de falta) como horas a descontar
+    function isAdjSel(v) { return v === PontoCalc.ADJUST_TYPE || v === "credito_horas"; }
     function suggestDebit() {
+      if (typeSel.value === "credito_horas") { box.querySelector("#me-debit-hint").textContent = ""; return; }
       var empE = DB.get("employees", box.querySelector("#me-employee").value);
       var dt = box.querySelector("#me-date2").value;
       var min = empE && dt ? PontoCalc.dailyExpectedMin(empE, dt) : 0;
@@ -852,8 +1006,12 @@
     box.querySelector("#me-employee").addEventListener("change", suggestDebit);
     box.querySelector("#me-date2").addEventListener("change", suggestDebit);
     function syncFieldsForType() {
-      var isAdj = PontoCalc.isAdjustType(typeSel.value);
+      var isAdj = isAdjSel(typeSel.value);
+      var isCr = typeSel.value === "credito_horas";
       var isOcc = PontoCalc.isOccurrenceType(typeSel.value) || isAdj; // só data, sem hora
+      box.querySelector("#me-debit-label").textContent = isCr ? "Horas a creditar (HH:MM)" : "Horas a descontar (HH:MM)";
+      box.querySelector("#me-bank-wrap").style.display = isCr ? "none" : "";
+      box.querySelector("#me-credit-hint").style.display = isCr ? "" : "none";
       box.querySelector("#me-time-row").style.display = isOcc ? "none" : "";
       box.querySelector("#me-date-only").style.display = isOcc ? "" : "none";
       box.querySelector("#me-attach-wrap").style.display = isOcc && !isAdj ? "" : "none";
@@ -861,12 +1019,14 @@
       if (isAdj) suggestDebit();
     }
     typeSel.addEventListener("change", syncFieldsForType);
+    if (typeof preselectType === "string") typeSel.value = preselectType;
     syncFieldsForType();
 
     box.querySelector("#me-save").addEventListener("click", function () {
       var employeeId = box.querySelector("#me-employee").value;
       var emp = DB.get("employees", employeeId);
-      var type = typeSel.value;
+      var isCredit = typeSel.value === "credito_horas";
+      var type = isCredit ? PontoCalc.ADJUST_TYPE : typeSel.value;
       var isAdj = PontoCalc.isAdjustType(type);
       var isOcc = PontoCalc.isOccurrenceType(type) || isAdj;
       var date = isOcc ? box.querySelector("#me-date2").value : box.querySelector("#me-date").value;
@@ -876,8 +1036,8 @@
       var debitMin = 0, useBank = true;
       if (isAdj) {
         debitMin = PontoCalc.parseHM(box.querySelector("#me-debit").value) || 0;
-        useBank = box.querySelector("#me-usebank").checked;
-        if (debitMin <= 0) { Toast.show("Informe as horas a descontar (HH:MM, maior que 00:00)", "danger"); return; }
+        useBank = isCredit ? true : box.querySelector("#me-usebank").checked;
+        if (debitMin <= 0) { Toast.show("Informe as horas " + (isCredit ? "a creditar" : "a descontar") + " (HH:MM, maior que 00:00)", "danger"); return; }
       }
       // horas negativas podem ser lançadas mais de uma vez no mesmo dia (cada uma é um desconto)
       var dup = !isAdj && DB.all("timeClockEntries").some(function (x) { return x.employeeId === employeeId && x.date === date && x.type === type; });
@@ -894,15 +1054,18 @@
         note: reason || null,
         attachment: isOcc && !isAdj ? (attachmentCtl.get() || null) : undefined,
         debitMin: isAdj ? debitMin : undefined,
-        useBank: isAdj ? useBank : undefined
+        useBank: isAdj ? useBank : undefined,
+        direction: isAdj && isCredit ? "credito" : undefined
       });
-      var typeLabel = isAdj ? PontoCalc.ADJUST_LABEL : isOcc ? PontoCalc.OCCURRENCE_KINDS[type].label : PontoCalc.PUNCH_LABELS[type];
+      var typeLabel = isAdj ? (isCredit ? PontoCalc.CREDIT_LABEL : PontoCalc.ADJUST_LABEL) : isOcc ? PontoCalc.OCCURRENCE_KINDS[type].label : PontoCalc.PUNCH_LABELS[type];
       if (isAdj) {
-        DB.log("Ponto", "Lançou horas negativas de " + emp.name + " (-" + PontoCalc.fmtHM(debitMin) + " em " + Utils.fmtDate(date) + ", " + (useBank ? "descontado do banco de horas" : "descontado em folha") + ")" + (reason ? " — Motivo: " + reason : ""));
+        DB.log("Ponto", isCredit
+          ? "Creditou horas no banco de " + emp.name + " (+" + PontoCalc.fmtHM(debitMin) + " em " + Utils.fmtDate(date) + ")" + (reason ? " — Motivo: " + reason : "")
+          : "Lançou horas negativas de " + emp.name + " (-" + PontoCalc.fmtHM(debitMin) + " em " + Utils.fmtDate(date) + ", " + (useBank ? "descontado do banco de horas" : "descontado em folha") + ")" + (reason ? " — Motivo: " + reason : ""));
       } else {
         DB.log("Ponto", "Lançou manualmente " + (isOcc ? "a ocorrência" : "o ponto") + " de " + emp.name + " (" + typeLabel + " em " + Utils.fmtDate(date) + (isOcc ? "" : " às " + time) + ")" + (reason ? " — Motivo: " + reason : ""));
       }
-      Toast.show(isAdj ? "Horas negativas lançadas" : isOcc ? "Ocorrência lançada" : "Ponto lançado", "success");
+      Toast.show(isAdj ? (isCredit ? "Crédito de horas lançado" : "Horas negativas lançadas") : isOcc ? "Ocorrência lançada" : "Ponto lançado", "success");
       Modal.close(); renderAll();
     });
   }
@@ -1050,7 +1213,7 @@
     var rowsHtml = data.days.length ? data.days.map(pgDayRowHtml).join("") :
       '<tr><td colspan="7" class="text-center text-muted" style="padding:20px;">Nenhum registro neste mês</td></tr>';
     return '<div class="small text-muted mb-8">' + capFirst(range.label) + '</div>' +
-      '<div class="table-wrap"><table class="data-table"><thead><tr>' +
+      '<div class="table-wrap"><table class="data-table table-cards"><thead><tr>' +
       '<th>Data</th><th>Entrada</th><th>Intervalo</th><th>Saída</th><th>Trabalhado</th><th>Extras / Faltantes</th><th>Saldo</th>' +
       '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
       (data.days.length ? '<tfoot><tr class="ponto-espelho-totals">' +
@@ -1101,7 +1264,7 @@
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
       '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") +
         (d.earlyLeave ? '<div class="mt-4">' + earlyBadgeHtml(d) + '</div>' : '') +
-        (d.adjustEntries.length ? '<div class="small text-danger">' + d.adjustEntries.map(adjustText).join(" · ") + '</div>' : '') + '</td>' +
+        (d.adjustEntries.length ? '<div class="small">' + d.adjustEntries.map(function (t) { return '<span class="' + adjustClass(t) + '">' + adjustText(t) + '</span>'; }).join(" · ") + '</div>' : '') + '</td>' +
     '</tr>';
   }
 
@@ -1110,7 +1273,7 @@
       .sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
     if (!list.length) return '<div class="small text-muted">Nenhuma ocorrência registrada para este colaborador.</div>';
     return list.map(function (t) {
-      var k = PontoCalc.isAdjustType(t.type) ? { label: PontoCalc.ADJUST_LABEL + ' (' + adjustText(t) + ')' } : (PontoCalc.OCCURRENCE_KINDS[t.type] || {});
+      var k = PontoCalc.isAdjustType(t.type) ? { label: PontoCalc.adjustLabelOf(t) + ' (' + adjustText(t) + ')' } : (PontoCalc.OCCURRENCE_KINDS[t.type] || {});
       return '<div class="ponto-request-row">' + thumbHtml(t) +
         '<div class="ponto-request-body"><div class="font-bold">' + (k.label || t.type) + '</div>' +
         '<div class="small text-muted">' + Utils.fmtDate(t.date) + (t.note ? ' · ' + Utils.escapeHtml(t.note) : '') + '</div>' +
@@ -1389,18 +1552,22 @@
       '<th></th></tr></thead><tbody>' +
       rows.map(function (r) {
         return '<tr>' +
-          '<td><div class="flex items-center gap-8">' + Utils.avatarHtml(r.employee.name, r.employee.photoDataUrl) +
+          '<td class="tc-title"><div class="flex items-center gap-8">' + Utils.avatarHtml(r.employee.name, r.employee.photoDataUrl) +
             '<div><div>' + Utils.escapeHtml(r.employee.name) + '</div><div class="small text-muted">' + Utils.escapeHtml(r.employee.role || "-") + '</div></div></div></td>' +
-          '<td class="text-num">' + PontoCalc.fmtHM(r.totals.workedMin) + '</td>' +
-          '<td class="text-num text-success">+' + PontoCalc.fmtHM(r.totals.extraMin) + '</td>' +
-          '<td class="text-num text-danger">-' + PontoCalc.fmtHM(r.totals.missingMin) + '</td>' +
-          '<td class="text-num ' + (r.totals.saldoMin < 0 ? "text-danger" : "text-success") + '">' + PontoCalc.fmtHM(r.totals.saldoMin) + '</td>' +
-          '<td><button class="btn btn-sm btn-outline" data-banco-open="' + r.employee.id + '">Ver detalhes</button></td>' +
+          '<td class="text-num" data-label="Trabalhado">' + PontoCalc.fmtHM(r.totals.workedMin) + '</td>' +
+          '<td class="text-num text-success" data-label="Extras">+' + PontoCalc.fmtHM(r.totals.extraMin) + '</td>' +
+          '<td class="text-num text-danger" data-label="Faltantes">-' + PontoCalc.fmtHM(r.totals.missingMin) + '</td>' +
+          '<td class="text-num ' + (r.totals.saldoMin < 0 ? "text-danger" : "text-success") + '" data-label="Saldo">' + PontoCalc.fmtHM(r.totals.saldoMin) + '</td>' +
+          '<td class="tc-actions"><button class="btn btn-sm btn-outline" data-banco-open="' + r.employee.id + '">Ver detalhes</button> ' +
+            '<button class="btn btn-sm btn-outline" data-banco-adjust="' + r.employee.id + '" title="Lançar desconto ou crédito de horas neste colaborador"><i class="fa-solid fa-scale-balanced"></i> Ajustar saldo</button></td>' +
           '</tr>';
       }).join("") + '</tbody>';
     Utils.wireSortHeaders(tbl, pgBancoSort, function () { renderBancoHorasTable(pgBancoRangeCtl.getRange()); });
     Utils.qsa("[data-banco-open]", tbl).forEach(function (btn) {
       btn.addEventListener("click", function () { openEmployeeDrawer(btn.getAttribute("data-banco-open")); });
+    });
+    Utils.qsa("[data-banco-adjust]", tbl).forEach(function (btn) {
+      btn.addEventListener("click", function () { openManualEntryModal(btn.getAttribute("data-banco-adjust"), "credito_horas"); });
     });
   }
 
@@ -1567,7 +1734,7 @@
           } else if (d.status === "ajuste") {
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
             doc.text(PontoCalc.fmtHM(PontoCalc.dayBank(d).min), FOLHA_COLS[8].x, y);
-            doc.text(wdName + " · " + d.adjustEntries.map(function (t) { return PontoCalc.ADJUST_LABEL + " " + adjustText(t); }).join(" · "), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
+            doc.text(wdName + " · " + d.adjustEntries.map(function (t) { return PontoCalc.adjustLabelOf(t) + " " + adjustText(t); }).join(" · "), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
           } else if (d.occurrence) {
             var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
             doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);

@@ -82,6 +82,12 @@
   function isAdjustType(type) { return type === ADJUST_TYPE; }
   // minutos de um registro de horas negativas (sempre >= 0)
   function debitMinOf(t) { var n = Math.round(Number(t && t.debitMin) || 0); return n > 0 ? n : 0; }
+  // AJUSTE DE SALDO (10/10/2026): o mesmo registro "debito_horas" pode ser um
+  // CRÉDITO (direction:"credito") — soma horas ao banco. Crédito sempre vai
+  // para o banco (não há "pagar em folha" nesse sentido).
+  var CREDIT_LABEL = "Horas positivas (crédito)";
+  function isCreditAdjust(t) { return !!(t && t.direction === "credito"); }
+  function adjustLabelOf(t) { return isCreditAdjust(t) ? CREDIT_LABEL : ADJUST_LABEL; }
 
   function isPunchType(type) { return PUNCH_TYPES.indexOf(type) !== -1; }
   function isOccurrenceType(type) { return !!OCCURRENCE_KINDS[type]; }
@@ -240,7 +246,9 @@
     var adjustEntries = dayEntries.filter(function (t) { return isAdjustType(t.type); });
     var adjustMin = 0, adjustPayMin = 0;
     adjustEntries.forEach(function (t) {
-      if (t.useBank === false) adjustPayMin += debitMinOf(t); else adjustMin -= debitMinOf(t);
+      if (isCreditAdjust(t)) adjustMin += debitMinOf(t);
+      else if (t.useBank === false) adjustPayMin += debitMinOf(t);
+      else adjustMin -= debitMinOf(t);
     });
 
     var result = {
@@ -309,7 +317,8 @@
       result.statusLabel = "Incompleto";
     } else if (adjustEntries.length) {
       result.status = "ajuste";
-      result.statusLabel = ADJUST_LABEL;
+      var nCred = adjustEntries.filter(isCreditAdjust).length;
+      result.statusLabel = nCred === adjustEntries.length ? CREDIT_LABEL : (nCred === 0 ? ADJUST_LABEL : "Ajuste de saldo");
     }
     return result;
   }
@@ -432,6 +441,9 @@
     ADJUST_TYPE: ADJUST_TYPE,
     ADJUST_LABEL: ADJUST_LABEL,
     isAdjustType: isAdjustType,
+    isCreditAdjust: isCreditAdjust,
+    adjustLabelOf: adjustLabelOf,
+    CREDIT_LABEL: CREDIT_LABEL,
     debitMinOf: debitMinOf,
     dayBank: dayBank,
     dailyExpectedMin: dailyExpectedMin,

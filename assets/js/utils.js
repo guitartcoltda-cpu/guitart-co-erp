@@ -962,6 +962,56 @@
 
   global.Utils = Utils;
   global.Toast = Toast;
+  // ---------------- Tabelas em cartões no celular (10/10/2026) ----------------
+  // Para tabelas com a classe .table-cards (ver style.css): copia o texto do
+  // cabeçalho de cada coluna para o data-label das células (levando em conta
+  // colspan), marca a 1ª célula (e a coluna "Funcionário") como título, a
+  // coluna sem cabeçalho como barra de ações e as células com colspan como
+  // largura total. Roda sozinho sempre que uma tabela .table-cards muda.
+  function cardifyTable(tbl) {
+    var heads = [];
+    var hr = tbl.querySelector("thead tr");
+    if (hr) Array.prototype.forEach.call(hr.children, function (th) {
+      var n = Number(th.getAttribute("colspan")) || 1;
+      var label = (th.textContent || "").replace(/\s+/g, " ").trim();
+      for (var k = 0; k < n; k++) heads.push(label);
+    });
+    Array.prototype.forEach.call(tbl.querySelectorAll("tbody tr, tfoot tr"), function (tr) {
+      var idx = 0;
+      Array.prototype.forEach.call(tr.children, function (td) {
+        var span = Number(td.getAttribute("colspan")) || 1;
+        var label = heads[idx];
+        if (span > 1) { td.classList.add("tc-full"); if (idx === 0) td.classList.add("tc-title"); }
+        else if (idx === 0 || label === "Funcionário") { td.classList.add("tc-title"); }
+        else if (label === "" && td.querySelector("button, a")) { td.classList.add("tc-actions"); }
+        else if (label && !td.hasAttribute("data-label")) { td.setAttribute("data-label", label); }
+        idx += span;
+      });
+    });
+  }
+  var cardifyQueued = false;
+  function cardifyAll() {
+    cardifyQueued = false;
+    Array.prototype.forEach.call(document.querySelectorAll("table.table-cards"), cardifyTable);
+  }
+  function queueCardify() {
+    if (cardifyQueued) return;
+    cardifyQueued = true;
+    (global.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(cardifyAll);
+  }
+  if (typeof MutationObserver !== "undefined" && global.document) {
+    var startCardify = function () {
+      new MutationObserver(function (muts) {
+        for (var i = 0; i < muts.length; i++) {
+          if (muts[i].type === "childList") { queueCardify(); return; }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+      queueCardify();
+    };
+    if (document.body) startCardify(); else document.addEventListener("DOMContentLoaded", startCardify);
+  }
+  Utils.cardifyTables = cardifyAll;
+
   global.Modal = Modal;
   global.Drawer = Drawer;
   global.ActionMenu = ActionMenu;

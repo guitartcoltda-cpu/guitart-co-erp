@@ -21,8 +21,12 @@
 
   // Mesma forma de montar o timestamp usada pelo lançamento manual e pelo
   // "bater ponto" normal: interpreta data+hora no fuso do navegador.
+  // `time` aceita "HH:MM" ou "HH:MM:SS" (a gestão pode ajustar até os segundos).
   function buildTimestamp(date, time) {
-    return new Date(date + "T" + (time || "00:00") + ":00").toISOString();
+    var t = String(time || "00:00");
+    if (!/^\d{1,2}:\d{2}:\d{2}$/.test(t)) t = t.replace(/^(\d{1,2}:\d{2}).*$/, "$1") + ":00";
+    if (/^\d:/.test(t)) t = "0" + t;
+    return new Date(date + "T" + t).toISOString();
   }
 
   function isoAddDays(dateStr, days) {

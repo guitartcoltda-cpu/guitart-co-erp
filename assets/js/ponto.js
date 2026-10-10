@@ -323,7 +323,7 @@
           '<button class="btn btn-icon btn-ghost btn-sm" id="esp-next" title="Próximo mês"><i class="fa-solid fa-chevron-right"></i></button>' +
         '</div>' +
       '</div>' +
-      '<div class="table-wrap mt-8"><table class="data-table"><thead><tr>' +
+      '<div class="table-wrap mt-8"><table class="data-table table-cards ponto-espelho-cards"><thead><tr>' +
         '<th>Data</th><th>Entrada</th><th>Almoço</th><th>Saída</th><th>Trabalhado</th><th>Extras / Faltantes</th><th>Saldo</th>' +
       '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
       (data.days.length ? '<tfoot><tr class="ponto-espelho-totals">' +
@@ -359,8 +359,12 @@
         (d.expectedMin ? '<span class="small text-muted"> · previsto ' + PontoCalc.fmtHM(d.expectedMin) + '</span>' : '') + '</td><td class="text-num">-</td></tr>';
     }
     var bk = PontoCalc.dayBank(d);
-    var adjTxt = function (t) { return PontoCalc.ADJUST_LABEL + ": -" + PontoCalc.fmtHM(PontoCalc.debitMinOf(t)) + (t.useBank === false ? " em folha" : " no banco de horas"); };
-    var adjBadges = d.adjustEntries.map(function (t) { return '<span class="badge badge-danger"><i class="fa-solid fa-hourglass-end"></i> ' + adjTxt(t) + '</span>'; }).join(" ");
+    var adjTxt = function (t) {
+      return PontoCalc.isCreditAdjust(t)
+        ? PontoCalc.CREDIT_LABEL + ": +" + PontoCalc.fmtHM(PontoCalc.debitMinOf(t)) + " no banco de horas"
+        : PontoCalc.ADJUST_LABEL + ": -" + PontoCalc.fmtHM(PontoCalc.debitMinOf(t)) + (t.useBank === false ? " em folha" : " no banco de horas");
+    };
+    var adjBadges = d.adjustEntries.map(function (t) { return '<span class="badge ' + (PontoCalc.isCreditAdjust(t) ? "badge-success" : "badge-danger") + '"><i class="fa-solid ' + (PontoCalc.isCreditAdjust(t) ? "fa-hourglass-start" : "fa-hourglass-end") + '"></i> ' + adjTxt(t) + '</span>'; }).join(" ");
     if (d.status === "ajuste") {
       return '<tr>' + dateCell + '<td colspan="5">' + adjBadges + '</td>' +
         '<td class="text-num ' + (bk.min < 0 ? "text-danger" : "") + '">' + (bk.adjustMin ? PontoCalc.fmtHM(bk.min) : "0h00") + '</td></tr>';
