@@ -42,7 +42,7 @@ declare
     'bankLines', 'commissionPayouts', 'settings', 'users', 'activityLog',
     'commissionBonuses', 'occurrences', 'cardMachines',
     'productConsumptions', 'notifications', 'approvals', 'chamados',
-    'timeClockEntries'
+    'timeClockEntries', 'timeSheets'
   ];
 begin
   foreach t in array tables loop
