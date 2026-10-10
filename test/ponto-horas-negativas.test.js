@@ -25,7 +25,7 @@ w.DB = {
   update: (t, id, p) => Object.assign(store[t].find(x => x.id === id), p),
   mergeRecordUpdate: (t, id, fn) => Object.assign(store[t].find(x => x.id === id), fn(store[t].find(x => x.id === id))),
   mergeFieldUpdate: () => {}, batch: fn => fn(), remove: (t, id) => { store[t] = store[t].filter(x => x.id !== id); },
-  getSettings: () => ({}), getRoles: () => [], log: (a, b) => logs.push(a + ": " + b), hasRemote: () => false
+  nowISO: () => new Date().toISOString(), getSettings: () => ({}), getRoles: () => [], log: (a, b) => logs.push(a + ": " + b), hasRemote: () => false
 };
 w.CurrentUser = { get: () => ({ id: "u", role: "Administrador", firstName: "A", lastName: "B" }) };
 w.Approvals = { listPending: () => [], canApprove: () => true, TYPE_LABELS: {} };
