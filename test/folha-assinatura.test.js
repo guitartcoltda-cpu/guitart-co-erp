@@ -88,7 +88,7 @@ const sync = fn => new Promise(res => fn((okk, msg) => res({ ok: okk, msg })));
   ok(sheet.snapshot.monthLabel === "Setembro de 2026" || /Setembro/i.test(sheet.snapshot.monthLabel), "rótulo do mês: " + sheet.snapshot.monthLabel);
   ok(FP.verifyIntegrity(sheet), "integridade ok");
   const row02 = sheet.snapshot.rows.find(x => x.date === "2026-09-02");
-  ok(row02 && row02.c[5] === "8h30" && /tol\. 10min/.test(row02.c[9]), "tolerância aparece na folha congelada: " + JSON.stringify(row02 && row02.c));
+  ok(row02 && row02.c[5] === "8h30" && !/tol/i.test(row02.c[9]), "tolerância é aplicada mas não é exibida na folha congelada: " + JSON.stringify(row02 && row02.c));
   ok(sheet.snapshot.totals.saldo === "0h00", "saldo do período com tolerância = 0h00 (" + sheet.snapshot.totals.saldo + ")");
   const tampered = JSON.parse(JSON.stringify(sheet)); tampered.snapshot.totals.saldo = "+9h00";
   ok(!FP.verifyIntegrity(tampered), "adulteração é detectada");
