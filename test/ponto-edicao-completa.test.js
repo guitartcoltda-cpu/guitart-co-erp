@@ -46,7 +46,7 @@ w.Layout = { init() {}, render() {} };
 w.jspdf = {};
 const errors = [];
 w.addEventListener("error", e => errors.push(e.message));
-["utils.js", "period-filter.js", "ponto-calc.js", "ponto-ajustes.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
+["utils.js", "period-filter.js", "ponto-calc.js", "folha-ponto.js", "ponto-ajustes.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
 const toasts = [];
 w.Toast.show = (m, k) => toasts.push(k + ":" + m);
 w.PontoAjustes.requestEarlyLeave = info => { const a = { id: "ap" + (++seq), type: "ajuste_ponto", status: "pendente", summary: "novo", payload: Object.assign({ kind: "saida_antecipada" }, info) }; store.approvals.push(a); return a; };

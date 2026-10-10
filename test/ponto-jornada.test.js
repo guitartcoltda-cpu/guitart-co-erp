@@ -77,10 +77,40 @@ eq(PC.scheduleSummary(LUIZA), "Ter–Sáb · 09:40–19:00 · almoço 1h00 (12:0
   eq(d.workedMin, 500, "dia perfeito: trabalhado 8h20"); eq(d.saldoMin, 0, "dia perfeito: saldo 0"); eq(d.status, "completo", "dia perfeito: completo");
 
   d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:50", "12:00", "13:00", "19:00"), LUIZA);
-  eq(d.saldoMin, -10, "entrou 10 min depois do previsto: saldo −10 (banco, sem tolerância)");
+  eq(d.saldoMin, 0, "entrou 10 min depois do previsto: dentro da tolerância, saldo 0");
+  eq(d.entradaTolerada, true, "entrada marcada como tolerada");
+  eq(d.workedRawMin, 490, "trabalhado real preservado (8h10)"); eq(d.workedMin, 500, "trabalhado contado = jornada (8h20)");
+
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:51", "12:00", "13:00", "19:00"), LUIZA);
+  eq(d.saldoMin, -11, "entrou 11 min depois: passou da tolerância, conta o desvio inteiro (−11)");
+  eq(d.entradaTolerada, false, "11 min não é tolerado");
+
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:30", "12:00", "13:00", "19:00"), LUIZA);
+  eq(d.saldoMin, 0, "entrou 10 min ANTES: dentro da tolerância, saldo 0");
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:29", "12:00", "13:00", "19:00"), LUIZA);
+  eq(d.saldoMin, 11, "entrou 11 min antes: conta +11");
+
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:40", "12:00", "13:00", "19:10"), LUIZA);
+  eq(d.saldoMin, 0, "saiu 10 min depois: tolerado, saldo 0"); eq(d.saidaTolerada, true, "saída marcada como tolerada");
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:40", "12:00", "13:00", "18:50"), LUIZA);
+  eq(d.saldoMin, 0, "saiu 10 min antes: tolerado, saldo 0");
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:40", "12:00", "13:00", "18:49"), LUIZA);
+  eq(d.saldoMin, -11, "saiu 11 min antes: conta −11");
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:45", "12:00", "13:00", "19:08"), LUIZA);
+  eq(d.saldoMin, 0, "entrada +5 e saída +8: ambas toleradas, saldo 0 (não compensa nem soma)");
+  d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:50", "12:00", "13:00", "19:11"), LUIZA);
+  eq(d.saldoMin, 11, "entrada tolerada (+10 atraso ignorado) e saída +11: conta só a saída (+11)");
+  d = PC.computeDay("2026-10-06", [
+    { id: "x1", employeeId: LUIZA.id, date: "2026-10-06", type: "entrada", timestamp: ts("2026-10-06", "09:36") },
+    { id: "x4", employeeId: LUIZA.id, date: "2026-10-06", type: "saida", timestamp: ts("2026-10-06", "19:00"), earlyLeave: { status: "abonada" } }
+  ], LUIZA);
+  eq(d.saldoMin, 0, "saída exata + entrada tolerada + status de saída antecipada não duplica");
+  const noSched = { id: "ns", dailyWorkHours: 8 };
+  d = PC.computeDay("2026-10-06", fullDay(noSched, "2026-10-06", "09:00", "12:00", "13:00", "17:05"), noSched);
+  eq(d.entradaTolerada, false, "sem horário fixo: não há tolerância");
 
   d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:30", "12:00", "13:00", "19:20"), LUIZA);
-  eq(d.saldoMin, 30, "entrou 10 min antes e saiu 20 min depois: saldo +30");
+  eq(d.saldoMin, 20, "entrou 10 min antes (tolerado) e saiu 20 min depois: saldo +20");
 
   d = PC.computeDay("2026-10-06", fullDay(LUIZA, "2026-10-06", "09:40", "13:30", "14:20", "19:00"), LUIZA);
   eq(d.saldoMin, 10, "almoço flexível: 50 min tirados em outro horário somam +10");
@@ -103,8 +133,8 @@ eq(PC.scheduleSummary(LUIZA), "Ter–Sáb · 09:40–19:00 · almoço 1h00 (12:0
 (function () {
   const entries = []
     .concat(fullDay(LUIZA, "2026-09-29", "09:40", "12:00", "13:00", "19:00"))   // ter
-    .concat(fullDay(LUIZA, "2026-09-30", "09:40", "12:00", "13:00", "19:10"))   // qua (+10)
-    .concat(fullDay(LUIZA, "2026-10-01", "09:50", "12:00", "13:00", "19:00"))   // qui (−10)
+    .concat(fullDay(LUIZA, "2026-09-30", "09:40", "12:00", "13:00", "19:10"))   // qua (+10: tolerado)
+    .concat(fullDay(LUIZA, "2026-10-01", "09:51", "12:00", "13:00", "19:00"))   // qui (−11: passou da tolerância)
     .concat(fullDay(LUIZA, "2026-10-02", "09:40", "12:00", "13:00", "19:00"))   // sex
     .concat(fullDay(LUIZA, "2026-10-03", "09:40", "12:00", "13:00", "19:00"))   // sáb
     // dom 10/04 e seg 10/05: nada. ter 10/06 e qua 10/07: nada (sem justificativa). qui 10/08 = hoje, nada ainda.
@@ -120,8 +150,8 @@ eq(PC.scheduleSummary(LUIZA), "Ter–Sáb · 09:40–19:00 · almoço 1h00 (12:0
   eq(byDate["2026-10-06"].saldoMin, 0, "sem registro não desconta do banco");
   eq(byDate["2026-10-07"].status, "folga_abono", "quarta com Folga/Abono lançada: justificada");
   eq(byDate["2026-10-08"].status, "aguardando", "hoje sem batida ainda: aguardando");
-  eq(byDate["2026-10-01"].saldoMin, -10, "10/01: −10");
-  eq(r.totals.saldoMin, -10, "saldo do período = só os dias com batida completa (10/01: −10; 10/02 e 10/03: 0)");
+  eq(byDate["2026-10-01"].saldoMin, -11, "10/01: −11");
+  eq(r.totals.saldoMin, -11, "saldo do período = só os dias com batida completa (10/01: −11; demais: 0, 09/30 tolerado)");
   eq(r.totals.folgaDays, 2, "2 dias de folga semanal no período");
   eq(r.totals.pendingDays, 1, "1 dia pendente de justificativa (terça 10/06)");
 

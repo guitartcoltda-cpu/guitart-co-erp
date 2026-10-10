@@ -33,7 +33,7 @@ w.Layout = { init() {}, render() {} };
 w.jspdf = {};
 const errors = [];
 w.addEventListener("error", e => errors.push(e.message));
-["utils.js", "period-filter.js", "ponto-calc.js", "ponto-ajustes.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
+["utils.js", "period-filter.js", "ponto-calc.js", "folha-ponto.js", "ponto-ajustes.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
 const toasts = [];
 w.Toast.show = (m, k) => toasts.push(k + ":" + m);
 try { w.eval(fs.readFileSync(path.join(root, "assets", "js", "ponto-gestao.js"), "utf8")); } catch (e) { errors.push("load: " + e.message); }
