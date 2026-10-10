@@ -87,6 +87,11 @@
   function approve(id, onApply, note) {
     var a = DB.get("approvals", id);
     if (!a || a.status !== "pendente") return Promise.resolve({ ok: false, reason: "not_pending_local" });
+    // FOLHA DE PONTO ASSINADA (10/10/2026): não aplica ajuste em mês fechado
+    // por folha publicada (o aviso já é mostrado por PontoAjustes.isLocked).
+    if (a.type === "ajuste_ponto" && global.PontoAjustes && global.PontoAjustes.isLocked && global.PontoAjustes.isLocked(a.payload)) {
+      return Promise.resolve({ ok: false, reason: "period_locked" });
+    }
     return DB.fetchFresh("approvals", id).then(function (fresh) {
       if (fresh && fresh.status !== "pendente") {
         return { ok: false, reason: "already_decided", status: fresh.status };
@@ -112,6 +117,9 @@
   function reject(id, reason, onReject) {
     var a = DB.get("approvals", id);
     if (!a || a.status !== "pendente") return Promise.resolve({ ok: false, reason: "not_pending_local" });
+    if (a.type === "ajuste_ponto" && a.payload && a.payload.kind === "saida_antecipada" && global.PontoAjustes && global.PontoAjustes.isLocked && global.PontoAjustes.isLocked(a.payload)) {
+      return Promise.resolve({ ok: false, reason: "period_locked" });
+    }
     return DB.fetchFresh("approvals", id).then(function (fresh) {
       if (fresh && fresh.status !== "pendente") {
         return { ok: false, reason: "already_decided", status: fresh.status };

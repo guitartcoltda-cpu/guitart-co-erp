@@ -27,8 +27,17 @@
     "bankLines", "commissionPayouts", "settings", "users", "activityLog",
     "commissionBonuses", "occurrences", "cardMachines",
     "productConsumptions", "notifications", "approvals", "chamados",
-    "timeClockEntries"
+    "timeClockEntries", "timeSheets"
   ];
+
+  // Tabelas "opcionais": criadas depois do sistema já estar no ar (ex.:
+  // "timeSheets" — folhas de ponto fechadas/assinadas, 10/10/2026). Se a
+  // tabela ainda NÃO existir no Supabase (o SQL de criação ainda não foi
+  // rodado), a busca dela falha — mas isso NÃO pode derrubar o carregamento
+  // do sistema inteiro; ela entra como lista vazia e o fato fica registrado
+  // em DB.optionalTableMissing(nome) para a tela avisar com clareza.
+  var OPTIONAL_TABLES = { timeSheets: true };
+  var _missingOptional = {};
 
   var ENV = global.ENV || {};
   var supa = null;
@@ -443,7 +452,13 @@
       var fetches = TABLES.map(function (t) {
         var src = BOOT_VIEW[t] || t;
         return fetchAllRows(src).then(function (rows) {
+          if (OPTIONAL_TABLES[t]) delete _missingOptional[t];
           return { table: t, rows: rows };
+        }).catch(function (err) {
+          if (!OPTIONAL_TABLES[t]) throw err;
+          console.warn("Tabela opcional \"" + t + "\" indisponível no Supabase (rode o SQL de criação) — seguindo com lista vazia.", err);
+          _missingOptional[t] = true;
+          return { table: t, rows: [] };
         });
       });
 
@@ -872,6 +887,10 @@
     // configurado, é melhor simplesmente confiar no cache local como o
     // resto do sistema já faz.
     hasRemote: function () { return !!supa; },
+
+    // Verdadeiro se, no último carregamento, o Supabase não tinha uma tabela
+    // opcional (ver OPTIONAL_TABLES) — ex.: "timeSheets" ainda não criada.
+    optionalTableMissing: function (table) { return !!_missingOptional[table]; },
 
     // Timestamp (ISO) de quando o cache desta aba foi buscado fresco do
     // servidor pela última vez de verdade (não só reaproveitado da janela

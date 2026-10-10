@@ -26,6 +26,7 @@
   var selectedEmployee = null;
   var selectedStep = null;
   var espelhoRef = null; // Date do mês mostrado no espelho de ponto (tela "Meu Dia")
+  var dayTab = "dia";    // aba aberta em "Meu Dia": "dia" | "folhas" (folhas de ponto para assinar)
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -80,6 +81,8 @@
       var badge = next
         ? '<div class="small text-muted">' + Utils.escapeHtml(next.label) + '</div>'
         : '<div class="small" style="color:var(--color-success);">Dia concluído</div>';
+      var nSheets = pendingSheetsCount(e.id);
+      if (nSheets) badge += '<div class="small"><span class="badge badge-warning"><i class="fa-solid fa-file-signature"></i> ' + nSheets + ' folha(s) p/ assinar</span></div>';
       return '<button type="button" class="ponto-emp-card" data-emp="' + e.id + '">' +
           Utils.avatarHtml(e.name, e.photoDataUrl, "avatar-lg") +
           '<div class="font-bold mt-8">' + Utils.escapeHtml(e.name) + '</div>' +
@@ -97,6 +100,7 @@
     if (!e) return;
     selectedEmployee = e;
     espelhoRef = new Date();
+    dayTab = "dia";
     showOnly("ponto-confirm");
     renderDay();
   }
@@ -143,6 +147,8 @@
         '</div>' +
         '<button class="btn btn-secondary btn-sm" id="ponto-back"><i class="fa-solid fa-arrow-left"></i> Trocar</button>' +
       '</div>' +
+      folhaTabsHtml(e) +
+      '<div id="ponto-pane-dia">' +
       '<div class="ponto-day-card">' +
         '<div class="ponto-day-card-title">Fluxo de Hoje</div>' +
         stepStateHtml() +
@@ -155,9 +161,12 @@
         '</div>' +
         '<div class="small text-muted mt-8">Esqueceu de bater, bateu no horário errado, faltou com atestado, tirou uma folga? Registre aqui — vai para aprovação de um administrador.</div>' +
       '</div>' +
-      '<div class="ponto-day-card" id="ponto-espelho-card"></div>';
+      '<div class="ponto-day-card" id="ponto-espelho-card"></div>' +
+      '</div>' +
+      '<div id="ponto-pane-folhas" style="display:none;"></div>';
 
     document.getElementById("ponto-back").addEventListener("click", renderPicker);
+    wireFolhaTabs(e);
     document.getElementById("ponto-open-adjust").addEventListener("click", function () { openAdjustModal(e); });
     if (selectedStep) {
       document.getElementById("ponto-selfie-input").addEventListener("change", function (ev) {
@@ -185,6 +194,42 @@
       });
     }
     renderEspelho();
+  }
+
+  // ---------------- Aba "Folhas de Ponto" (assinatura eletrônica) ----------------
+  function pendingSheetsCount(employeeId) {
+    return window.FolhaPonto ? FolhaPonto.pendingForEmployee(employeeId).length : 0;
+  }
+
+  function folhaTabsHtml(e) {
+    var n = pendingSheetsCount(e.id);
+    return '<div class="tabs ponto-tabs" id="ponto-tabs">' +
+      '<button type="button" class="tab-btn' + (dayTab === "dia" ? " active" : "") + '" data-ptab="dia"><i class="fa-solid fa-clock"></i> Meu Dia</button>' +
+      '<button type="button" class="tab-btn' + (dayTab === "folhas" ? " active" : "") + '" data-ptab="folhas"><i class="fa-solid fa-file-signature"></i> Folhas de Ponto' +
+        (n ? ' <span class="ponto-tab-count">' + n + '</span>' : '') + '</button>' +
+    '</div>';
+  }
+
+  function updateTabCount(e) {
+    var btn = document.querySelector('#ponto-tabs [data-ptab="folhas"]');
+    if (!btn) return;
+    var n = pendingSheetsCount(e.id);
+    btn.innerHTML = '<i class="fa-solid fa-file-signature"></i> Folhas de Ponto' + (n ? ' <span class="ponto-tab-count">' + n + '</span>' : '');
+  }
+
+  function showDayTab(which) {
+    dayTab = which;
+    Utils.qsa("#ponto-tabs .tab-btn").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-ptab") === which); });
+    document.getElementById("ponto-pane-dia").style.display = which === "dia" ? "" : "none";
+    document.getElementById("ponto-pane-folhas").style.display = which === "folhas" ? "" : "none";
+  }
+
+  function wireFolhaTabs(e) {
+    if (window.FolhaPonto) FolhaPonto.mountEmployeePanel(document.getElementById("ponto-pane-folhas"), e, function () { updateTabCount(e); });
+    Utils.qsa("#ponto-tabs .tab-btn").forEach(function (b) {
+      b.addEventListener("click", function () { showDayTab(b.getAttribute("data-ptab")); });
+    });
+    showDayTab(dayTab);
   }
 
   // Pergunta à funcionária, ao bater a saída final antes do horário.
@@ -383,9 +428,9 @@
     var elMeta = PontoCalc.earlyLeaveMeta(d);
     if (elMeta) statusBadge += '<div><span class="badge ' + elMeta.badge + '"><i class="fa-solid fa-door-open"></i> ' + elMeta.label + '</span></div>';
     return '<tr>' + dateCell +
-      '<td class="text-num">' + hhmm(d.entrada) + '</td>' +
+      '<td class="text-num">' + hhmm(d.entrada) + (d.entradaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? hhmm(d.saidaAlmoco) + ' → ' + hhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +
-      '<td class="text-num">' + hhmm(d.saida) + '</td>' +
+      '<td class="text-num">' + hhmm(d.saida) + (d.saidaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
       '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") + (adjBadges ? '<div class="small">' + adjBadges + '</div>' : '') + '</td>' +
@@ -499,6 +544,7 @@
       }
 
       if (!window.PontoAjustes) { Toast.show("Não foi possível enviar a solicitação agora — tente de novo.", "danger"); return; }
+      if (PontoAjustes.isLocked && PontoAjustes.isLocked(payload)) return; // mês fechado por folha publicada
       PontoAjustes.request(payload);
       Modal.close();
       showAdjustDone(e);

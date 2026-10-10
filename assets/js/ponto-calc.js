@@ -94,6 +94,12 @@
 
   // Saída final até 10 min antes do fim da jornada não pergunta nada (conta normal).
   var EARLY_TOLERANCE_MIN = 10;
+  // TOLERÂNCIA DE ENTRADA/SAÍDA (10/10/2026): entrada ou saída até 10 min antes OU
+  // depois do horário previsto do dia conta como se fosse exatamente no horário
+  // (não entra nem sai do banco). Passou de 10 min: conta o desvio INTEIRO (estilo
+  // CLT, art. 58 §1º), não só o excedente. Vale para entrada e saída
+  // separadamente e só para quem tem horário fixo no dia.
+  var PUNCH_TOLERANCE_MIN = 10;
   var EARLY_LABELS = {
     pendente: { label: "Saída antecipada — aguardando a gerência", badge: "badge-warning" },
     abonada: { label: "Saída antecipada autorizada (sem desconto)", badge: "badge-success" },
@@ -282,25 +288,42 @@
     }
 
     if (result.entrada && result.saida) {
-      var workedMs = new Date(result.saida.timestamp).getTime() - new Date(result.entrada.timestamp).getTime();
+      var inTs = new Date(result.entrada.timestamp).getTime();
+      var outTs = new Date(result.saida.timestamp).getTime();
+      var rawMs = outTs - inTs;
+      var tolIn = false, tolOut = false;
+      if (sc && sc.working) {
+        var dayStartMs = new Date(date + "T00:00:00").getTime();
+        var schedIn = dayStartMs + sc.startMin * 60000, schedOut = dayStartMs + sc.endMin * 60000;
+        var devIn = Math.round((inTs - schedIn) / 60000), devOut = Math.round((outTs - schedOut) / 60000);
+        if (devIn !== 0 && Math.abs(devIn) <= PUNCH_TOLERANCE_MIN) { inTs = schedIn; tolIn = true; }
+        if (devOut !== 0 && Math.abs(devOut) <= PUNCH_TOLERANCE_MIN) { outTs = schedOut; tolOut = true; }
+      }
+      result.entradaTolerada = tolIn;
+      result.saidaTolerada = tolOut;
+      var workedMs = outTs - inTs;
+      var rawWorkedMs = rawMs;
       if (result.saidaAlmoco && result.voltaAlmoco) {
         var almocoMs = new Date(result.voltaAlmoco.timestamp).getTime() - new Date(result.saidaAlmoco.timestamp).getTime();
         workedMs -= Math.max(0, almocoMs);
+        rawWorkedMs -= Math.max(0, almocoMs);
         result.lunchMinActual = Math.max(0, Math.round(almocoMs / 60000));
       } else if (sc && sc.working && sc.lunchMin > 0) {
         // Com horário fixo e sem as batidas do almoço: desconta o intervalo
         // previsto (senão o dia contaria o almoço como trabalhado) e avisa.
         workedMs -= sc.lunchMin * 60000;
+        rawWorkedMs -= sc.lunchMin * 60000;
         result.lunchMinActual = sc.lunchMin;
         result.lunchAssumed = true;
       }
       var workedMin = Math.max(0, Math.round(workedMs / 60000));
       result.workedMin = workedMin;
+      result.workedRawMin = Math.max(0, Math.round(rawWorkedMs / 60000));
       // Saída antecipada justificada: "pendente" e "abonada" neutralizam o trecho
       // que faltou; "recusada" (ou sem justificativa) conta normal.
       var el = result.saida && result.saida.earlyLeave;
       var early = 0;
-      if (el && (el.status === "pendente" || el.status === "abonada")) early = earlyMinutes(employee, date, result.saida.timestamp);
+      if (el && !tolOut && (el.status === "pendente" || el.status === "abonada")) early = earlyMinutes(employee, date, result.saida.timestamp);
       result.earlyLeave = el ? { status: el.status, claimedAuthorized: !!el.claimedAuthorized, reason: el.reason || "", min: earlyMinutes(employee, date, result.saida.timestamp) } : null;
       result.earlyLeaveMin = early;
       var effective = workedMin + early;
@@ -341,7 +364,7 @@
     return {
       date: date, entrada: null, saidaAlmoco: null, voltaAlmoco: null, saida: null, occurrence: null,
       schedule: sc, expectedMin: sc ? sc.expectedMin : 0, lunchMinActual: null, lunchAssumed: false,
-      workedMin: null, extraMin: 0, missingMin: 0, saldoMin: 0, earlyLeave: null, earlyLeaveMin: 0, adjustEntries: [], adjustMin: 0, adjustPayMin: 0, status: status, statusLabel: label, placeholder: true
+      workedMin: null, extraMin: 0, missingMin: 0, saldoMin: 0, earlyLeave: null, earlyLeaveMin: 0, entradaTolerada: false, saidaTolerada: false, adjustEntries: [], adjustMin: 0, adjustPayMin: 0, status: status, statusLabel: label, placeholder: true
     };
   }
 
@@ -438,6 +461,10 @@
     earlyMinutes: earlyMinutes,
     needsEarlyLeaveReason: needsEarlyLeaveReason,
     earlyLeaveMeta: earlyLeaveMeta,
+    PUNCH_TOLERANCE_MIN: PUNCH_TOLERANCE_MIN,
+    tolMarkHtml: function () {
+      return ' <span class="tol-mark" title="Dentro da tolerância de ' + PUNCH_TOLERANCE_MIN + ' min — contado como no horário previsto">(tol.)</span>';
+    },
     ADJUST_TYPE: ADJUST_TYPE,
     ADJUST_LABEL: ADJUST_LABEL,
     isAdjustType: isAdjustType,

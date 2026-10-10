@@ -75,6 +75,21 @@
     return Approvals.request(TYPE, summarize(payload), payload);
   }
 
+  // FOLHA DE PONTO ASSINADA (10/10/2026): true (e avisa) se alguma data
+  // afetada pela solicitação cai num mês já fechado por folha publicada.
+  function isLocked(payload) {
+    if (!payload || !global.FolhaPonto) return false;
+    var dates = [payload.date];
+    if (payload.endDate && payload.endDate > payload.date) {
+      var cur = payload.date, n = 0;
+      while (cur <= payload.endDate && n < 60) { dates.push(cur); cur = isoAddDays(cur, 1); n++; }
+    }
+    for (var i = 0; i < dates.length; i++) {
+      if (dates[i] && global.FolhaPonto.lockFor(payload.employeeId, dates[i])) return global.FolhaPonto.guard(payload.employeeId, dates[i]);
+    }
+    return false;
+  }
+
   // Roda só quando a solicitação é aprovada (via Approvals.approve(id, apply)).
   function apply(payload) {
     if (!payload) return;
@@ -210,6 +225,7 @@
     request: request,
     requestEarlyLeave: requestEarlyLeave,
     onReject: onReject,
+    isLocked: isLocked,
     apply: apply
   };
 })(window);

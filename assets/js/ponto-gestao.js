@@ -34,6 +34,7 @@
 
   function init() {
     initTabs();
+    FolhaPonto.mountManagerPanel(document.getElementById("pg-assinaturas-root"));
 
     var empSel = Utils.qs("#pg-employee");
     var employeesWithEntries = {};
@@ -83,6 +84,7 @@
     renderSolicitacoesTab();
     renderOcorrenciasTab();
     renderBancoHorasTab();
+    if (window.FolhaPonto) FolhaPonto.refresh();
   }
 
   // ---------------- Abas ----------------
@@ -411,9 +413,9 @@
     return '<tr>' +
       '<td class="text-num">' + Utils.fmtDate(row.date) + '</td>' +
       '<td>' + nameCell + '</td>' +
-      '<td class="text-num">' + pgHhmm(d.entrada) + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.entrada) + (d.entradaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : '-') + '</td>' +
-      '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.saida) + (d.saidaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') +
         (d.workedMin != null ? '<div class="small ' + (d.saldoMin < 0 ? "text-danger" : "text-success") + '">saldo ' + PontoCalc.fmtHM(d.saldoMin) + '</div>' : '') +
         (d.earlyLeave ? '<div class="mt-4">' + earlyBadgeHtml(d) + '</div>' : '') +
@@ -697,6 +699,7 @@
     if (!canManage()) { denyManage(); return; }
     var t = DB.get("timeClockEntries", id);
     if (!t) return;
+    if (FolhaPonto.guard(t.employeeId, t.date)) return; // mês fechado por folha publicada
     Modal.confirm({
       title: "Excluir registro de ponto",
       message: "Excluir o registro de " + (t.employeeName || "-") + " (" + anyTypeLabel(t.type) + " em " + Utils.fmtDate(t.date) + ")? Essa ação não pode ser desfeita — use para limpar lançamentos de teste ou errados.",
@@ -887,6 +890,8 @@
       var reviewed = box.querySelector("#pg-reviewed").checked;
       var newEmp = DB.get("employees", box.querySelector("#pg-emp").value) || e;
       var newType = isAdj ? t.type : (typeSel ? typeSel.value : t.type);
+      // mês fechado por folha publicada: nem o registro de origem nem o destino podem mudar
+      if (FolhaPonto.guard(t.employeeId, t.date) || FolhaPonto.guard(newEmp ? newEmp.id : t.employeeId, newDate)) return;
       var changes = [];
       function chg(label, from, to) { if (String(from) !== String(to)) changes.push(label + ": " + from + " → " + to); }
       var oldDirCredit = PontoCalc.isCreditAdjust(t);
@@ -1058,6 +1063,7 @@
       var time = isOcc ? "00:00" : box.querySelector("#me-time").value;
       var reason = box.querySelector("#me-reason").value.trim();
       if (!emp || !date || (!isOcc && !time)) { Toast.show("Preencha funcionário, data" + (isOcc ? "" : " e hora"), "danger"); return; }
+      if (FolhaPonto.guard(employeeId, date)) return; // mês fechado por folha publicada
       var debitMin = 0, useBank = true;
       if (isAdj) {
         debitMin = PontoCalc.parseHM(box.querySelector("#me-debit").value) || 0;
@@ -1282,9 +1288,9 @@
     }
     var statusBadge = d.status === "em_andamento" ? '<span class="badge badge-info">Em andamento</span>' : d.status === "incompleto" ? '<span class="badge badge-warning">Incompleto</span>' : "";
     return '<tr>' + dateCell +
-      '<td class="text-num">' + pgHhmm(d.entrada) + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.entrada) + (d.entradaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
       '<td class="text-num">' + (d.saidaAlmoco || d.voltaAlmoco ? pgHhmm(d.saidaAlmoco) + ' → ' + pgHhmm(d.voltaAlmoco) : (d.lunchAssumed ? '<span class="small text-muted" title="Almoço não batido: descontado o previsto">' + PontoCalc.fmtHM(d.lunchMinActual) + ' (prev.)</span>' : '-')) + '</td>' +
-      '<td class="text-num">' + pgHhmm(d.saida) + '</td>' +
+      '<td class="text-num">' + pgHhmm(d.saida) + (d.saidaTolerada ? PontoCalc.tolMarkHtml() : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-") + (statusBadge ? '<div>' + statusBadge + '</div>' : '') + '</td>' +
       '<td class="text-num">' + (d.workedMin != null ? '+' + PontoCalc.fmtHM(d.extraMin) + ' / -' + PontoCalc.fmtHM(d.missingMin) : '-') + '</td>' +
       '<td class="text-num ' + (bk.show ? (bk.min < 0 ? "text-danger" : "text-success") : "") + '">' + (bk.show ? PontoCalc.fmtHM(bk.min) : "-") +
@@ -1391,7 +1397,8 @@
         // tempo) — por isso virou assíncrono; ver comentário em
         // approvals.js.
         Approvals.approve(id, PontoAjustes.apply, commentEl ? commentEl.value.trim() : "").then(function (result) {
-          if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+          if (!result.ok && result.reason === "period_locked") { /* aviso já mostrado: mês fechado por folha publicada */ }
+          else if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
           else { Toast.show("Solicitação aprovada", "success"); }
           if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
           renderAll();
@@ -1406,7 +1413,8 @@
           title: "Recusar solicitação", message: "Deseja recusar este pedido de ajuste de ponto?", danger: true,
           onConfirm: function () {
             Approvals.reject(id, commentEl ? commentEl.value.trim() : "").then(function (result) {
-              if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+              if (!result.ok && result.reason === "period_locked") { /* aviso já mostrado: mês fechado por folha publicada */ }
+          else if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
               else { Toast.show("Solicitação recusada", "info"); }
               if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
               renderAll();
@@ -1662,23 +1670,13 @@
     });
   }
 
-  var FOLHA_COLS = [
-    { key: "data", label: "Data", x: 40, w: 55 },
-    { key: "entrada", label: "Entrada", x: 95, w: 50 },
-    { key: "saidaAlmoco", label: "Saída Almoço", x: 145, w: 62 },
-    { key: "voltaAlmoco", label: "Volta Almoço", x: 207, w: 62 },
-    { key: "saida", label: "Saída", x: 269, w: 48 },
-    { key: "trabalhado", label: "Trabalhado", x: 317, w: 62 },
-    { key: "extras", label: "Extras", x: 379, w: 52 },
-    { key: "faltantes", label: "Faltantes", x: 431, w: 52 },
-    { key: "saldo", label: "Saldo", x: 483, w: 52 },
-    { key: "obs", label: "Ocorrência / Observação", x: 535, w: 267 }
-  ];
-
+  // A montagem (snapshot) e o desenho do PDF moram em folha-ponto.js
+  // (FolhaPonto), compartilhados com a assinatura eletrônica da folha — o
+  // PDF de "rascunho" abaixo usa exatamente o mesmo código.
   function generateFolhaPdf(employeeId, monthKey) {
-    var jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
-    if (!jsPDFCtor) { Toast.show("Não foi possível carregar a biblioteca de PDF — verifique sua conexão e tente novamente", "danger"); return; }
     if (!monthKey) { Toast.show("Selecione o mês de referência", "danger"); return; }
+    var doc = FolhaPonto.newDoc();
+    if (!doc) { Toast.show("Não foi possível carregar a biblioteca de PDF — verifique sua conexão e tente novamente", "danger"); return; }
 
     var range = PontoCalc.monthRange(monthKey + "-01");
     var cutoff = folhaCutoffDate(monthKey);
@@ -1691,126 +1689,10 @@
 
     if (!employees.length) { Toast.show("Nenhum funcionário com lançamentos nesse período", "info"); return; }
 
-    var doc = new jsPDFCtor({ unit: "pt", format: "a4", orientation: "landscape" });
-    var pageWidth = doc.internal.pageSize.getWidth();
-    var pageHeight = doc.internal.pageSize.getHeight();
-    var marginX = 40, tableEnd = pageWidth - marginX;
-
-    function drawColHeaders(y) {
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8.5);
-      FOLHA_COLS.forEach(function (c) { doc.text(c.label, c.x, y); });
-      y += 6;
-      doc.setLineWidth(0.6);
-      doc.line(marginX, y, tableEnd, y);
-      return y + 13;
-    }
-
-    function ensureSpace(y, needed, withHeaders) {
-      if (y + needed <= pageHeight - 40) return y;
-      doc.addPage();
-      var ny = 50;
-      if (withHeaders) ny = drawColHeaders(ny);
-      return ny;
-    }
-
-    employees.forEach(function (emp, empIdx) {
-      if (empIdx > 0) doc.addPage();
-      var y = 46;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(15);
-      doc.text("Guitart & Co. — Folha de Ponto", marginX, y);
-      y += 20;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(10);
-      doc.text("Funcionário: " + emp.name + (emp.role ? " — " + emp.role : ""), marginX, y);
-      doc.text("Mês de referência: " + monthLabel, tableEnd, y, { align: "right" });
-      y += 15;
-      doc.text(PontoCalc.hasSchedule(emp) ? "Jornada: " + PontoCalc.scheduleSummary(emp) : "Carga horária diária: " + (PontoCalc.dailyExpectedMin(emp) / 60) + "h", marginX, y);
-      doc.text("Período fechado em: " + Utils.fmtDate(cutoff), tableEnd, y, { align: "right" });
-      y += 15;
-      doc.text("Gerado em " + Utils.fmtDate(Utils.todayISO()) + " por " + currentUserDisplayName(), marginX, y);
-      y += 18;
-
-      var data = PontoCalc.espelho(emp.id, range.start, endForRange, emp, allEntries);
-      var days = data.days.slice().reverse();
-
-      y = drawColHeaders(y);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-
-      if (!days.length) {
-        doc.text("Nenhum lançamento neste período.", marginX, y);
-        y += 16;
-      } else {
-        days.forEach(function (d) {
-          y = ensureSpace(y, 14, true);
-          var wdName = PontoCalc.WEEKDAY_SHORT[new Date(d.date + "T12:00:00").getDay()];
-          if (d.status === "folga_semanal") {
-            doc.setTextColor(120);
-            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            doc.text(wdName + " — Salão fechado (folga semanal), sem desconto", FOLHA_COLS[1].x, y);
-            doc.setTextColor(0);
-          } else if (d.status === "sem_registro" || d.status === "aguardando") {
-            doc.setTextColor(150, 90, 0);
-            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            doc.text(wdName + " — " + d.statusLabel + (d.expectedMin ? " (previsto " + PontoCalc.fmtHM(d.expectedMin) + ")" : ""), FOLHA_COLS[1].x, y);
-            doc.setTextColor(0);
-          } else if (d.status === "ajuste") {
-            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            doc.text(PontoCalc.fmtHM(PontoCalc.dayBank(d).min), FOLHA_COLS[8].x, y);
-            doc.text(wdName + " · " + d.adjustEntries.map(function (t) { return PontoCalc.adjustLabelOf(t) + " " + adjustText(t); }).join(" · "), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
-          } else if (d.occurrence) {
-            var k = PontoCalc.OCCURRENCE_KINDS[d.occurrence.type] || {};
-            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            var obsTxt = wdName + " · " + (k.label || d.occurrence.type) + (d.occurrence.note ? " — " + d.occurrence.note : "") +
-              (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : "");
-            if (d.adjustMin) doc.text(PontoCalc.fmtHM(d.adjustMin), FOLHA_COLS[8].x, y);
-            doc.text(obsTxt, FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
-          } else {
-            doc.text(Utils.fmtDate(d.date), FOLHA_COLS[0].x, y);
-            doc.text(pgHhmm(d.entrada), FOLHA_COLS[1].x, y);
-            doc.text(pgHhmm(d.saidaAlmoco), FOLHA_COLS[2].x, y);
-            doc.text(pgHhmm(d.voltaAlmoco), FOLHA_COLS[3].x, y);
-            doc.text(pgHhmm(d.saida), FOLHA_COLS[4].x, y);
-            doc.text(d.workedMin != null ? PontoCalc.fmtHM(d.workedMin) : "-", FOLHA_COLS[5].x, y);
-            doc.text(d.workedMin != null ? "+" + PontoCalc.fmtHM(d.extraMin) : "-", FOLHA_COLS[6].x, y);
-            doc.text(d.workedMin != null ? "-" + PontoCalc.fmtHM(d.missingMin) : "-", FOLHA_COLS[7].x, y);
-            doc.text(PontoCalc.dayBank(d).show ? PontoCalc.fmtHM(PontoCalc.dayBank(d).min) : "-", FOLHA_COLS[8].x, y);
-            doc.text(wdName + (d.status !== "completo" ? " · " + d.statusLabel : (d.lunchAssumed ? " · almoço previsto" : "")) + (d.earlyLeave ? " · " + earlyText(d) : "") + (d.adjustEntries.length ? " · " + d.adjustEntries.map(adjustText).join(" · ") : ""), FOLHA_COLS[9].x, y, { maxWidth: FOLHA_COLS[9].w });
-          }
-          y += 14;
-        });
-      }
-
-      y = ensureSpace(y, 20, false);
-      doc.setLineWidth(0.6);
-      doc.line(marginX, y, tableEnd, y);
-      y += 13;
-      doc.setFont("helvetica", "bold");
-      doc.text("Total do período", FOLHA_COLS[0].x, y);
-      doc.text(PontoCalc.fmtHM(data.totals.workedMin), FOLHA_COLS[5].x, y);
-      doc.text("+" + PontoCalc.fmtHM(data.totals.extraMin), FOLHA_COLS[6].x, y);
-      doc.text("-" + PontoCalc.fmtHM(data.totals.missingMin), FOLHA_COLS[7].x, y);
-      doc.text(PontoCalc.fmtHM(data.totals.saldoMin), FOLHA_COLS[8].x, y);
-      if (PontoCalc.hasSchedule(emp)) {
-        y += 14;
-        doc.setFont("helvetica", "normal");
-        doc.text("Folgas semanais (salão fechado): " + data.totals.folgaDays + " dia(s), sem desconto" +
-          (data.totals.pendingDays ? " · Dias úteis sem registro, pendentes de justificativa: " + data.totals.pendingDays : ""), FOLHA_COLS[0].x, y);
-      }
-
-      y = ensureSpace(y, 70, false);
-      y += 50;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setLineWidth(0.6);
-      doc.line(marginX, y, marginX + 220, y);
-      doc.line(tableEnd - 220, y, tableEnd, y);
-      y += 12;
-      doc.text("Assinatura do Funcionário", marginX, y);
-      doc.text("Assinatura do Responsável", tableEnd - 220, y);
+    var items = employees.map(function (emp) {
+      return { snap: FolhaPonto.buildSnapshot(emp, monthKey, allEntries, { generatedBy: currentUserDisplayName() }), sheet: null };
     });
+    FolhaPonto.drawPdf(doc, items);
 
     var fileSuffix = employeeId ? Utils.slugify(employees[0].name) : "todos";
     doc.save("folha-ponto_" + fileSuffix + "_" + monthKey + ".pdf");

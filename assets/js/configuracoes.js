@@ -848,7 +848,8 @@
         // vezes se outra pessoa aprovar quase ao mesmo tempo) — por isso
         // virou assíncrono; ver comentário em approvals.js.
         Approvals.approve(id, handler).then(function (result) {
-          if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+          if (!result.ok && result.reason === "period_locked") { /* aviso já mostrado: mês fechado por folha publicada */ }
+          else if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
           else { Toast.show("Solicitação aprovada", "success"); }
           renderApprovals();
           if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
@@ -862,7 +863,8 @@
           title: "Recusar solicitação", message: "Deseja recusar esta solicitação?", danger: true,
           onConfirm: function () {
             Approvals.reject(id).then(function (result) {
-              if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+              if (!result.ok && result.reason === "period_locked") { /* aviso já mostrado: mês fechado por folha publicada */ }
+          else if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
               else { Toast.show("Solicitação recusada", "info"); }
               renderApprovals();
               Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
