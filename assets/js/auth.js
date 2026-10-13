@@ -204,15 +204,29 @@
 
       function proceed(dbUser) {
         CurrentUser.touch();
-        if (!dbUser) return; // sem confirmação do servidor (rede) — segue com a sessão atual
+        // 13/10/2026 — CORREÇÃO (relato: funcionária com acesso só a Bater Ponto/
+        // Extrato caía numa tela do Dashboard vazia ao entrar pelo celular):
+        // sem confirmação do servidor (rede ruim) o sistema seguia com a sessão
+        // e PULAVA a checagem de telas liberadas. Agora a checagem sempre roda;
+        // sem o cadastro do usuário, usa a lista de telas guardada na sessão
+        // (gravada no login).
+        if (!dbUser) { enforceAccess(null); return; }
         if (session.role !== dbUser.role || session.firstName !== dbUser.firstName || session.lastName !== dbUser.lastName) {
           // keep session display fields fresh if an admin edited this user
           session.role = dbUser.role; session.firstName = dbUser.firstName; session.lastName = dbUser.lastName;
           CurrentUser.set(session);
         }
+        // mantém as telas liberadas da sessão em dia com o cadastro
+        if (Array.isArray(dbUser.allowedPages)) {
+          if (JSON.stringify(session.allowedPages) !== JSON.stringify(dbUser.allowedPages)) { session.allowedPages = dbUser.allowedPages; CurrentUser.set(session); }
+        } else if (session.allowedPages) { delete session.allowedPages; CurrentUser.set(session); }
+        enforceAccess(dbUser);
+      }
+
+      function enforceAccess(dbUser) {
         var hereFile = location.pathname.split("/").pop() || "index.html";
         if (!CurrentUser.canAccess(hereFile)) {
-          var target = CurrentUser.firstAllowedPage(dbUser);
+          var target = CurrentUser.firstAllowedPage(dbUser || { allowedPages: session.allowedPages });
           if (target && target !== hereFile) {
             location.replace(target);
           } else {

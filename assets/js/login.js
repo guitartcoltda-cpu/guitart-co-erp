@@ -97,7 +97,14 @@
     function finishLogin(user, pass, cpf) {
       var remember = !!rememberInput.checked;
       CurrentUser.setRemember(remember, cpf);
-      CurrentUser.set({ id: user.id, firstName: user.firstName, lastName: user.lastName, role: user.role }, { persist: remember });
+      // 13/10/2026: guarda também as telas liberadas (allowedPages) na sessão — assim
+      // o sistema consegue levar a pessoa direto para a tela dela e barrar telas
+      // não liberadas MESMO se a internet estiver ruim e a lista de usuários ainda
+      // não tiver chegado do servidor (ver auth.js).
+      var sessionUser = { id: user.id, firstName: user.firstName, lastName: user.lastName, role: user.role };
+      if (Array.isArray(user.allowedPages)) sessionUser.allowedPages = user.allowedPages;
+      CurrentUser.set(sessionUser, { persist: remember });
+      loggedAllowed = Array.isArray(user.allowedPages) ? user.allowedPages : null;
       // Migração silenciosa de senha (texto puro → hash) e registro no log
       // de acesso precisam do cache completo do DB; espera um pouco por ele
       // (até 4s) mas não segura o login se a rede estiver lenta — nesse
@@ -207,10 +214,18 @@
     });
   }
 
+  var loggedAllowed = null;
+
   function goToRedirect() {
     var params = new URLSearchParams(location.search);
     var redirect = params.get("redirect");
     var safe = redirect && /^[a-z0-9_-]+\.html$/i.test(redirect) ? redirect : "index.html";
+    // 13/10/2026: quem só tem algumas telas liberadas (ex.: funcionária só com Bater
+    // Ponto e Extrato) vai direto para a primeira tela dela, em vez de passar pelo
+    // Dashboard (que ela não pode abrir) e só depois ser redirecionada.
+    var allowed = loggedAllowed;
+    if (!allowed) { var cu = CurrentUser.get(); if (cu && Array.isArray(cu.allowedPages)) allowed = cu.allowedPages; }
+    if (allowed && allowed.length && allowed.indexOf(safe) === -1) safe = allowed[0];
     location.href = safe;
   }
 })();
