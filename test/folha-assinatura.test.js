@@ -133,6 +133,15 @@ const sync = fn => new Promise(res => fn((okk, msg) => res({ ok: okk, msg })));
   ok(s2.history.length === 3, "histórico: publicada + 2 assinaturas (" + s2.history.length + ")");
   res = await sync(cb => FP.sign(sheet.id, "employee", cb));
   ok(!res.ok, "não assina de novo");
+  // 14/10/2026 — sessão REAL do login só tem id/nome/cargo (sem employeeId/cpf):
+  // o vínculo vem do cadastro do usuário (bug "não acho o botão Assinar").
+  store.users.push({ id: "uVreal", role: "Profissional", firstName: "Vitória", lastName: "Rodrigues", cpf: "11111111111", employeeId: "v1" });
+  store.users.push({ id: "uAreal", role: "Profissional", firstName: "Ana", lastName: "Souza", cpf: "22222222222" });
+  cur = { id: "uVreal", role: "Profissional", firstName: "Vitória", lastName: "Rodrigues" };
+  ok(FP.myEmployeeId() === "v1", "sessão sem employeeId: vínculo vem do cadastro do usuário (" + FP.myEmployeeId() + ")");
+  cur = { id: "uAreal", role: "Profissional", firstName: "Ana", lastName: "Souza" };
+  ok(FP.myEmployeeId() === "a1", "sessão sem employeeId/cpf: vínculo pelo CPF do cadastro (" + FP.myEmployeeId() + ")");
+  cur = { id: "uVreal", role: "Profissional", firstName: "Vitória", lastName: "Rodrigues" };
 
   // ---- PDF ----
   const calls = []; let pages = 1, cur2 = 1;
