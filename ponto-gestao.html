@@ -190,6 +190,15 @@
               <button class="btn btn-primary" id="btn-folha-ponto"><i class="fa-solid fa-file-pdf"></i> Gerar Folha de Ponto</button>
             </div>
           </div>
+          <div class="card mt-16" id="pg-selfie-backup">
+            <div class="card-header"><h3>Backup das selfies do ponto</h3><div class="card-header-sub">Baixa um arquivo ZIP com todas as selfies do mês escolhido (e um índice com funcionária, tipo, data e hora). É uma cópia extra para guardar: nada é apagado do sistema.</div></div>
+            <div class="card-body">
+              <div class="flex items-center gap-8" style="flex-wrap:wrap;">
+                <input type="month" id="pg-sb-month" style="max-width:200px;">
+                <button class="btn btn-primary" id="pg-sb-btn"><i class="fa-solid fa-file-zipper"></i> Baixar backup das selfies</button>
+              </div>
+            </div>
+          </div>
         </div>
 
       </main>
@@ -200,6 +209,7 @@
   <script src="assets/js/env-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="assets/js/db.js"></script>
   <script src="assets/js/auth.js"></script>
   <script src="assets/js/utils.js"></script>
