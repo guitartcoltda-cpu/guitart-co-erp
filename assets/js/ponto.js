@@ -26,7 +26,7 @@
   var selectedEmployee = null;
   var selectedStep = null;
   var espelhoRef = null; // Date do mês mostrado no espelho de ponto (tela "Meu Dia")
-  var dayTab = "dia";    // aba aberta em "Meu Dia": "dia" | "folhas" (folhas de ponto para assinar)
+  var dayTab = "dia";    // aba aberta em "Meu Dia": "dia" | "folhas" (folhas de ponto) | "holerites" (holerites para assinar)
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
@@ -163,7 +163,8 @@
       '</div>' +
       '<div class="ponto-day-card" id="ponto-espelho-card"></div>' +
       '</div>' +
-      '<div id="ponto-pane-folhas" style="display:none;"></div>';
+      '<div id="ponto-pane-folhas" style="display:none;"></div>' +
+      '<div id="ponto-pane-holerites" style="display:none;"></div>';
 
     document.getElementById("ponto-back").addEventListener("click", renderPicker);
     wireFolhaTabs(e);
@@ -201,12 +202,22 @@
     return window.FolhaPonto ? FolhaPonto.pendingForEmployee(employeeId).length : 0;
   }
 
+  function pendingPayslipsCount(employeeId) {
+    return window.Holerite ? Holerite.pendingForEmployee(employeeId).length : 0;
+  }
+
+  function holeritesTabLabel(e) {
+    var n = pendingPayslipsCount(e.id);
+    return '<i class="fa-solid fa-file-invoice-dollar"></i> Holerites' + (n ? ' <span class="ponto-tab-count">' + n + '</span>' : '');
+  }
+
   function folhaTabsHtml(e) {
     var n = pendingSheetsCount(e.id);
     return '<div class="tabs ponto-tabs" id="ponto-tabs">' +
       '<button type="button" class="tab-btn' + (dayTab === "dia" ? " active" : "") + '" data-ptab="dia"><i class="fa-solid fa-clock"></i> Meu Dia</button>' +
       '<button type="button" class="tab-btn' + (dayTab === "folhas" ? " active" : "") + '" data-ptab="folhas"><i class="fa-solid fa-file-signature"></i> Folhas de Ponto' +
         (n ? ' <span class="ponto-tab-count">' + n + '</span>' : '') + '</button>' +
+      '<button type="button" class="tab-btn' + (dayTab === "holerites" ? " active" : "") + '" data-ptab="holerites">' + holeritesTabLabel(e) + '</button>' +
     '</div>';
   }
 
@@ -215,6 +226,8 @@
     if (!btn) return;
     var n = pendingSheetsCount(e.id);
     btn.innerHTML = '<i class="fa-solid fa-file-signature"></i> Folhas de Ponto' + (n ? ' <span class="ponto-tab-count">' + n + '</span>' : '');
+    var hb = document.querySelector('#ponto-tabs [data-ptab="holerites"]');
+    if (hb) hb.innerHTML = holeritesTabLabel(e);
   }
 
   function showDayTab(which) {
@@ -222,10 +235,12 @@
     Utils.qsa("#ponto-tabs .tab-btn").forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-ptab") === which); });
     document.getElementById("ponto-pane-dia").style.display = which === "dia" ? "" : "none";
     document.getElementById("ponto-pane-folhas").style.display = which === "folhas" ? "" : "none";
+    document.getElementById("ponto-pane-holerites").style.display = which === "holerites" ? "" : "none";
   }
 
   function wireFolhaTabs(e) {
     if (window.FolhaPonto) FolhaPonto.mountEmployeePanel(document.getElementById("ponto-pane-folhas"), e, function () { updateTabCount(e); });
+    if (window.Holerite) Holerite.mountEmployeePanel(document.getElementById("ponto-pane-holerites"), e, function () { updateTabCount(e); });
     Utils.qsa("#ponto-tabs .tab-btn").forEach(function (b) {
       b.addEventListener("click", function () { showDayTab(b.getAttribute("data-ptab")); });
     });

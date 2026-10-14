@@ -44,8 +44,13 @@
       "Tabelas " + FolhaCalc.TABLES.year + " (INSS progressivo, IRRF com a isenção até R$ 5.000 da Lei 15.270/2025, FGTS 8%). " +
       "Cálculo orientativo para conferência — o fechamento oficial deve ser validado pelo contador. " +
       "O banco de horas não altera o valor pago (só acumula, compensa em folga).";
+    var hp = document.getElementById("fp-hol");
+    if (window.Holerite) Holerite.onChange(function () { render(); });
+    if (hp && window.Holerite) holPanel = Holerite.mountManagerPanel(hp, { getMonth: function () { return monthKey; }, employees: payrollEmployees, slipFor: payslipFor });
     render();
   }
+
+  var holPanel = null;
 
   // ---------- dados ----------
   function payrollEmployees() {
@@ -109,6 +114,9 @@
     var cats = {};
     DB.all("categories").forEach(function (c) { cats[c.id] = c.name || ""; });
     var st = state(emp.id);
+    // Com a regra de adiantamento (ex.: 40% do salário) ativa, o desconto do adiantamento já vem
+    // calculado no holerite — os vales lançados ficam DESMARCADOS por padrão (senão descontaria 2x).
+    var advanceRule = Number((emp.payroll || {}).advancePct) > 0;
     // Lançamentos antigos nem sempre têm funcionário vinculado (ex.: "VALE/ADIANTAMENTO LUIZA"):
     // nesse caso reconhece pelo primeiro nome na descrição, se ele for único entre os ativos.
     var norm = function (s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); };
@@ -123,7 +131,7 @@
       if (t.employeeId) return t.employeeId === emp.id;
       return sameFirst === 1 && first && new RegExp("\\b" + first + "\\b").test(norm(t.description));
     }).sort(function (a, b) { return a.date.localeCompare(b.date); }).map(function (t) {
-      return { id: t.id, description: (t.description || "Vale") + " (" + Utils.fmtDate(t.date) + ")", amount: Number(t.amount) || 0, included: st.vales[t.id] !== false, status: t.status };
+      return { id: t.id, description: (t.description || "Vale") + " (" + Utils.fmtDate(t.date) + ")", amount: Number(t.amount) || 0, included: advanceRule ? st.vales[t.id] === true : st.vales[t.id] !== false, status: t.status };
     });
   }
 
@@ -135,11 +143,14 @@
     return FolhaCalc.computePayslip({
       monthKey: monthKey, regime: cfg.regime || "clt", baseSalary: emp.baseSalary, hireDate: emp.hireDate,
       dependents: cfg.dependents || 0,
+      advancePct: cfg.advancePct || 0, vtPct: cfg.vtPct || 0, familyChildren: cfg.familyChildren || 0,
       commissionDevido: com ? com.devido : 0, commissionPago: com ? com.pago : 0,
       vales: valeCandidates(emp), extras: st.extras || [], bank: c.bank[emp.id],
       hoursDiscountMin: c.bank[emp.id] ? c.bank[emp.id].payMin : 0
     });
   }
+
+  function publishedSlip(emp) { return window.Holerite ? Holerite.activeSlip(emp.id, monthKey) : null; }
 
   // ---------- tela ----------
   function money(v) { return Utils.fmtMoney(v); }
@@ -152,6 +163,7 @@
     var monthLabel = PontoCalc.monthRange(monthKey + "-01").label;
     monthLabel = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
     document.getElementById("fp-hint").textContent = c.range.fullMonth ? "" : "Mês em andamento: comissão e banco de horas apurados até hoje.";
+    if (holPanel) holPanel();
     document.getElementById("fp-sub").textContent = monthLabel + " — " + emps.length + " funcionário(s) na folha";
 
     var tot = slips.reduce(function (a, x) {
@@ -166,7 +178,7 @@
 
     var tbl = document.getElementById("tbl-folha");
     if (!slips.length) { Utils.emptyTable(tbl, "fa-money-bill-wave", "Nenhum funcionário ativo com salário base cadastrado"); return; }
-    tbl.innerHTML = '<thead><tr><th>Funcionário</th><th>Regime</th><th>Bruto</th><th>INSS</th><th>IRRF</th><th>Vales / Já pago</th><th>Líquido</th><th>Banco de horas</th><th></th></tr></thead><tbody>' +
+    tbl.innerHTML = '<thead><tr><th>Funcionário</th><th>Regime</th><th>Bruto</th><th>INSS</th><th>IRRF</th><th>Vales / Já pago</th><th>Líquido</th><th>Banco de horas</th><th>Holerite</th><th></th></tr></thead><tbody>' +
       slips.map(function (x) {
         var s = x.slip, e = x.emp;
         var vales = s.deductions.filter(function (d) { return d.code === "vale" || d.code === "comissao_paga" || d.code === "extra"; }).reduce(function (a, d) { return a + d.amount; }, 0);
@@ -180,6 +192,7 @@
           '<td class="text-num">' + money(vales) + '</td>' +
           '<td class="text-num font-bold ' + (s.net < 0 ? "text-danger" : "") + '">' + money(s.net) + '</td>' +
           '<td class="text-num">' + (b ? '<span class="' + (b.monthMin < 0 ? "text-danger" : "text-success") + '">' + hm(b.monthMin) + '</span><div class="small text-muted">acum. ' + hm(b.totalMin) + '</div>' : '-') + '</td>' +
+          '<td>' + holBadge(e) + '</td>' +
           '<td><div class="flex gap-6"><button class="btn btn-sm btn-outline" data-fp-open="' + e.id + '">Detalhes</button>' +
           '<button class="btn btn-icon btn-ghost" data-fp-pdf="' + e.id + '" title="Gerar holerite (PDF)"><i class="fa-solid fa-file-pdf"></i></button></div></td>' +
           '</tr>';
@@ -188,6 +201,13 @@
     Utils.qsa("[data-fp-pdf]", tbl).forEach(function (b) {
       b.addEventListener("click", function () { generatePdf([DB.get("employees", b.getAttribute("data-fp-pdf"))]); });
     });
+  }
+
+  function holBadge(emp) {
+    var h = publishedSlip(emp);
+    if (!h) return '<span class="small text-muted">não publicado</span>';
+    var m = Holerite.statusOf(h) === "concluida" ? "badge-success" : "badge-warning";
+    return '<span class="badge ' + m + '">' + (Holerite.statusOf(h) === "concluida" ? "Assinado" : "Publicado") + '</span>';
   }
 
   function kpi(label, value, icon, color, bg) {
@@ -220,11 +240,15 @@
 
     var body =
       '<div class="small text-muted mb-8">' + Utils.escapeHtml(emp.role || "") + ' · admissão ' + (emp.hireDate ? Utils.fmtDate(emp.hireDate) : '-') + '</div>' +
+      '<div id="fpd-lock"></div>' +
       '<div id="fpd-slip"></div>' +
       '<h4 style="margin:16px 0 6px;">Configuração do holerite</h4>' +
       '<div class="form-grid">' +
         '<div class="form-field"><label>Regime</label><select id="fpd-regime"><option value="clt"' + ((cfg.regime || "clt") === "clt" ? " selected" : "") + '>CLT (INSS, IRRF e FGTS)</option><option value="none"' + (cfg.regime === "none" ? " selected" : "") + '>Sem desconto legal</option></select></div>' +
         '<div class="form-field"><label>Dependentes (IRRF)</label><input type="number" id="fpd-dep" min="0" max="20" value="' + (cfg.dependents || 0) + '"></div>' +
+        '<div class="form-field"><label>Adiantamento (% do salário)</label><input type="number" id="fpd-adv" min="0" max="100" step="0.01" value="' + (cfg.advancePct || 0) + '"></div>' +
+        '<div class="form-field"><label>Desconto vale-transporte (%)</label><input type="number" id="fpd-vt" min="0" max="100" step="0.01" value="' + (cfg.vtPct || 0) + '"></div>' +
+        '<div class="form-field"><label>Filhos (salário-família)</label><input type="number" id="fpd-kids" min="0" max="20" value="' + (cfg.familyChildren || 0) + '"></div>' +
         '<div class="form-field"><label>Na folha?</label><select id="fpd-in"><option value="1"' + (cfg.inPayroll !== false ? " selected" : "") + '>Sim</option><option value="0"' + (cfg.inPayroll === false ? " selected" : "") + '>Não (tirar da folha)</option></select></div>' +
       '</div>' +
       '<h4 style="margin:16px 0 6px;">Vales e adiantamentos do mês <span class="small text-muted">(despesas ligadas à funcionária em Contas a Pagar)</span></h4>' +
@@ -246,8 +270,18 @@
     var box = Modal.open({ title: "Holerite — " + emp.name, wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#fpx-amount"), 0);
 
+    function readCfg() {
+      function pct(sel) { var v = parseFloat(String(box.querySelector(sel).value).replace(",", ".")); return isFinite(v) && v > 0 ? Math.min(100, v) : 0; }
+      return Object.assign({}, emp.payroll || {}, {
+        regime: box.querySelector("#fpd-regime").value,
+        dependents: Math.max(0, parseInt(box.querySelector("#fpd-dep").value, 10) || 0),
+        advancePct: pct("#fpd-adv"), vtPct: pct("#fpd-vt"),
+        familyChildren: Math.max(0, parseInt(box.querySelector("#fpd-kids").value, 10) || 0),
+        inPayroll: box.querySelector("#fpd-in").value === "1"
+      });
+    }
     function currentSlip() {
-      var tmp = Object.assign({}, emp, { payroll: { regime: box.querySelector("#fpd-regime").value, dependents: Math.max(0, parseInt(box.querySelector("#fpd-dep").value, 10) || 0), inPayroll: box.querySelector("#fpd-in").value === "1" } });
+      var tmp = Object.assign({}, emp, { payroll: readCfg() });
       var c = ensureCache(), com = c.commission[emp.id];
       var valesNow = vales.map(function (v) {
         var cb = box.querySelector('.fpd-vale[data-id="' + v.id + '"]');
@@ -255,20 +289,37 @@
       });
       return FolhaCalc.computePayslip({
         monthKey: monthKey, regime: tmp.payroll.regime, baseSalary: emp.baseSalary, hireDate: emp.hireDate, dependents: tmp.payroll.dependents,
+        advancePct: tmp.payroll.advancePct, vtPct: tmp.payroll.vtPct, familyChildren: tmp.payroll.familyChildren,
         commissionDevido: com ? com.devido : 0, commissionPago: com ? com.pago : 0, vales: valesNow, extras: extras, bank: c.bank[emp.id],
         hoursDiscountMin: c.bank[emp.id] ? c.bank[emp.id].payMin : 0
       });
     }
     function redraw() {
-      box.querySelector("#fpd-slip").innerHTML = slipHtml(emp, currentSlip());
+      var cur = currentSlip();
+      var pub = publishedSlip(emp), note = "";
+      if (pub) {
+        note += '<div class="fp-warn mb-8"><i class="fa-solid fa-lock"></i> Holerite deste mês <b>já publicado</b> para assinatura (' + Utils.escapeHtml(STATUS_LABEL(pub)) + '). Os campos abaixo não alteram o documento publicado' +
+          (Math.abs(pub.snapshot.totals.net - cur.net) > 0.005 ? ' — <b>atenção:</b> os valores atuais (' + money(cur.net) + ') diferem do publicado (' + money(pub.snapshot.totals.net) + ')' : '') +
+          '. Para alterar, reabra o holerite em "Holerites para Assinatura".</div>';
+      }
+      var advCfg = readCfg();
+      if (advCfg.advancePct > 0) {
+        var vTotal = vales.reduce(function (a, v) { return a + v.amount; }, 0);
+        if (vales.length) note += '<div class="small text-muted mb-8">Adiantamento de ' + advCfg.advancePct + '% do salário = <b>' + money(cur.advance) + '</b>. Vales lançados em Contas a Pagar neste mês somam <b>' + money(vTotal) + '</b>' +
+          (Math.abs(vTotal - cur.advance) > 0.005 ? ' (' + (vTotal > cur.advance ? 'pago a mais' : 'pago a menos') + ' que o adiantamento: <b>' + money(Math.abs(vTotal - cur.advance)) + '</b>)' : '') +
+          ' — eles só entram no desconto se você marcar abaixo.</div>';
+      }
+      box.querySelector("#fpd-lock").innerHTML = note;
+      box.querySelector("#fpd-slip").innerHTML = slipHtml(emp, cur);
       box.querySelector("#fpd-extras").innerHTML = extras.length ? extras.map(function (x, i) {
         return '<div class="flex items-center gap-8" style="margin-bottom:4px;"><span>' + (x.kind === "provento" ? "＋" : "－") + ' ' + Utils.escapeHtml(x.label) + ' — <b>' + money(x.amount) + '</b>' + (x.kind === "provento" && x.taxable === false ? ' (não tributável)' : '') + '</span>' +
           '<button type="button" class="btn btn-icon btn-ghost" data-rm="' + i + '" title="Remover"><i class="fa-solid fa-trash"></i></button></div>';
       }).join("") : '<div class="small text-muted">Nenhum lançamento avulso.</div>';
       Utils.qsa("[data-rm]", box).forEach(function (b) { b.addEventListener("click", function () { extras.splice(parseInt(b.getAttribute("data-rm"), 10), 1); redraw(); }); });
     }
+    function STATUS_LABEL(h) { return ({ aguardando: "aguardando assinaturas", parcial: "falta 1 assinatura", concluida: "concluído" })[Holerite.statusOf(h)] || ""; }
     redraw();
-    ["#fpd-regime", "#fpd-dep", "#fpd-in"].forEach(function (sel) { box.querySelector(sel).addEventListener("input", redraw); box.querySelector(sel).addEventListener("change", redraw); });
+    ["#fpd-regime", "#fpd-dep", "#fpd-in", "#fpd-adv", "#fpd-vt", "#fpd-kids"].forEach(function (sel) { box.querySelector(sel).addEventListener("input", redraw); box.querySelector(sel).addEventListener("change", redraw); });
     Utils.qsa(".fpd-vale", box).forEach(function (cb) { cb.addEventListener("change", redraw); });
     box.querySelector("#fpx-add").addEventListener("click", function () {
       var amount = Utils.moneyMaskToFloat(box.querySelector("#fpx-amount"));
@@ -280,57 +331,34 @@
       redraw();
     });
     function persist() {
+      if (publishedSlip(emp)) { Toast.show("O holerite deste mês está publicado — reabra em \"Holerites para Assinatura\" para alterar.", "danger"); return false; }
       var valesMap = {};
       vales.forEach(function (v) { var cb = box.querySelector('.fpd-vale[data-id="' + v.id + '"]'); valesMap[v.id] = cb ? cb.checked : true; });
-      DB.update("employees", emp.id, { payroll: { regime: box.querySelector("#fpd-regime").value, dependents: Math.max(0, parseInt(box.querySelector("#fpd-dep").value, 10) || 0), inPayroll: box.querySelector("#fpd-in").value === "1" } });
+      DB.update("employees", emp.id, { payroll: readCfg() });
       saveState(emp.id, { vales: valesMap, extras: extras.slice() });
       DB.log("Folha", "Ajustou o holerite de " + emp.name + " (ref. " + monthKey + ")");
+      return true;
     }
-    box.querySelector("#fpd-save").addEventListener("click", function () { persist(); Toast.show("Holerite salvo", "success"); Modal.close(); cache = null; render(); });
-    box.querySelector("#fpd-pdf").addEventListener("click", function () { persist(); cache = null; generatePdf([DB.get("employees", emp.id)]); render(); });
+    box.querySelector("#fpd-save").addEventListener("click", function () { if (persist() === false) return; Toast.show("Holerite salvo", "success"); Modal.close(); cache = null; render(); });
+    box.querySelector("#fpd-pdf").addEventListener("click", function () { if (!publishedSlip(emp) && persist() === false) return; cache = null; generatePdf([DB.get("employees", emp.id)]); render(); });
   }
 
   // ---------- PDF ----------
+  // Mesmo formato do recibo do contador (holerite.js). Se o holerite do mês já foi publicado,
+  // o PDF é o documento publicado (com as assinaturas); senão é um PDF de conferência.
   function generatePdf(emps) {
-    var Ctor = window.jspdf && window.jspdf.jsPDF;
-    if (!Ctor) { Toast.show("Não foi possível carregar a biblioteca de PDF — verifique sua conexão", "danger"); return; }
     emps = (emps || []).filter(Boolean);
     if (!emps.length) { Toast.show("Nenhum funcionário na folha", "info"); return; }
-    var doc = new Ctor({ unit: "pt", format: "a4" });
-    var W = doc.internal.pageSize.getWidth(), mx = 44, end = W - mx;
-    var monthLabel = PontoCalc.monthRange(monthKey + "-01").label;
-    monthLabel = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
-
-    emps.forEach(function (emp, idx) {
-      if (idx > 0) doc.addPage();
-      var s = payslipFor(emp), y = 52;
-      doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.text("Guitart & Co.", mx, y);
-      doc.setFontSize(11); doc.text("DEMONSTRATIVO DE PAGAMENTO (HOLERITE)", end, y, { align: "right" });
-      y += 16; doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text("Referência: " + monthLabel, end, y, { align: "right" });
-      y += 10; doc.setLineWidth(0.8); doc.line(mx, y, end, y); y += 18;
-      doc.setFont("helvetica", "bold"); doc.text(emp.name, mx, y);
-      doc.setFont("helvetica", "normal");
-      doc.text("Cargo: " + (emp.role || "-"), end, y, { align: "right" }); y += 14;
-      doc.text("CPF: " + (emp.cpf ? Utils.fmtCPF ? Utils.fmtCPF(emp.cpf) : emp.cpf : "-") + "    Admissão: " + (emp.hireDate ? Utils.fmtDate(emp.hireDate) : "-"), mx, y);
-      doc.text("Salário base: " + money(emp.baseSalary), end, y, { align: "right" }); y += 18;
-
-      var colV = end - 90, colD = end;
-      doc.setFont("helvetica", "bold"); doc.text("Descrição", mx, y); doc.text("Proventos", colV, y, { align: "right" }); doc.text("Descontos", colD, y, { align: "right" });
-      y += 6; doc.line(mx, y, end, y); y += 14; doc.setFont("helvetica", "normal");
-      s.earnings.forEach(function (e) { doc.text(e.label, mx, y, { maxWidth: colV - mx - 90 }); doc.text(money(e.amount), colV, y, { align: "right" }); y += 14; });
-      s.deductions.forEach(function (d) { doc.text(d.label, mx, y, { maxWidth: colV - mx - 90 }); doc.text(money(d.amount), colD, y, { align: "right" }); y += 14; });
-      y += 2; doc.line(mx, y, end, y); y += 14;
-      doc.setFont("helvetica", "bold");
-      doc.text("Totais", mx, y); doc.text(money(s.totalEarnings), colV, y, { align: "right" }); doc.text(money(s.totalDeductions), colD, y, { align: "right" }); y += 18;
-      doc.setFontSize(12); doc.text("LÍQUIDO A RECEBER: " + money(s.net), end, y, { align: "right" }); y += 22;
-      doc.setFontSize(9); doc.setFont("helvetica", "normal");
-      doc.text("Base de cálculo INSS/IRRF: " + money(s.taxableBase) + (s.regime === "clt" ? "    FGTS do mês (depósito da empresa): " + money(s.fgts) : ""), mx, y); y += 12;
-      if (s.irrf) { doc.text("Base IRRF após deduções: " + money(s.irrf.base) + (s.irrf.reduction > 0 ? "    Redutor aplicado: " + money(s.irrf.reduction) : ""), mx, y); y += 12; }
-      if (s.bank) { doc.text("Banco de horas — mês: " + hm(s.bank.monthMin) + "    acumulado: " + hm(s.bank.totalMin) + "  (informativo; compensado em folga)", mx, y); y += 12; }
-      y += 40; doc.setLineWidth(0.6);
-      doc.line(mx, y, mx + 220, y); doc.line(end - 220, y, end, y); y += 12;
-      doc.text("Assinatura da Funcionária", mx, y); doc.text("Assinatura do Responsável", end - 220, y);
+    var doc = window.Holerite && Holerite.newDoc();
+    if (!doc) { Toast.show("Não foi possível carregar a biblioteca de PDF — verifique sua conexão", "danger"); return; }
+    var u = window.CurrentUser ? CurrentUser.get() : null;
+    var who = u ? ((u.firstName || "") + " " + (u.lastName || "")).trim() : "";
+    var items = emps.map(function (emp) {
+      var pub = publishedSlip(emp);
+      if (pub) return { snap: pub.snapshot, slip: pub };
+      return { snap: Holerite.buildSnapshot(emp, monthKey, payslipFor(emp), { generatedBy: who }), slip: null };
     });
+    Holerite.drawPdf(doc, items);
     var suffix = emps.length === 1 ? Utils.slugify(emps[0].name) : "todos";
     doc.save("holerite_" + suffix + "_" + monthKey + ".pdf");
     DB.log("Folha", "Gerou holerite em PDF (" + (emps.length === 1 ? emps[0].name : emps.length + " funcionários") + ", ref. " + monthKey + ")");

@@ -25,11 +25,12 @@
     // INSS do empregado — alíquotas progressivas (cada faixa só sobre o que cai nela), até o teto.
     inss: {
       ceiling: 8475.55,
-      brackets: [
-        { upTo: 1621.00, rate: 0.075 },
-        { upTo: 2902.84, rate: 0.09 },
-        { upTo: 4354.27, rate: 0.12 },
-        { upTo: 8475.55, rate: 0.14 }
+      ceilingValue: 988.09,                  // INSS máximo no teto (valor oficial publicado)
+      brackets: [                            // `deduct` = parcela a deduzir (método "alíquota × base − parcela")
+        { upTo: 1621.00, rate: 0.075, deduct: 0 },
+        { upTo: 2902.84, rate: 0.09,  deduct: 24.32 },
+        { upTo: 4354.27, rate: 0.12,  deduct: 111.40 },
+        { upTo: 8475.55, rate: 0.14,  deduct: 198.49 }
       ]
     },
     // IRRF mensal 2026
@@ -51,22 +52,38 @@
       reductionB: 0.133145
     },
     fgtsRate: 0.08,
+    // Salário-família (Portaria interministerial 2026): cota por filho até 14 anos (ou com
+    // deficiência) para quem ganha até o limite. Não incide INSS, IRRF nem FGTS.
+    familyAllowance: { quota: 67.54, incomeLimit: 1980.38 },
     monthlyHours: 220                         // divisor do valor-hora do mensalista (44h/semana)
   };
 
   function round2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
   function num(n) { n = Number(n); return isFinite(n) ? n : 0; }
 
+  // Trunca (não arredonda) em centavos — é assim que o sistema do contador calcula o INSS
+  // (conferido nos holerites de 09/2026: 133,9072 → 133,90; 137,68 exato).
+  function trunc2(n) { return Math.floor(Number(n) * 100 + 1e-6) / 100; }
+
+  // Faixa do INSS (alíquota marginal) para a base informada — vira a "referência" do holerite.
+  function inssRate(base) {
+    base = Math.max(0, num(base));
+    var br = TABLES.inss.brackets;
+    for (var i = 0; i < br.length; i++) if (base <= br[i].upTo) return br[i].rate;
+    return br[br.length - 1].rate;
+  }
+
   // INSS do empregado sobre `base` (salário + proventos que incidem), limitado ao teto.
+  // Método "alíquota × base − parcela a deduzir", truncado em centavos (igual ao holerite do contador).
   function inss(base) {
     base = Math.max(0, num(base));
-    var capped = Math.min(base, TABLES.inss.ceiling);
-    var total = 0, prev = 0;
-    TABLES.inss.brackets.forEach(function (b) {
-      if (capped > prev) total += (Math.min(capped, b.upTo) - prev) * b.rate;
-      prev = b.upTo;
-    });
-    return round2(total);
+    if (base <= 0) return 0;
+    if (base >= TABLES.inss.ceiling) return TABLES.inss.ceilingValue;
+    var br = TABLES.inss.brackets;
+    for (var i = 0; i < br.length; i++) {
+      if (base <= br[i].upTo) return Math.max(0, trunc2(base * br[i].rate - br[i].deduct));
+    }
+    return TABLES.inss.ceilingValue;
   }
 
   // IRRF mensal. `gross` = rendimentos tributáveis do mês; `inssValue` = INSS descontado;
@@ -117,56 +134,95 @@
   //   bank: { monthMin, totalMin }  (informativo)
   //   hoursDiscountMin: minutos de "horas negativas" lançadas SEM usar o banco (viram desconto:
   //     valor-hora = salário base ÷ TABLES.monthlyHours; reduz a base do INSS/IRRF)
+  //   advancePct: % do salário pago como "Adiantamento" (ex.: 40) — desconto no holerite
+  //   vtPct: % do salário descontado de vale-transporte (ex.: 6)
+  //   familyChildren: nº de filhos no salário-família
   // }
+  // Cada linha de proventos/descontos traz `num` (código do holerite do contador: 1 Salário,
+  // 2 Comissão, 3 Provento avulso, 4 Salário Família, 11 INSS, 12 Adiantamento, 13 IRRF,
+  // 14 Horas negativas, 15 Vale avulso, 16 Comissão já paga, 17 Desconto avulso, 109 Vale-transporte)
+  // e `ref` (referência impressa: dias, %, nº de filhos).
   function computePayslip(input) {
     var regime = input.regime === "none" ? "none" : "clt";
     var frac = monthFraction(input.monthKey, input.hireDate);
     var salary = round2(num(input.baseSalary) * frac);
     var commission = round2(Math.max(0, num(input.commissionDevido)));
+    var mi = monthInfo(input.monthKey);
+    var refDays = frac < 1 ? Math.max(0, Math.min(30, Math.round(frac * mi.days))) : 30;
     var earnings = [];
-    if (salary > 0 || frac > 0) earnings.push({ code: "salario", label: frac < 1 ? "Salário base (proporcional à admissão)" : "Salário base", amount: salary, taxable: true });
-    if (commission > 0) earnings.push({ code: "comissao", label: "Comissão apurada no mês", amount: commission, taxable: true });
+    if (salary > 0 || frac > 0) earnings.push({ code: "salario", num: 1, ref: refDays, label: frac < 1 ? "Salário base (proporcional à admissão)" : "Salário", amount: salary, taxable: true });
+    if (commission > 0) earnings.push({ code: "comissao", num: 2, ref: "", label: "Comissão apurada no mês", amount: commission, taxable: true });
     (input.extras || []).forEach(function (x) {
-      if (x.kind === "provento" && num(x.amount) > 0) earnings.push({ code: "extra", label: x.label || "Outro provento", amount: round2(x.amount), taxable: x.taxable !== false });
+      if (x.kind === "provento" && num(x.amount) > 0) earnings.push({ code: "extra", num: 3, ref: "", label: x.label || "Outro provento", amount: round2(x.amount), taxable: x.taxable !== false });
     });
     var hoursMin = Math.max(0, Math.round(num(input.hoursDiscountMin)));
     var hourly = TABLES.monthlyHours > 0 ? num(input.baseSalary) / TABLES.monthlyHours : 0;
     var hoursDiscount = hoursMin > 0 ? round2(Math.min(salary, hoursMin / 60 * hourly)) : 0;
     var taxableBase = round2(Math.max(0, earnings.reduce(function (s, e) { return s + (e.taxable ? e.amount : 0); }, 0) - hoursDiscount));
+
+    // Salário-família: só para quem ganha até o limite; não entra em nenhuma base de imposto.
+    var children = Math.max(0, Math.floor(num(input.familyChildren)));
+    var FA = TABLES.familyAllowance;
+    var familyAmount = 0, warnings = [];
+    if (children > 0) {
+      if (taxableBase <= FA.incomeLimit) {
+        familyAmount = round2(children * FA.quota);
+        earnings.push({ code: "salario_familia", num: 4, ref: children, label: "Salário Família", amount: familyAmount, taxable: false });
+      } else {
+        warnings.push("Remuneração acima de " + FA.incomeLimit.toFixed(2).replace(".", ",") + ": sem direito ao salário-família neste mês.");
+      }
+    }
     var totalEarnings = round2(earnings.reduce(function (s, e) { return s + e.amount; }, 0));
 
     var deductions = [];
     var inssValue = 0, irrfInfo = null, fgts = 0;
     if (regime === "clt") {
       inssValue = inss(taxableBase);
-      if (inssValue > 0) deductions.push({ code: "inss", label: "INSS", amount: inssValue });
+      if (inssValue > 0) deductions.push({ code: "inss", num: 11, ref: round2(inssRate(taxableBase) * 100), label: "INSS Sobre Salário", amount: inssValue });
       irrfInfo = irrf(taxableBase, inssValue, input.dependents);
-      if (irrfInfo.tax > 0) deductions.push({ code: "irrf", label: "IRRF", amount: irrfInfo.tax });
+      if (irrfInfo.tax > 0) deductions.push({ code: "irrf", num: 13, ref: "", label: "IRRF", amount: irrfInfo.tax });
       fgts = round2(taxableBase * TABLES.fgtsRate);
     }
-    if (hoursDiscount > 0) deductions.push({ code: "horas_descontadas", label: "Horas negativas (desconto em folha)", amount: hoursDiscount });
-    var valesTotal = 0;
+    var advancePct = Math.max(0, num(input.advancePct));
+    var advance = advancePct > 0 ? round2(salary * advancePct / 100) : 0;
+    if (advance > 0) deductions.push({ code: "adiantamento", num: 12, ref: "", label: "Adiantamento Anterior", amount: advance });
+    if (hoursDiscount > 0) deductions.push({ code: "horas_descontadas", num: 14, ref: "", label: "Horas negativas (desconto em folha)", amount: hoursDiscount });
+    var vtPct = Math.max(0, num(input.vtPct));
+    var vt = vtPct > 0 ? round2(salary * vtPct / 100) : 0;
+    if (vt > 0) deductions.push({ code: "vt", num: 109, ref: vtPct, label: "Desc. Vale Transporte", amount: vt });
     (input.vales || []).forEach(function (v) {
-      if (v.included && num(v.amount) > 0) { valesTotal += num(v.amount); deductions.push({ code: "vale", label: v.description || "Vale / adiantamento", amount: round2(v.amount) }); }
+      if (v.included && num(v.amount) > 0) deductions.push({ code: "vale", num: 15, ref: "", label: v.description || "Vale / adiantamento", amount: round2(v.amount) });
     });
     var paidCommission = round2(Math.max(0, num(input.commissionPago)));
-    if (paidCommission > 0) deductions.push({ code: "comissao_paga", label: "Comissão já paga no mês (pagamentos semanais)", amount: paidCommission });
+    if (paidCommission > 0) deductions.push({ code: "comissao_paga", num: 16, ref: "", label: "Comissão já paga no mês (pagamentos semanais)", amount: paidCommission });
     (input.extras || []).forEach(function (x) {
-      if (x.kind === "desconto" && num(x.amount) > 0) deductions.push({ code: "extra", label: x.label || "Outro desconto", amount: round2(x.amount) });
+      if (x.kind === "desconto" && num(x.amount) > 0) deductions.push({ code: "extra", num: 17, ref: "", label: x.label || "Outro desconto", amount: round2(x.amount) });
     });
     var totalDeductions = round2(deductions.reduce(function (s, d) { return s + d.amount; }, 0));
     var net = round2(totalEarnings - totalDeductions);
+    if (net < 0) warnings.push("Líquido negativo: os descontos (vales/comissão já paga) superam os proventos do mês.");
     return {
       monthKey: input.monthKey, regime: regime, fraction: frac,
       earnings: earnings, deductions: deductions,
       totalEarnings: totalEarnings, totalDeductions: totalDeductions, net: net,
       hoursDiscount: hoursDiscount, hoursDiscountMin: hoursMin,
       taxableBase: taxableBase, inss: inssValue, irrf: irrfInfo, fgts: fgts,
+      advance: advance, vt: vt, familyAllowance: familyAmount,
+      // Bases impressas no rodapé do holerite do contador. A "base IRRF" do contador é o salário
+      // menos o adiantamento (informativa — o imposto em si segue a tabela, isento até R$ 5.000).
+      bases: {
+        salary: round2(num(input.baseSalary)),
+        inss: taxableBase,
+        fgts: regime === "clt" ? taxableBase : 0,
+        fgtsValue: fgts,
+        irrf: regime === "clt" ? round2(Math.max(0, taxableBase - advance)) : 0,
+        irrfBand: !irrfInfo || irrfInfo.tax <= 0 ? "Isento" : "Tributado"
+      },
       bank: input.bank || null,
-      warnings: net < 0 ? ["Líquido negativo: os descontos (vales/comissão já paga) superam os proventos do mês."] : []
+      warnings: warnings
     };
   }
 
-  global.FolhaCalc = { TABLES: TABLES, round2: round2, inss: inss, irrf: irrf, monthInfo: monthInfo, monthFraction: monthFraction, computePayslip: computePayslip };
+  global.FolhaCalc = { TABLES: TABLES, round2: round2, trunc2: trunc2, inssRate: inssRate, inss: inss, irrf: irrf, monthInfo: monthInfo, monthFraction: monthFraction, computePayslip: computePayslip };
   if (typeof module !== "undefined" && module.exports) module.exports = global.FolhaCalc;
 })(typeof window !== "undefined" ? window : globalThis);

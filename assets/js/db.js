@@ -27,7 +27,7 @@
     "bankLines", "commissionPayouts", "settings", "users", "activityLog",
     "commissionBonuses", "occurrences", "cardMachines",
     "productConsumptions", "notifications", "approvals", "chamados",
-    "timeClockEntries", "timeSheets"
+    "timeClockEntries", "timeSheets", "payslips"
   ];
 
   // Tabelas "opcionais": criadas depois do sistema já estar no ar (ex.:
@@ -36,7 +36,7 @@
   // rodado), a busca dela falha — mas isso NÃO pode derrubar o carregamento
   // do sistema inteiro; ela entra como lista vazia e o fato fica registrado
   // em DB.optionalTableMissing(nome) para a tela avisar com clareza.
-  var OPTIONAL_TABLES = { timeSheets: true };
+  var OPTIONAL_TABLES = { timeSheets: true, payslips: true };
   var _missingOptional = {};
 
   var ENV = global.ENV || {};
