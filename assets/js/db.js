@@ -384,7 +384,12 @@
   var BOOT_VIEW = {
     transactions: "transactions_boot",
     occurrences: "occurrences_boot",
-    commissionPayouts: "commissionPayouts_boot"
+    commissionPayouts: "commissionPayouts_boot",
+    // 14/10/2026: a selfie do ponto (selfieDataUrl, ~20 kB cada, ~60% do peso
+    // de uma carga completa) também fica fora da carga geral. A view traz
+    // hasSelfie:true no lugar da foto; a foto é buscada só quando alguém abre
+    // (DB.hydrateSelfies). Nada é apagado: a foto continua gravada no registro.
+    timeClockEntries: "timeClockEntries_boot"
   };
 
   var _readyResolve;
@@ -451,7 +456,16 @@
 
       var fetches = TABLES.map(function (t) {
         var src = BOOT_VIEW[t] || t;
-        return fetchAllRows(src).then(function (rows) {
+        // Se a view leve ainda não existir no banco, cai para a tabela
+        // inteira (mais pesado, mas nunca deixa o sistema sem dados).
+        var pending = fetchAllRows(src);
+        if (BOOT_VIEW[t]) {
+          pending = pending.catch(function (err) {
+            console.warn("View \"" + src + "\" indisponível — buscando a tabela \"" + t + "\" completa.", err);
+            return fetchAllRows(t);
+          });
+        }
+        return pending.then(function (rows) {
           if (OPTIONAL_TABLES[t]) delete _missingOptional[t];
           return { table: t, rows: rows };
         }).catch(function (err) {
@@ -561,26 +575,79 @@
     return !!(att && typeof att === "object" && !("dataUrl" in att));
   }
 
+  // hasSelfie é só uma marca de leitura (vem da view timeClockEntries_boot,
+  // que tira a foto da carga geral) — NUNCA é gravada no servidor. Registro
+  // "leve" de selfie = tem hasSelfie e a chave selfieDataUrl nem existe
+  // (diferente de uma foto removida de propósito, que vira selfieDataUrl:null).
+  function isLightSelfie(record) {
+    return !!(record && record.hasSelfie && !("selfieDataUrl" in record));
+  }
+
   function remoteUpsert(table, record) {
     if (!supa) return;
-    if (isLightAttachment(record.attachment)) {
-      // Busca o anexo de verdade (com dataUrl) que já está salvo nesse
+    var lightAtt = isLightAttachment(record.attachment);
+    var lightSelfie = table === "timeClockEntries" && isLightSelfie(record);
+    var out = record;
+    if (table === "timeClockEntries" && "hasSelfie" in out) {
+      out = Object.assign({}, out);
+      delete out.hasSelfie;
+    }
+    if (lightAtt || lightSelfie) {
+      // Busca o anexo/foto de verdade (com dataUrl) que já está salvo nesse
       // registro no Supabase antes de gravar o resto — assim o registro
       // "leve" que está na memória (sem o dataUrl) nunca sobrescreve/apaga
-      // o anexo real. Só acontece para registros que de fato têm anexo
-      // (a maioria não tem, e nem entra nesse caminho).
-      supa.from(table).select("data").eq("id", record.id).then(function (res) {
+      // o anexo ou a selfie reais. Só acontece para registros que de fato
+      // têm anexo/foto (a maioria não tem, e nem entra nesse caminho).
+      supa.from(table).select("data").eq("id", out.id).then(function (res) {
         var current = (res.data && res.data[0] && res.data[0].data) || null;
-        var merged = Object.assign({}, record, { attachment: (current && current.attachment) || null });
+        var merged = Object.assign({}, out);
+        if (lightAtt) merged.attachment = (current && current.attachment) || null;
+        if (lightSelfie) merged.selfieDataUrl = (current && current.selfieDataUrl) || null;
         return supa.from(table).upsert({ id: merged.id, data: merged });
       }).then(function (res) {
         if (res && res.error) remoteFail(table, "salvar", res.error);
       }).catch(function (err) { remoteFail(table, "salvar", err); });
       return;
     }
-    supa.from(table).upsert({ id: record.id, data: record }).then(function (res) {
+    supa.from(table).upsert({ id: out.id, data: out }).then(function (res) {
       if (res.error) remoteFail(table, "salvar", res.error);
     }).catch(function (err) { remoteFail(table, "salvar", err); });
+  }
+
+  // Busca só as selfies (um campo) de uma lista de marcações, em lotes, e as
+  // coloca no cache em memória (sem gravar nada no servidor). Usado pela
+  // Gestão de Ponto quando uma foto aparece/é aberta.
+  var SELFIE_BATCH = 25;
+  var _selfieInflight = {};
+  function hydrateSelfies(ids) {
+    var cache = load().timeClockEntries || [];
+    var byId = {};
+    cache.forEach(function (r) { byId[r.id] = r; });
+    var need = (ids || []).filter(function (id, i, arr) {
+      var r = byId[id];
+      return r && r.hasSelfie && !("selfieDataUrl" in r) && arr.indexOf(id) === i;
+    });
+    if (!need.length || !supa) return Promise.resolve([]);
+    var batches = [];
+    for (var i = 0; i < need.length; i += SELFIE_BATCH) batches.push(need.slice(i, i + SELFIE_BATCH));
+    return Promise.all(batches.map(function (batch) {
+      var key = batch.join(",");
+      if (_selfieInflight[key]) return _selfieInflight[key];
+      var p = Promise.resolve(supa.from("timeClockEntries").select("id, selfie:data->>selfieDataUrl").in("id", batch)).then(function (res) {
+        if (res.error) throw res.error;
+        var got = [];
+        (res.data || []).forEach(function (row) {
+          var rec = byId[row.id];
+          if (rec) { rec.selfieDataUrl = row.selfie || null; got.push(row.id); }
+        });
+        return got;
+      }).catch(function (err) {
+        console.error("Erro ao buscar selfies", err);
+        return [];
+      }).then(function (got) { delete _selfieInflight[key]; return got; });
+      _selfieInflight[key] = p;
+      return p;
+    })).then(function (parts) { return [].concat.apply([], parts); });
   }
 
   // Busca o anexo completo (com dataUrl) de um único registro direto da
@@ -1193,6 +1260,10 @@
     getAttachmentFull: function (table, id) {
       return fetchAttachmentFull(table, id);
     },
+
+    // Carrega (sob demanda) a selfie das marcações de ponto informadas —
+    // ver BOOT_VIEW e hydrateSelfies. Devolve Promise<ids carregados>.
+    hydrateSelfies: function (ids) { return hydrateSelfies(ids); },
 
     importJSON: function (jsonStr) {
       var parsed = JSON.parse(jsonStr);

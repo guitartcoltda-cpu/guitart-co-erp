@@ -34,6 +34,8 @@
 
   function init() {
     initTabs();
+    initSelfieLoader();
+    initSelfieBackup();
     FolhaPonto.mountManagerPanel(document.getElementById("pg-assinaturas-root"));
 
     var empSel = Utils.qs("#pg-employee");
@@ -75,6 +77,163 @@
     Utils.qs("#pg-occ-end").addEventListener("change", function (ev) { pgOccRange.end = ev.target.value; renderOcorrenciasTab(); });
 
     renderAll();
+  }
+
+  // ---------------- Selfies sob demanda ----------------
+  // A carga geral do sistema não traz mais a foto de cada marcação (era ~60%
+  // do peso de cada tela aberta). Onde uma foto aparece, o HTML sai com um
+  // quadrinho [data-selfie-lazy] / [data-selfie-modal]; este carregador
+  // busca só as fotos visíveis (DB.hydrateSelfies) e as coloca no lugar.
+  var selfieQueue = [], selfieTimer = null, selfieIO = null;
+
+  function selfieIdOf(el) { return el.getAttribute("data-selfie-lazy") || el.getAttribute("data-selfie-modal"); }
+
+  function applySelfie(el) {
+    var id = selfieIdOf(el);
+    var rec = id ? DB.get("timeClockEntries", id) : null;
+    if (!rec || !rec.selfieDataUrl) { el.setAttribute("title", "Selfie indisponível agora"); el.removeAttribute("data-selfie-wait"); return; }
+    if (el.hasAttribute("data-selfie-modal")) {
+      var img = document.createElement("img");
+      img.src = rec.selfieDataUrl;
+      img.setAttribute("data-zoom-photo", rec.selfieDataUrl);
+      img.title = "Clique para ampliar";
+      img.style.cssText = "width:120px;height:120px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);cursor:zoom-in;";
+      img.addEventListener("click", function () { openPhotoZoom(rec.selfieDataUrl, rec.employeeName); });
+      if (el.parentNode) el.parentNode.replaceChild(img, el);
+      return;
+    }
+    el.className = el.className.split(" ").filter(function (c) { return !/-empty$/.test(c); }).join(" ");
+    el.innerHTML = "";
+    el.style.backgroundImage = "url('" + rec.selfieDataUrl + "')";
+    el.removeAttribute("title");
+    el.removeAttribute("data-selfie-lazy");
+    el.removeAttribute("data-selfie-wait");
+  }
+
+  function flushSelfieQueue() {
+    selfieTimer = null;
+    var els = selfieQueue.splice(0);
+    if (!els.length) return;
+    var ids = [];
+    els.forEach(function (el) { var id = selfieIdOf(el); if (id && ids.indexOf(id) === -1) ids.push(id); });
+    DB.hydrateSelfies(ids).then(function () { els.forEach(applySelfie); }, function () { els.forEach(applySelfie); });
+  }
+
+  function queueSelfie(el) {
+    selfieQueue.push(el);
+    if (!selfieTimer) selfieTimer = setTimeout(flushSelfieQueue, 40);
+  }
+
+  function scanLazySelfies() {
+    var els = Utils.qsa("[data-selfie-lazy]:not([data-selfie-wait]), [data-selfie-modal]:not([data-selfie-wait])", document);
+    els.forEach(function (el) {
+      el.setAttribute("data-selfie-wait", "1");
+      if (selfieIO) selfieIO.observe(el); else queueSelfie(el);
+    });
+  }
+
+  function initSelfieLoader() {
+    if ("IntersectionObserver" in window) {
+      selfieIO = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (!en.isIntersecting) return;
+          selfieIO.unobserve(en.target);
+          queueSelfie(en.target);
+        });
+      }, { rootMargin: "200px" });
+    }
+    var t = null;
+    new MutationObserver(function () {
+      clearTimeout(t); t = setTimeout(scanLazySelfies, 50);
+    }).observe(document.body, { childList: true, subtree: true });
+    scanLazySelfies();
+  }
+
+  // ---------------- Backup mensal das selfies (cópia extra, NÃO apaga nada) ----------------
+  function slugName(txt) {
+    return String(txt || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "func";
+  }
+  function parseDataUrl(du) {
+    var m = /^data:([^;,]+)(;base64)?,(.*)$/.exec(du || "");
+    if (!m) return null;
+    var mime = m[1], bin;
+    try { bin = m[2] ? atob(m[3]) : decodeURIComponent(m[3]); } catch (e) { return null; }
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var ext = { "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp" }[mime] || "bin";
+    return { mime: mime, bytes: bytes, ext: ext };
+  }
+  function sha256Bytes(bytes) {
+    if (!(window.crypto && crypto.subtle && crypto.subtle.digest)) return Promise.resolve("");
+    return crypto.subtle.digest("SHA-256", bytes).then(function (buf) {
+      return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+    }).catch(function () { return ""; });
+  }
+  function csvCell(v) { return '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"'; }
+
+  function exportSelfieBackup(month, btn) {
+    if (!canManage()) { denyManage(); return; }
+    if (!window.JSZip) { Toast.show("Biblioteca de ZIP não carregou. Recarregue a página e tente de novo.", "danger"); return; }
+    var entries = DB.all("timeClockEntries").filter(function (t) {
+      return (t.date || "").slice(0, 7) === month && (t.hasSelfie || t.selfieDataUrl);
+    }).sort(function (a, b) { return (a.timestamp || "").localeCompare(b.timestamp || ""); });
+    if (!entries.length) { Toast.show("Não há selfies registradas nesse mês.", "warning"); return; }
+    var label = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Baixando fotos…';
+    DB.hydrateSelfies(entries.map(function (t) { return t.id; })).then(function () {
+      var zip = new JSZip(), folder = zip.folder("selfies");
+      var rows = ["arquivo;id;funcionario;tipo;data;hora;sha256"];
+      var missing = 0;
+      var jobs = entries.map(function (t0) {
+        var t = DB.get("timeClockEntries", t0.id) || t0;
+        var parsed = parseDataUrl(t.selfieDataUrl);
+        if (!parsed) { missing++; return Promise.resolve(); }
+        var d = new Date(t.timestamp);
+        var hh = ("0" + d.getHours()).slice(-2) + ("0" + d.getMinutes()).slice(-2) + ("0" + d.getSeconds()).slice(-2);
+        var name = t.date + "_" + hh + "_" + slugName(t.employeeName) + "_" + (t.type || "ponto") + "_" + t.id + "." + parsed.ext;
+        folder.file(name, parsed.bytes);
+        return sha256Bytes(parsed.bytes).then(function (hash) {
+          rows.push([name, t.id, t.employeeName, t.type, t.date, ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) + ":" + ("0" + d.getSeconds()).slice(-2), hash].map(csvCell).join(";"));
+        });
+      });
+      return Promise.all(jobs).then(function () {
+        if (missing === entries.length) throw new Error("Nenhuma foto pôde ser carregada");
+        zip.file("indice.csv", "﻿" + rows.join("\r\n"));
+        zip.file("LEIA-ME.txt",
+          "Backup das selfies do ponto — " + month + "\r\n" +
+          "Gerado em " + new Date().toLocaleString("pt-BR") + " por " + ((CurrentUser.get() || {}).firstName || "administrador") + ".\r\n" +
+          "Fotos: " + (entries.length - missing) + (missing ? " (" + missing + " não puderam ser carregadas)" : "") + ".\r\n\r\n" +
+          "Esta é uma COPIA. As fotos continuam guardadas no sistema; nada foi apagado.\r\n" +
+          "indice.csv liga cada foto à marcação (funcionário, tipo, data e hora) e traz o SHA-256 de cada arquivo para conferir que não foi alterado.\r\n" +
+          "Guarde este arquivo em mais de um lugar (pasta do computador + pen drive ou nuvem).\r\n");
+        return zip.generateAsync({ type: "blob" });
+      }).then(function (blob) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "selfies-ponto-" + month + ".zip";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+        DB.log("Ponto", "Baixou o backup das selfies de " + month + " (" + (entries.length - missing) + " fotos)");
+        Toast.show("Backup gerado com " + (entries.length - missing) + " foto(s). Nada foi apagado do sistema." + (missing ? " " + missing + " não carregaram." : ""), missing ? "warning" : "success");
+      });
+    }).catch(function (err) {
+      console.error("Erro ao gerar o backup das selfies", err);
+      Toast.show("Não foi possível gerar o backup agora. Tente de novo.", "danger");
+    }).then(function () { btn.disabled = false; btn.innerHTML = label; });
+  }
+
+  function initSelfieBackup() {
+    var card = Utils.qs("#pg-selfie-backup");
+    if (!card) return;
+    if (!canManage()) { card.style.display = "none"; return; }
+    var inp = Utils.qs("#pg-sb-month"), btn = Utils.qs("#pg-sb-btn");
+    var now = new Date();
+    var prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    inp.value = prev.getFullYear() + "-" + ("0" + (prev.getMonth() + 1)).slice(-2);
+    btn.addEventListener("click", function () {
+      if (!/^\d{4}-\d{2}$/.test(inp.value)) { Toast.show("Escolha o mês do backup.", "warning"); return; }
+      exportSelfieBackup(inp.value, btn);
+    });
   }
 
   function renderAll() {
@@ -173,6 +332,9 @@
   function thumbHtml(t, cls) {
     var wrapCls = cls || "ponto-thumb";
     if (t.selfieDataUrl) return '<div class="' + wrapCls + '" data-zoom="' + t.id + '" style="background-image:url(\'' + t.selfieDataUrl + '\');"></div>';
+    // Selfie ainda não carregada (a carga geral não traz a foto — ver
+    // DB.hydrateSelfies): mostra um quadrinho e o carregador preenche a foto.
+    if (t.hasSelfie) return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" data-selfie-lazy="' + t.id + '" title="Carregando a selfie…"><i class="fa-solid fa-image"></i></div>';
     if (PontoCalc.isAdjustType(t.type)) return '<div class="' + wrapCls + ' ' + wrapCls + '-empty" data-zoom="' + t.id + '" title="' + PontoCalc.adjustLabelOf(t) + '"><i class="fa-solid ' + (PontoCalc.isCreditAdjust(t) ? "fa-hourglass-start" : "fa-hourglass-end") + '"></i></div>';
     if (PontoCalc.isOccurrenceType(t.type)) {
       var k = PontoCalc.OCCURRENCE_KINDS[t.type];
@@ -643,7 +805,7 @@
         thumbHtml(t, "ponto-timeline-thumb") +
         '<div class="ponto-timeline-body" style="flex:1;min-width:0;">' +
           '<div class="flex items-center gap-8"><span class="ponto-timeline-time">' + pgHhmm(t) + '</span><span class="ponto-timeline-type">' + (TYPE_LABELS[t.type] || t.type) + '</span></div>' +
-          '<div class="ponto-timeline-meta">origem: ' + (t.selfieDataUrl ? "selfie" : (ORIGIN_LABELS[t.origin] || "manual")) + (t.note ? " · " + Utils.escapeHtml(t.note) : "") + '</div>' +
+          '<div class="ponto-timeline-meta">origem: ' + ((t.selfieDataUrl || t.hasSelfie) ? "selfie" : (ORIGIN_LABELS[t.origin] || "manual")) + (t.note ? " · " + Utils.escapeHtml(t.note) : "") + '</div>' +
           '<div class="mt-4">' + statusChipHtml(t) + '</div>' +
         '</div>' +
         '<button class="btn btn-icon btn-ghost" data-tl-entry="' + t.id + '" title="Ver / conferir esta marcação"><i class="fa-solid fa-magnifying-glass"></i></button>' +
@@ -665,6 +827,11 @@
         e.stopPropagation();
         var t = DB.get("timeClockEntries", el.getAttribute("data-zoom"));
         if (t && t.selfieDataUrl) openPhotoZoom(t.selfieDataUrl, t.employeeName);
+        else if (t && t.hasSelfie) DB.hydrateSelfies([t.id]).then(function () {
+          var again = DB.get("timeClockEntries", t.id);
+          if (again && again.selfieDataUrl) openPhotoZoom(again.selfieDataUrl, again.employeeName);
+          else Toast.show("Não foi possível carregar a selfie agora. Tente de novo.", "danger");
+        });
       });
     });
   }
@@ -805,7 +972,7 @@
       : '';
     var body =
       '<div class="flex items-center mb-16" style="gap:14px;">' +
-        (t.selfieDataUrl ? '<img src="' + t.selfieDataUrl + '" data-zoom-photo="' + t.selfieDataUrl + '" style="width:120px;height:120px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);cursor:zoom-in;" title="Clique para ampliar">' : Utils.avatarHtml(t.employeeName, e ? e.photoDataUrl : null, "avatar-lg")) +
+        (t.selfieDataUrl ? '<img src="' + t.selfieDataUrl + '" data-zoom-photo="' + t.selfieDataUrl + '" style="width:120px;height:120px;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--border-color);cursor:zoom-in;" title="Clique para ampliar">' : t.hasSelfie ? '<div data-selfie-modal="' + t.id + '" style="width:120px;height:120px;border-radius:var(--radius-md);border:1px solid var(--border-color);display:flex;align-items:center;justify-content:center;" class="text-muted"><i class="fa-solid fa-image"></i></div>' : Utils.avatarHtml(t.employeeName, e ? e.photoDataUrl : null, "avatar-lg")) +
         '<div>' +
           '<div id="pg-badge-slot">' + typeBadge(t.type, t) + '</div>' +
           (t.origin && ORIGIN_LABELS[t.origin] ? '<div class="small text-muted">' + ORIGIN_LABELS[t.origin] + '</div>' : '') +
