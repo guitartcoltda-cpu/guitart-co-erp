@@ -201,3 +201,17 @@ end $$;
 -- (e, do lado do app, trocar o polling por `supa.channel(...).on(
 -- "postgres_changes", ...)` em db.js) — fica registrado aqui como
 -- caminho pronto, caso um dia o atraso de ~45s deixe de ser aceitável.
+
+-- ------------------------------------------------------------
+-- View leve de timeClockEntries (14/10/2026): sem data.selfieDataUrl, com
+-- data.hasSelfie. Ver supabase/timeclock-boot-view.sql e BOOT_VIEW em db.js.
+create or replace view public."timeClockEntries_boot" as
+select
+  id,
+  case
+    when nullif(data->>'selfieDataUrl', '') is not null
+      then (data - 'selfieDataUrl') || '{"hasSelfie": true}'::jsonb
+    else data - 'selfieDataUrl'
+  end as data
+from public."timeClockEntries";
+grant select on public."timeClockEntries_boot" to anon, authenticated;
