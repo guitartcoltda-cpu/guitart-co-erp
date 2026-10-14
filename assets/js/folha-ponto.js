@@ -147,8 +147,19 @@
     var u = currentUser();
     if (!u) return null;
     if (u.employeeId) return u.employeeId;
-    if (!u.cpf) return null;
-    var emp = global.DB.findOne("employees", function (e) { return e.cpf === u.cpf; });
+    var cpf = u.cpf;
+    // 14/10/2026: a sessão gravada no login só tem id/nome/cargo (sem employeeId
+    // nem cpf) — o vínculo precisa ser buscado no cadastro do usuário, senão
+    // ninguém conseguia assinar ("não acho o botão Assinar").
+    if (u.id) {
+      var rec = global.DB.findOne("users", function (x) { return x.id === u.id; });
+      if (rec) {
+        if (rec.employeeId) return rec.employeeId;
+        cpf = cpf || rec.cpf;
+      }
+    }
+    if (!cpf) return null;
+    var emp = global.DB.findOne("employees", function (e) { return e.cpf === cpf; });
     return emp ? emp.id : null;
   }
 
