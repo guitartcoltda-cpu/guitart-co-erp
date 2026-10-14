@@ -41,13 +41,13 @@ function build(role) {
   w.CurrentUser = { get: () => ({ id: "u", role, firstName: "A", lastName: "B" }) };
   w.ComissoesCalc = { rowsForRange: () => [{ employee: store.employees[0], devido: 500, pago: 100 }] };
   w.jspdf = { jsPDF: function () {
-    const d = { internal: { pageSize: { getWidth: () => 595 } }, texts: [] };
-    ["setFont", "setFontSize", "setLineWidth", "line", "addPage"].forEach(n => d[n] = function () { pdfCalls.push(n); });
+    const d = { internal: { pageSize: { getWidth: () => 595, getHeight: () => 842 } }, texts: [] };
+    ["setFont", "setFontSize", "setLineWidth", "line", "addPage", "rect", "setDrawColor", "setTextColor"].forEach(n => d[n] = function () { pdfCalls.push(n); });
     d.text = function (t) { d.texts.push(String(t)); pdfCalls.push("text:" + t); };
     d.save = function (n) { pdfCalls.push("save:" + n); };
     return d;
   } };
-  ["utils.js", "ponto-calc.js", "folha-calc.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
+  ["utils.js", "ponto-calc.js", "folha-calc.js", "folha-ponto.js", "holerite.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
   w.Toast.show = (m, k) => toasts.push(k + ":" + m);
   w.eval(fs.readFileSync(path.join(root, "assets", "js", "folha-pagamento.js"), "utf8"));
   // o jsdom dispara o DOMContentLoaded sozinho logo após o parse (não disparar de novo, senão init roda 2x)
@@ -107,7 +107,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   // ---- PDF ----
   d.querySelector('[data-fp-pdf="e1"]').click();
   ok(t.pdfCalls.some(c => /^save:holerite_luiza-morais_/.test(c)), "PDF individual salvo: " + t.pdfCalls.filter(c => c.startsWith("save")).join());
-  ok(t.pdfCalls.some(c => /LÍQUIDO A RECEBER/.test(c)), "PDF traz a linha do líquido");
+  ok(t.pdfCalls.some(c => /RECIBO DE PAGAMENTO/.test(c)) && t.pdfCalls.some(c => /Total Líquido/.test(c)), "PDF no formato do recibo do contador, com a linha do líquido");
   t.pdfCalls.length = 0;
   d.getElementById("btn-fp-pdf-all").click();
   ok(t.pdfCalls.filter(c => c === "addPage").length === 1 && t.pdfCalls.some(c => /^save:holerite_todos_/.test(c)), "PDF de todos: 2 páginas");
