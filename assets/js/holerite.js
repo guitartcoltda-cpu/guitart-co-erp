@@ -184,15 +184,16 @@
       doc.text(snap.monthLabel, end - 8, y + 33, { align: "right" });
       y += 66;
       // funcionário
-      doc.setLineWidth(0.5); doc.rect(mx, y - 16, end - mx, 36);
+      doc.setLineWidth(0.5); doc.rect(mx, y - 16, end - mx, 48);
       doc.setFont("helvetica", "bold"); doc.setFontSize(9);
       doc.text("Código", mx + 8, y - 5); doc.text("Nome", mx + 60, y - 5); doc.text("CBO", mx + 320, y - 5); doc.text("Admissão", mx + 410, y - 5);
       doc.setFont("helvetica", "normal"); doc.setFontSize(10);
       doc.text(snap.employee.code || "-", mx + 8, y + 9);
-      doc.text(snap.employee.name + (snap.employee.role ? " — " + snap.employee.role : ""), mx + 60, y + 9, { maxWidth: 255 });
+      doc.text(snap.employee.name, mx + 60, y + 9, { maxWidth: 255 });
+      if (snap.employee.role) { doc.setFontSize(9); doc.text(snap.employee.role, mx + 60, y + 22, { maxWidth: 255 }); doc.setFontSize(10); }
       doc.text(snap.employee.cbo || "-", mx + 320, y + 9);
       doc.text(snap.employee.hireDate ? global.Utils.fmtDate(snap.employee.hireDate) : "-", mx + 410, y + 9);
-      y += 38;
+      y += 50;
       // linhas
       var cNum = mx + 6, cDesc = mx + 50, cRef = mx + 300, cVen = end - 100, cDes = end - 6;
       doc.setFont("helvetica", "bold"); doc.setFontSize(9);
@@ -217,7 +218,7 @@
       doc.setFont("helvetica", "bold"); doc.setFontSize(11);
       doc.text("Total Líquido -->  " + br2(snap.totals.net), cDes, y, { align: "right" }); y += 12;
       doc.setLineWidth(0.5); doc.line(mx, y, end, y); y += 13;
-      var b = snap.bases, bx = [mx + 8, mx + 110, mx + 220, mx + 330, mx + 410];
+      var b = snap.bases, bx = [mx + 8, mx + 92, mx + 178, mx + 280, mx + 358];
       var lab = ["Salário Base", "Sal.Contr.INSS", "Base Cálculo FGTS", "FGTS do MÊS", "Base Cálculo IRRF"], val = [br2(b.salary), br2(b.inss), br2(b.fgts), br2(b.fgtsValue), br2(b.irrf)];
       doc.setFontSize(8);
       for (var i = 0; i < 5; i++) { doc.setFont("helvetica", "bold"); doc.text(lab[i], bx[i], y); doc.setFont("helvetica", "normal"); doc.text(val[i], bx[i], y + 11); }
