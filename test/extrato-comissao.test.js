@@ -42,6 +42,7 @@ const HTML =
   '<div id="ec-assistant" style="display:none;"></div>' +
   '<div id="ec-consumo" style="display:none;"></div>' +
   '<div id="ec-bonus" style="display:none;"></div>' +
+  '<div id="ec-tips" style="display:none;"></div>' +
   '<div id="toast-stack"></div>' +
   '</body></html>';
 
@@ -273,6 +274,38 @@ function setCustomRange(start, end) {
   setCustomRange(d05, d10);
   await flush();
   check("F3: Já Recebido = 0 no corte 05-10 (pagamento que cruza a virada do mês não vaza para um corte mais estreito)", kpiValue("Já Recebido") === money(0), kpiValue("Já Recebido"));
+
+  // ---- G. Gorjetas (regra de 23/10/2026): o cliente paga tudo ao salão e a
+  // gorjeta é repassada 100% ao profissional, DENTRO da comissão devida.
+  // Reconhecida pela marca isTip + funcionário, qualquer que seja o tipo
+  // (receita, como a Agenda grava agora, ou despesa, como era antes) —
+  // mesmo cenário real em que o lançamento foi editado em Lançamentos. ----
+  Utils.TIP_COMMISSION_START = "2000-01-01"; // recua o corte só para exercitar a regra (datas de teste são relativas à execução)
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  var devidoSemGorjeta = kpiValue("Comissão do Período");
+  check("G0: sem gorjeta não aparece KPI nem tabela de gorjetas", kpiValue("Gorjetas (já inclusas na comissão)") === null && document.getElementById("ec-tips").style.display === "none", kpiValue("Gorjetas (já inclusas na comissão)"));
+  tables.transactions.push(
+    { id: "tipR", type: "receita", categoryId: "cat-gorj-rec", employeeId: "emp1", clientId: "c1", amount: 40, date: d10, status: "pago", isTip: true },
+    { id: "tipD", type: "despesa", categoryId: "cat-gorj-desp", employeeId: "emp1", clientId: "c1", amount: 10, date: d20, status: "pago", isTip: true },
+    { id: "tipOutroMes", type: "receita", employeeId: "emp1", amount: 99, date: dPrevMonth, status: "pago", isTip: true },
+    { id: "tipOutroProf", type: "receita", employeeId: "emp2", amount: 77, date: d10, status: "pago", isTip: true },
+    { id: "recNaoGorjeta", type: "receita", employeeId: "emp1", amount: 500, date: d10, status: "pago" }
+  );
+  var base = Number(String(devidoSemGorjeta).replace(/[^0-9,]/g, "").replace(",", "."));
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  check("G1: mês inteiro: comissão do período soma as gorjetas (receita 40 + despesa 10 marcadas isTip) = base + 50", kpiValue("Comissão do Período") === money(base + 50), [kpiValue("Comissão do Período"), base]);
+  check("G2: KPI de gorjetas = 50 (não conta outro mês, outro profissional, nem receita sem isTip)", kpiValue("Gorjetas (já inclusas na comissão)") === money(50), kpiValue("Gorjetas (já inclusas na comissão)"));
+  var tipsRows = Utils.qsa("#ec-tips tbody tr");
+  check("G3: tabela de gorjetas lista 2 lançamentos, com o cliente e o total", tipsRows.length === 2 && /Maria/.test(tipsRows[0].textContent) && document.getElementById("ec-tips").textContent.indexOf(money(50)) !== -1, tipsRows.length);
+  setCustomRange(currentMonthKey + "-11", d20);
+  await flush();
+  check("G4: corte 11-20 só pega a gorjeta do dia 20 (10) — a do dia 10 fica de fora", kpiValue("Gorjetas (já inclusas na comissão)") === money(10), kpiValue("Gorjetas (já inclusas na comissão)"));
+  Utils.TIP_COMMISSION_START = "2099-01-01";
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  check("G5: data de corte no futuro: gorjetas antigas não entram na comissão nem aparecem (valor volta ao anterior)", kpiValue("Comissão do Período") === devidoSemGorjeta && kpiValue("Gorjetas (já inclusas na comissão)") === null, [kpiValue("Comissão do Período"), devidoSemGorjeta]);
 
   console.log("");
   console.log("=== Resultado: " + pass + " passaram, " + fail + " falharam (" + (pass + fail) + " no total) ===");

@@ -455,6 +455,67 @@ function setCustomRange(start, end) {
     check("J3: Pago do Bruno = 0 no corte 05-10 (pagamento que cruza a virada do mês não vaza para um corte mais estreito)", moneyIn(cellText(row, 7), 0), cellText(row, 7));
   })();
 
+  // ---- K. Gorjetas (regra de 23/10/2026): cliente paga tudo ao salão e a
+  // gorjeta é repassada 100% ao profissional, dentro do "Devido". Vale pela
+  // marca isTip + funcionário (receita, como a Agenda grava, ou despesa), e
+  // quem só recebeu gorjeta (sem comissão) também aparece na tabela. ----
+  // Corte de 23/10/2026: gorjetas ANTERIORES à data de corte (já acertadas à
+  // mão, períodos fechados) não podem alterar valores. Primeiro prova isso com
+  // a data de corte padrão; depois recua o corte só para exercitar a regra nos
+  // meses de teste (datas relativas à execução).
+  const cutoffPadrao = Utils.TIP_COMMISSION_START;
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  var anaDevidoAntes = (function () { var r = anaRow(); return r ? cellText(r, 6) : null; })();
+  tables.transactions.push(
+    { id: "tipR", type: "receita", categoryId: "cat-gorj-rec", employeeId: "emp1", clientId: "c1", amount: 40, date: d10, status: "pago", isTip: true },
+    { id: "tipD", type: "despesa", categoryId: "cat-gorj-desp", employeeId: "emp1", clientId: "c1", amount: 10, date: d20, status: "pago", isTip: true },
+    { id: "tipOutroMes", type: "receita", employeeId: "emp1", amount: 99, date: dPrevMonth, status: "pago", isTip: true },
+    { id: "recNaoGorjeta", type: "receita", employeeId: "emp1", amount: 500, date: d10, status: "pago" }
+  );
+  tables.employees.push({ id: "emp3", name: "Carol", role: "Auxiliar", status: "ativo", commissionRate: 0 });
+  (function () {
+    // corte padrão: 22/10/2026 fica de fora (período fechado), 23/10/2026 em diante conta
+    check("K0: data de corte padrão é 23/10/2026", cutoffPadrao === "2026-10-23", cutoffPadrao);
+    tables.transactions.push(
+      { id: "tipCorte1", type: "receita", employeeId: "empX", amount: 15, date: "2026-10-22", isTip: true },
+      { id: "tipCorte2", type: "receita", employeeId: "empX", amount: 10, date: "2026-10-23", isTip: true },
+      { id: "tipCorte3", type: "receita", employeeId: "empX", amount: 5, date: "2026-11-02", isTip: true }
+    );
+    var r = Utils.tipsForRange("empX", { start: "2026-01-01", end: "2026-12-31" });
+    check("K0: 22/10 (acertada à mão) não conta; 23/10 e depois contam = 15 (10+5)", r.total === 15 && r.items.length === 2, r.total);
+    tables.transactions = tables.transactions.filter(function (t) { return t.employeeId !== "empX"; });
+  })();
+  Utils.TIP_COMMISSION_START = "2000-01-01"; // só para os cenários de teste abaixo
+  tables.transactions.push({ id: "tipCarol", type: "receita", employeeId: "emp3", amount: 25, date: d05, status: "pago", isTip: true });
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  (function () {
+    var row = anaRow();
+    check("K1: linha da Ana existe", !!row);
+    if (!row) return;
+    var antes = Number(String(anaDevidoAntes).replace(/[^0-9,]/g, "").replace(",", "."));
+    check("K1: Devido da Ana = anterior + 50 de gorjetas (receita 40 + despesa 10 marcadas isTip; ignora outro mês e receita sem isTip)", moneyIn(cellText(row, 6), antes + 50), [cellText(row, 6), antes]);
+    check("K2: coluna de ajustes explica 'inclui R$ 50,00 de gorjeta'", cellText(row, 5).indexOf("gorjeta") !== -1 && moneyIn(cellText(row, 5), 50 + 45 - 10), cellText(row, 5));
+    var carol = Utils.qsa("#tbl-commission tbody tr").filter(function (r) { return r.textContent.indexOf("Carol") !== -1; })[0];
+    check("K3: quem só recebeu gorjeta (sem comissão) aparece, com Devido = 25", !!carol && moneyIn(cellText(carol, 6), 25), carol && cellText(carol, 6));
+  })();
+  setCustomRange(currentMonthKey + "-11", d20);
+  await flush();
+  (function () {
+    var row = anaRow();
+    check("K4: corte 11-20 soma só a gorjeta do dia 20 (60 + 10 = 70)", row && moneyIn(cellText(row, 6), 70), row && cellText(row, 6));
+  })();
+  // Volta o corte ao padrão: nenhuma dessas gorjetas (todas antes de 23/10/2026, ou de meses de teste) pode contar.
+  Utils.TIP_COMMISSION_START = "2099-01-01";
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  (function () {
+    var row = anaRow();
+    var antes = Number(String(anaDevidoAntes).replace(/[^0-9,]/g, "").replace(",", "."));
+    check("K5: com a data de corte no futuro as gorjetas não entram (Devido volta ao anterior)", row && moneyIn(cellText(row, 6), antes), row && [cellText(row, 6), antes]);
+  })();
+
   console.log("");
   console.log("=== Resultado: " + pass + " passaram, " + fail + " falharam (" + (pass + fail) + " no total) ===");
   if (fail > 0) {
