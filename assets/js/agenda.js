@@ -1182,26 +1182,29 @@
   // depender de um passo manual em Configurações antes de a funcionalidade
   // funcionar de ponta a ponta.
   var _gorjetaCatId;
+  // 23/10/2026: a gorjeta é DINHEIRO QUE ENTRA no caixa do salão (o cliente
+  // paga tudo ao salão) — por isso a categoria e o lançamento são de RECEITA.
+  // O repasse ao profissional acontece dentro da comissão devida (ver
+  // Utils.tipsForRange em comissoes.js/extrato-comissao.js), 100% e sem % do salão.
   function gorjetaCatId() {
     if (_gorjetaCatId !== undefined) return _gorjetaCatId;
-    var c = DB.findOne("categories", function (x) { return x.name === "Gorjetas" && x.type === "despesa"; });
+    var c = DB.findOne("categories", function (x) { return x.name === "Gorjetas" && x.type === "receita"; });
     if (!c) {
       var cc = DB.findOne("costCenters", function (x) { return x.key === "operacional"; });
-      c = DB.insert("categories", { name: "Gorjetas", type: "despesa", costCenterId: cc ? cc.id : null, color: "#6d5efc" });
+      c = DB.insert("categories", { name: "Gorjetas", type: "receita", costCenterId: cc ? cc.id : null, color: "#6d5efc" });
     }
     _gorjetaCatId = c.id;
     return _gorjetaCatId;
   }
 
-  // Lança a gorjeta (se houver valor > 0) como uma despesa 100% do
-  // funcionário indicado — não passa por Utils.apptCommissionSplit nem por
-  // nenhum cálculo de comissão, é só um registro histórico/financeiro do
-  // valor que o cliente deixou de gorjeta.
+  // Lança a gorjeta (se houver valor > 0) como RECEITA do salão, marcada com
+  // isTip e com o funcionário que vai recebê-la: ela entra 100% na comissão
+  // devida a ele (não passa por Utils.apptCommissionSplit nem por % do salão).
   function registerTip(opts) {
     // opts: { amount, employeeId, employeeLabel, appt, service, client, payMethod, costCenter }
     if (!opts.amount || opts.amount <= 0 || !opts.employeeId) return;
     DB.insert("transactions", {
-      type: "despesa",
+      type: "receita",
       description: "Gorjeta - " + opts.employeeLabel + " - " + (opts.service ? opts.service.name : "Atendimento") + " - " + opts.client.name,
       amount: round2(opts.amount), date: opts.appt.date, categoryId: gorjetaCatId(),
       costCenterId: opts.costCenter ? opts.costCenter.id : null, paymentMethod: opts.payMethod, status: "pago",

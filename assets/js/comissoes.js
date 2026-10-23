@@ -253,7 +253,7 @@
       resumoRows.push([
         e.name, e.role, r.atendimentos, r.serviceRevenue,
         round2(r.mainCommissionTotal + r.assistantDeductionTotal), r.assistantDeductionTotal, r.assistantCommissionTotal,
-        r.baseComissao, r.bonusTotal, r.consumoTotal, r.parceriaCostTotal,
+        r.baseComissao, r.bonusTotal, r.tipTotal || 0, r.consumoTotal, r.parceriaCostTotal,
         r.devido, r.pago, round2(Math.max(0, r.saldo)), commStatusLabel(r)
       ]);
 
@@ -353,7 +353,7 @@
     XLSX.utils.book_append_sheet(wb, aoaSheet([
       "Profissional", "Cargo", "Atendimentos", "Receita de Serviços",
       "Comissão como Principal (bruta)", "Repasse a Assistente(s)", "Comissão como Assistente",
-      "Comissão do Período", "Comissionamento Esporádico (líquido)", "Consumo de Insumos",
+      "Comissão do Período", "Comissionamento Esporádico (líquido)", "Gorjetas (100% repassadas)", "Consumo de Insumos",
       "Atendimentos em Parceria (desconto)", "Total Devido", "Total Pago", "Saldo em Aberto", "Status"
     ], resumoRows), "Resumo");
     XLSX.utils.book_append_sheet(wb, aoaSheet([
@@ -496,7 +496,14 @@
       if (matches) (txnsByEmployeeId[t.employeeId] || (txnsByEmployeeId[t.employeeId] = [])).push(t);
     });
     var assistantIds = apptsByAssistantId;
-    var employees = employeesAll.filter(function (e) { return e.commissionRate > 0 || assistantIds[e.id]; });
+    // Gorjetas do período (23/10/2026): repassadas 100% ao profissional,
+    // dentro do "devido". Quem recebeu gorjeta aparece mesmo sem comissão.
+    var tipsByEmployee = {};
+    allTransactions.forEach(function (t) {
+      if (!t.isTip || !t.employeeId || t.date < Utils.TIP_COMMISSION_START || t.date < range.start || t.date > range.end) return;
+      tipsByEmployee[t.employeeId] = true;
+    });
+    var employees = employeesAll.filter(function (e) { return e.commissionRate > 0 || assistantIds[e.id] || tipsByEmployee[e.id]; });
 
     return employees.map(function (e) {
       var asMain = apptsByMainId[e.id] || [];
@@ -559,7 +566,9 @@
       var bonuses = bonusesFor(e.id);
       var bonusTotal = round2(sumBy(bonuses, "amount"));
       var consumo = window.Consumo ? Consumo.deductionForRange(e.id, range) : { total: 0, items: [] };
-      var devido = round2(baseComissao + bonusTotal - consumo.total - parceriaCostTotal);
+      var tips = Utils.tipsForRange(e.id, range);
+      var tipTotal = tips.total;
+      var devido = round2(baseComissao + bonusTotal + tipTotal - consumo.total - parceriaCostTotal);
       var pagoTxns = txnsByEmployeeId[e.id] || [];
       var pago = sumBy(pagoTxns, "amount");
       return {
@@ -567,7 +576,7 @@
         mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
         assistantDeductionTotal: assistantDeductionTotal,
         parceriaCostTotal: parceriaCostTotal, parceriaCostItems: parceriaCostItems,
-        baseComissao: baseComissao, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
+        baseComissao: baseComissao, bonusTotal: bonusTotal, tipTotal: tipTotal, tipItems: tips.items, consumoTotal: consumo.total, consumoItems: consumo.items,
         devido: devido, pago: pago, saldo: round2(devido - pago)
       };
     }).sort(function (a, b) { return b.devido - a.devido; });
@@ -702,12 +711,13 @@
         var asstHintHtml = r.assistantDeductionTotal > 0.005
           ? '<div class="small text-danger">-' + Utils.fmtMoney(r.assistantDeductionTotal) + ' repasse assistente</div>'
           : '';
-        var netAdjust = round2(r.bonusTotal - r.consumoTotal - r.parceriaCostTotal);
+        var netAdjust = round2(r.bonusTotal + (r.tipTotal || 0) - r.consumoTotal - r.parceriaCostTotal);
         var adjustHtml;
         if (Math.abs(netAdjust) < 0.005) {
           adjustHtml = '<span class="small text-muted">—</span>';
         } else if (netAdjust > 0) {
-          adjustHtml = '<span class="text-num font-bold text-success">+' + Utils.fmtMoney(netAdjust) + '</span>';
+          adjustHtml = '<span class="text-num font-bold text-success">+' + Utils.fmtMoney(netAdjust) + '</span>' +
+            (r.tipTotal > 0.005 ? '<div class="small text-muted">inclui ' + Utils.fmtMoney(r.tipTotal) + ' de gorjeta</div>' : '');
         } else {
           adjustHtml = '<span class="text-num font-bold text-danger">-' + Utils.fmtMoney(Math.abs(netAdjust)) + '</span>';
         }
@@ -918,6 +928,7 @@
       '<td class="text-right text-num">' + Utils.fmtMoney(row.mainCommissionTotal) + '</td></tr></tfoot>' +
       '</table>' +
       asstSectionHtml +
+      tipsSectionHtml(row) +
       consumoSectionHtml(row) +
       parceriaSectionHtml(row) +
       '<div class="flex items-center justify-between mt-16 mb-8">' +
@@ -1038,6 +1049,9 @@
     }).join("");
     var bonusValText = row.bonusTotal < 0 ? "- " + Utils.fmtMoney(Math.abs(row.bonusTotal)) : Utils.fmtMoney(row.bonusTotal);
     rowsHtml += '<div class="flex justify-between small mt-8"><span>(+/−) Comissionamento Esporádico do Período</span><span class="text-num" id="dm-recap-bonus">' + bonusValText + '</span></div>';
+    if (row.tipTotal > 0.005) {
+      rowsHtml += '<div class="flex justify-between small mt-8 text-success"><span>(+) Gorjetas (repassadas 100% ao profissional)</span><span class="text-num">' + Utils.fmtMoney(row.tipTotal) + '</span></div>';
+    }
     if (row.consumoTotal > 0.005) {
       rowsHtml += '<div class="flex justify-between small mt-8 text-danger"><span>(−) Consumo de Insumos</span><span class="text-num">- ' + Utils.fmtMoney(row.consumoTotal) + '</span></div>';
     }
@@ -1056,6 +1070,23 @@
   // ser outro percentual quando ajustado no lançamento em Estoque) já virou
   // despesa da empresa em Lançamentos pela outra parte (ver
   // assets/js/consumo.js).
+  // Gorjetas do período — repassadas integralmente ao profissional (o cliente
+  // paga tudo ao salão; não há % do salão sobre a gorjeta).
+  function tipsSectionHtml(row) {
+    if (!row.tipItems || !row.tipItems.length) return "";
+    var clients = DB.all("clients");
+    var linesHtml = row.tipItems.map(function (t) {
+      var c = clients.find(function (x) { return x.id === t.clientId; });
+      return '<tr><td>' + Utils.fmtDate(t.date) + '</td><td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
+        '<td class="text-right text-num font-bold text-success">+ ' + Utils.fmtMoney(t.amount) + '</td></tr>';
+    }).join("");
+    return '<h4 style="font-size:14px;margin-top:18px;margin-bottom:8px;">Gorjetas do Período</h4>' +
+      '<div class="small text-muted mb-8">Repassadas 100% ao profissional, sem percentual do salão.</div>' +
+      '<table class="data-table"><thead><tr><th>Data</th><th>Cliente</th><th class="text-right">Gorjeta</th></tr></thead>' +
+      '<tbody>' + linesHtml + '</tbody>' +
+      '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="2">Total</td><td class="text-right text-num">' + Utils.fmtMoney(row.tipTotal) + '</td></tr></tfoot></table>';
+  }
+
   function consumoSectionHtml(row) {
     if (!row.consumoItems || !row.consumoItems.length) return "";
     var products = DB.all("products");

@@ -494,6 +494,26 @@
       return !!(pm && pm.isParceria);
     },
 
+    // Gorjetas (regra do João, 23/10/2026): o cliente paga TUDO ao salão e a
+    // gorjeta é repassada 100% ao profissional (sem % do salão) dentro da
+    // comissão devida. Reconhece o lançamento pela marca isTip (gravada pela
+    // Agenda) + funcionário, QUALQUER que seja o tipo/categoria — assim edições
+    // feitas em Lançamentos Financeiros não fazem a gorjeta "sumir" do cálculo.
+    // range = { start, end } em ISO (AAAA-MM-DD, inclusive). Devolve
+    // { total, items } com os itens ordenados por data.
+    // DATA DE CORTE: a regra vale só para gorjetas lançadas a partir de
+    // TIP_COMMISSION_START (23/10/2026). As anteriores (10/09 e 15/10) já foram
+    // acertadas à mão e seus períodos estão fechados — não podem mudar valores.
+    TIP_COMMISSION_START: "2026-10-23",
+    tipsForRange: function (employeeId, range) {
+      var cutoff = Utils.TIP_COMMISSION_START;
+      var items = (window.DB && DB.all ? DB.all("transactions") : []).filter(function (t) {
+        return t.isTip && t.employeeId === employeeId && t.date >= cutoff && t.date >= range.start && t.date <= range.end;
+      }).sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+      var total = Math.round(items.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0) * 100) / 100;
+      return { total: total, items: items };
+    },
+
     // Divide a comissão de um atendimento concluído entre o profissional
     // principal e o assistente (quando houver). O "pote" do principal é
     // sempre appt.price * taxaPrincipal/100 — a taxa vem de appt.commissionPercent

@@ -102,27 +102,6 @@
     return _commCatId;
   }
 
-  // Gorjetas (Agenda → Fechar Conta, 09/09/2026) — separadas da comissão de
-  // propósito (não passam por Utils.apptCommissionSplit nem entram em
-  // "devido"/"pago" acima); só um KPI informativo à parte, somando o que já
-  // foi registrado de gorjeta para este profissional no período em
-  // exibição. A categoria "Gorjetas" é criada automaticamente pela Agenda
-  // no primeiro uso — aqui só faz leitura (se ainda não existe, soma 0).
-  var _gorjetaCatId;
-  function gorjetaCatId() {
-    if (_gorjetaCatId !== undefined) return _gorjetaCatId;
-    var c = DB.findOne("categories", function (x) { return x.name === "Gorjetas" && x.type === "despesa"; });
-    _gorjetaCatId = c ? c.id : null;
-    return _gorjetaCatId;
-  }
-  function tipsReceivedFor(employeeId, range) {
-    var catId = gorjetaCatId();
-    if (!catId) return 0;
-    return sum(DB.all("transactions").filter(function (t) {
-      return t.type === "despesa" && t.employeeId === employeeId && t.categoryId === catId && t.date >= range.start && t.date <= range.end;
-    }).map(function (t) { return t.amount; }));
-  }
-
   function lastDayOfMonth(monthKey) {
     var y = parseInt(monthKey.slice(0, 4), 10), m = parseInt(monthKey.slice(5, 7), 10);
     var d = new Date(y, m, 0); // dia 0 do mês seguinte = último dia deste mês
@@ -266,7 +245,10 @@
     var bonuses = bonusesFor(employeeId, range);
     var bonusTotal = round2(sum(bonuses.map(function (b) { return b.amount; })));
     var consumo = window.Consumo ? Consumo.deductionForRange(employeeId, range) : { total: 0, items: [] };
-    var devido = round2(baseComissao + bonusTotal - consumo.total - parceriaCostTotal);
+    // Gorjetas (23/10/2026): repassadas 100% ao profissional, dentro do devido.
+    var tips = Utils.tipsForRange(employeeId, range);
+    var tipTotal = tips.total;
+    var devido = round2(baseComissao + bonusTotal + tipTotal - consumo.total - parceriaCostTotal);
     // "Já Recebido" soma todo pagamento de comissão que pertence ao período
     // em exibição — mesmo critério de comissoes.js (computeRows): quando o
     // período visto é "o mês" (De = dia 1, Até = fim do mês ou hoje, se o
@@ -297,14 +279,14 @@
       var key = s ? s.name : "Outro";
       byService[key] = (byService[key] || 0) + Utils.apptCommissionSplit(a, e).mainCommission;
     });
-    var tipsReceived = round2(tipsReceivedFor(employeeId, range));
+    var tipsReceived = tipTotal;
     return {
       employee: e, appointments: appointments, appointmentsAsAssistant: appointmentsAsAssistant, services: services, clients: clients, employeesAll: employeesAll,
       serviceRevenue: serviceRevenue, baseComissao: baseComissao, mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
       assistantDeductionTotal: assistantDeductionTotal, assistantDeductionItems: assistantDeductionItems,
       parceriaCostTotal: parceriaCostTotal, parceriaCostItems: parceriaCostItems,
       bonuses: bonuses, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
-      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService, tipsReceived: tipsReceived
+      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService, tipsReceived: tipsReceived, tipItems: tips.items
     };
   }
 
@@ -346,7 +328,9 @@
     var bonuses = DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && b.month === monthKey; });
     var bonusTotal = round2(sum(bonuses.map(function (b) { return b.amount; })));
     var consumo = (window.Consumo ? Consumo.deductionFor(employeeId, monthKey) : { total: 0, items: [] });
-    var devido = round2(baseComissao + bonusTotal - consumo.total - parceriaCostTotal);
+    // Gorjetas do mês (23/10/2026) — mesma regra do cálculo do período.
+    var monthTipTotal = Utils.tipsForRange(employeeId, { start: monthKey + "-01", end: lastDayOfMonth(monthKey) }).total;
+    var devido = round2(baseComissao + bonusTotal + monthTipTotal - consumo.total - parceriaCostTotal);
     var pago = sum(DB.all("transactions").filter(function (t) {
       return t.type === "despesa" && t.employeeId === employeeId && t.categoryId === commissionCatId() && t.relatedMonth === monthKey;
     }).map(function (t) { return t.amount; }));
@@ -396,11 +380,13 @@
     if (data.assistantDeductionTotal > 0) {
       kpis.push(kpi("Desconto por Repasse a Assistente", "- " + Utils.fmtMoney(data.assistantDeductionTotal), "fa-user-group", "#c23b3b", "#fbe6e6"));
     }
-    // Gorjetas (09/09/2026): separadas da comissão, só um KPI informativo à
-    // parte — só aparece quando há algo a mostrar, para não poluir a tela
-    // de quem nunca recebeu gorjeta.
+    // Gorjetas (regra de 23/10/2026): o cliente paga tudo ao salão e a gorjeta
+    // é repassada 100% ao profissional — já está SOMADA na "Comissão do
+    // Período" acima; este KPI mostra quanto dela veio de gorjetas. Só aparece
+    // quando há algo a mostrar.
     if (data.tipsReceived > 0) {
-      kpis.push(kpi("Gorjetas Recebidas", Utils.fmtMoney(data.tipsReceived), "fa-hand-holding-dollar", "#6d5efc", "#ece9ff"));
+      kpis.push(kpi("Gorjetas (já inclusas na comissão)", Utils.fmtMoney(data.tipsReceived), "fa-hand-holding-dollar", "#6d5efc", "#ece9ff",
+        "Gorjetas que clientes deixaram para você no período. Vão 100% para você, sem percentual do salão, e já estão somadas ao valor de \"Comissão do Período\"."));
     }
     document.getElementById("ec-summary").innerHTML = kpis.join("");
 
@@ -659,6 +645,26 @@
             return '<tr><td>' + Utils.escapeHtml(b.description) + '</td><td>' + tipoLabel + '</td><td class="text-right text-num font-bold ' + valClass + '">' + valText + '</td></tr>';
           }).join("") + '</tbody>' +
           '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="2">Subtotal</td><td class="text-right text-num">' + Utils.fmtMoney(data.bonusTotal) + '</td></tr></tfoot>' +
+          '</table></div>';
+      }
+    }
+
+    // gorjetas do período (repassadas 100%, já somadas ao total devido)
+    var tipsEl = document.getElementById("ec-tips");
+    if (tipsEl) {
+      if (!data.tipItems || !data.tipItems.length) {
+        tipsEl.innerHTML = '';
+        tipsEl.style.display = "none";
+      } else {
+        tipsEl.style.display = "";
+        tipsEl.innerHTML = '<div class="card-header"><div><h3>Gorjetas do Período</h3><div class="card-header-sub">Repassadas 100% a você, sem percentual do salão — já somadas ao total devido</div></div></div>' +
+          '<div class="table-wrap"><table class="data-table">' +
+          '<thead><tr><th>Data</th><th>Cliente</th><th class="text-right">Gorjeta</th></tr></thead>' +
+          '<tbody>' + data.tipItems.map(function (t) {
+            var c = data.clients.find(function (x) { return x.id === t.clientId; });
+            return '<tr><td>' + Utils.fmtDate(t.date) + '</td><td>' + Utils.escapeHtml(c ? c.name : "-") + '</td><td class="text-right text-num font-bold text-success">+ ' + Utils.fmtMoney(t.amount) + '</td></tr>';
+          }).join("") + '</tbody>' +
+          '<tfoot><tr style="font-weight:800;border-top:1px solid var(--border-color);"><td colspan="2">Total</td><td class="text-right text-num">' + Utils.fmtMoney(data.tipsReceived) + '</td></tr></tfoot>' +
           '</table></div>';
       }
     }
