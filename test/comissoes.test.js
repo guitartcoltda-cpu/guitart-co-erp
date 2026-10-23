@@ -506,6 +506,16 @@ function setCustomRange(start, end) {
     var row = anaRow();
     check("K4: corte 11-20 soma só a gorjeta do dia 20 (60 + 10 = 70)", row && moneyIn(cellText(row, 6), 70), row && cellText(row, 6));
   })();
+  // K4b: mesmo com ajuste líquido NEGATIVO (caso real do Francisco: desconto grande + gorjeta) a nota de gorjeta aparece.
+  tables.commissionBonuses.push({ id: "bNeg", employeeId: "emp1", month: currentMonthKey, kind: "desconto", description: "Desconto grande", amount: -500, refValue: null, refPercent: null });
+  setCustomRange(fullMonthStart, fullMonthEnd);
+  await flush();
+  (function () {
+    var row = anaRow();
+    var t = row ? cellText(row, 5) : "";
+    check("K4b: ajuste líquido negativo continua mostrando 'inclui R$ 50,00 de gorjeta'", /-\s*R\$/.test(t) && t.indexOf("gorjeta") !== -1 && t.indexOf(Utils.fmtMoney(50)) !== -1, t);
+  })();
+  tables.commissionBonuses = tables.commissionBonuses.filter(function (b) { return b.id !== "bNeg"; });
   // Volta o corte ao padrão: nenhuma dessas gorjetas (todas antes de 23/10/2026, ou de meses de teste) pode contar.
   Utils.TIP_COMMISSION_START = "2099-01-01";
   setCustomRange(fullMonthStart, fullMonthEnd);
