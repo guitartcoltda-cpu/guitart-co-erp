@@ -716,11 +716,12 @@
         if (Math.abs(netAdjust) < 0.005) {
           adjustHtml = '<span class="small text-muted">—</span>';
         } else if (netAdjust > 0) {
-          adjustHtml = '<span class="text-num font-bold text-success">+' + Utils.fmtMoney(netAdjust) + '</span>' +
-            (r.tipTotal > 0.005 ? '<div class="small text-muted">inclui ' + Utils.fmtMoney(r.tipTotal) + ' de gorjeta</div>' : '');
+          adjustHtml = '<span class="text-num font-bold text-success">+' + Utils.fmtMoney(netAdjust) + '</span>';
         } else {
           adjustHtml = '<span class="text-num font-bold text-danger">-' + Utils.fmtMoney(Math.abs(netAdjust)) + '</span>';
         }
+        // a nota de gorjeta vale para qualquer sinal do ajuste líquido (ex.: bônus negativo + gorjeta)
+        if (r.tipTotal > 0.005) adjustHtml += '<div class="small text-muted">inclui ' + Utils.fmtMoney(r.tipTotal) + ' de gorjeta</div>';
         return '<tr>' +
           '<td class="com-col-check">' + (r.saldo > 0.01 ? '<input type="checkbox" class="com-row-check" data-id="' + r.employee.id + '"' + (selectedIds[r.employee.id] ? " checked" : "") + '>' : "") + '</td>' +
           '<td><div class="flex items-center gap-8">' + Utils.avatarHtml(r.employee.name, r.employee.photoDataUrl) +
