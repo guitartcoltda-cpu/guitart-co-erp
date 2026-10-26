@@ -318,6 +318,49 @@ function dataRequests(server) { return server.reqs.filter(r => r.op === "select"
     ok(server.get("products", "p1").currentStock === 7, "e não é aplicado duas vezes");
   }
 
+
+  // ---------- 13. Atualização ao vivo (DB.refresh) ----------
+  {
+    const server = makeServer(); seed(server);
+    const dev = makeDevice();
+    const w = await openPage(dev, server); await wait(80);
+    // nada mudou: nenhuma tabela avisada
+    let ch = await w.DB.refresh(["appointments", "clients"], { withCount: true });
+    ok(Array.isArray(ch) && ch.length === 0, "sem mudanças: nenhuma tabela é avisada (" + JSON.stringify(ch) + ")");
+    // minha própria gravação não conta como mudança de outra pessoa
+    w.DB.insert("appointments", { id: "mine1", date: "2026-10-30", clientId: "c1", status: "agendado" });
+    await until(() => w.DB.pendingCount() === 0);
+    ch = await w.DB.refresh(["appointments"], { withCount: true });
+    ok(ch.length === 0, "a própria gravação, ao voltar do servidor, não dispara redesenho (" + JSON.stringify(ch) + ")");
+    // outra pessoa cria e edita
+    server.put("appointments", { id: "other1", date: "2026-10-30", clientId: "c2", status: "agendado" });
+    server.put("appointments", { id: "a0", date: "2026-10-20", clientId: "c0", note: "mexeu", updatedAt: "2026-10-26T11:00:00Z" });
+    ch = await w.DB.refresh(["appointments", "clients"], { withCount: false });
+    ok(ch.length === 1 && ch[0] === "appointments", "mudança de outra pessoa é detectada só na tabela certa (" + JSON.stringify(ch) + ")");
+    ok(!!w.DB.get("appointments", "other1") && w.DB.get("appointments", "a0").note === "mexeu", "registro novo e editado já estão no cache");
+    // exclusão por outra pessoa (precisa da contagem)
+    server.del("appointments", "a3");
+    ch = await w.DB.refresh(["appointments"], { withCount: false });
+    ok(!!w.DB.get("appointments", "a3"), "sem contagem, a exclusão ainda não é percebida (esperado)");
+    ch = await w.DB.refresh(["appointments"], { withCount: true });
+    ok(!w.DB.get("appointments", "a3") && ch.indexOf("appointments") !== -1, "com a contagem, a exclusão de outra pessoa é percebida");
+    // configurações
+    server.put("settings", { id: "settings", companyName: "Guitart 2" });
+    ch = await w.DB.refresh(["settings"]);
+    ok(w.DB.getSettings().companyName === "Guitart 2" && ch.indexOf("settings") !== -1, "configurações alteradas por outra pessoa chegam");
+    // pendência local não é atropelada por leitura ao vivo
+    server.writesDown = true;
+    w.DB.update("appointments", "other1", { note: "minha edição offline" });
+    server.put("appointments", { id: "other1", date: "2026-10-30", clientId: "c2", note: "versão do servidor", status: "agendado" });
+    await w.DB.refresh(["appointments"], { withCount: false });
+    ok(w.DB.get("appointments", "other1").note === "minha edição offline", "alteração local pendente não é sobrescrita pela atualização ao vivo");
+    server.writesDown = false; w.DB.flushPending();
+    ok(await until(() => (server.get("appointments", "other1") || {}).note === "minha edição offline", 4000), "e depois chega ao servidor");
+    // só persiste o que mudou e continua funcionando em nova abertura
+    const w2 = await openPage(dev, server);
+    ok(!!w2.DB.get("appointments", "mine1") && !!w2.DB.get("appointments", "other1"), "nova abertura enxerga tudo");
+  }
+
   console.log("\n" + passed + " passaram, " + failed + " falharam");
   process.exit(failed ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
