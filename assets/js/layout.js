@@ -480,6 +480,11 @@
     document.body.appendChild(btn);
   }
 
+  // 26/10/2026: se a tela abriu com a última cópia salva no aparelho (conexão
+  // lenta) e a sincronização terminou depois, o db.js avisa por este evento —
+  // aparece o mesmo ícone discreto de "atualizar"; nada recarrega sozinho.
+  global.addEventListener("salao:data-updated", function () { showLiveSyncIcon(); });
+
   function startLiveSync() {
     if (!global.DB || !DB.hasRemote || !DB.hasRemote()) return; // sem Supabase configurado: nada a checar
     if (liveSyncTimer) return; // proteção contra dupla inicialização

@@ -48,8 +48,54 @@
     console.error("Supabase JS SDK não encontrado — verifique se o <script> do CDN do Supabase está incluído ANTES de db.js.");
   } else {
     supa = global.supabase.createClient(ENV.SUPABASE_URL, ENV.SUPABASE_ANON_KEY, {
-      auth: { persistSession: false }
+      auth: { persistSession: false },
+      global: { fetch: resilientFetch }
     });
+  }
+
+  // 26/10/2026 — Toda requisição ao Supabase passa por aqui. Antes não havia
+  // limite de tempo: numa rede de celular ruim a busca simplesmente ficava
+  // pendurada (tela em branco).
+  // - Leituras (GET/HEAD): limite de 25s para o servidor começar a responder;
+  //   se estourar, tenta mais uma vez (35s). Erros de rede e 5xx já são
+  //   repetidos pela própria biblioteca do Supabase (até 3 vezes, com espera).
+  // - Gravações: 1 tentativa com limite de 30s — a repetição das gravações é
+  //   feita pela FILA de alterações (mais abaixo), que as guarda no aparelho.
+  //   (Não repete aqui para nunca aplicar duas vezes uma gravação "relativa".)
+  // - Gravações pequenas usam keepalive: o navegador termina o envio mesmo se
+  //   a pessoa trocar de tela logo em seguida.
+  function resilientFetch(input, init) {
+    init = init || {};
+    var method = String(init.method || "GET").toUpperCase();
+    var isRead = method === "GET" || method === "HEAD";
+    var tries = 0;
+    function attempt() {
+      tries++;
+      var headerMs = isRead ? (tries === 1 ? 25000 : 35000) : 30000;
+      var ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      var opts = Object.assign({}, init);
+      var timedOut = false;
+      if (ctrl) {
+        var outer = init.signal;
+        if (outer) {
+          if (outer.aborted) ctrl.abort();
+          else outer.addEventListener("abort", function () { ctrl.abort(); });
+        }
+        opts.signal = ctrl.signal;
+      }
+      if (!isRead && typeof init.body === "string" && init.body.length < 20000) opts.keepalive = true;
+      var timer = ctrl ? setTimeout(function () { timedOut = true; ctrl.abort(); }, headerMs) : null;
+      return global.fetch(input, opts).then(function (res) {
+        if (timer) clearTimeout(timer);
+        if (ctrl) setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 240000); // teto para o corpo da resposta
+        return res;
+      }, function (err) {
+        if (timer) clearTimeout(timer);
+        if (isRead && timedOut && tries < 2) return attempt();
+        throw err;
+      });
+    }
+    return attempt();
   }
 
   function emptyDB() {
@@ -224,16 +270,53 @@
   // Supabase regravar tudo no formato novo, por tabela.
   var IDB_LEGACY_KEY = "db_mirror";
 
+  var _idbPromise = null;
   function idbOpen() {
-    return new Promise(function (resolve, reject) {
+    if (_idbPromise) return _idbPromise;
+    _idbPromise = new Promise(function (resolve, reject) {
       if (!global.indexedDB) { reject(new Error("IndexedDB indisponível neste navegador")); return; }
       var req = global.indexedDB.open(IDB_NAME, 1);
       req.onupgradeneeded = function () {
         if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
       };
-      req.onsuccess = function () { resolve(req.result); };
+      req.onsuccess = function () {
+        var db = req.result;
+        db.onclose = function () { _idbPromise = null; };
+        db.onversionchange = function () { try { db.close(); } catch (e) {} _idbPromise = null; };
+        resolve(db);
+      };
       req.onerror = function () { reject(req.error); };
     });
+    _idbPromise.catch(function () { _idbPromise = null; });
+    return _idbPromise;
+  }
+
+  // Marcadores da sincronização incremental ("cur:<tabela>") e fila de
+  // alterações pendentes ("ob:<tabela>:<id>") — ver as seções mais abaixo.
+  // Ficam no mesmo store "kv" (chaves próprias; a leitura do espelho acima
+  // só pega as chaves das tabelas, então nada muda para ela).
+  function idbGetSyncState() {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve) {
+        var out = { cursors: {}, outbox: [] };
+        try {
+          var tx = db.transaction(IDB_STORE, "readonly");
+          var store = tx.objectStore(IDB_STORE);
+          TABLES.forEach(function (t) {
+            var rq = store.get("cur:" + t);
+            rq.onsuccess = function () { if (rq.result && typeof rq.result === "object") out.cursors[t] = rq.result; };
+          });
+          var cur = store.openCursor(global.IDBKeyRange.bound("ob:", "ob:\uffff"));
+          cur.onsuccess = function (ev) {
+            var c = ev.target.result;
+            if (c) { out.outbox.push(c.value); c.continue(); }
+          };
+          tx.oncomplete = function () { resolve(out); };
+          tx.onerror = function () { resolve(out); };
+          tx.onabort = function () { resolve(out); };
+        } catch (e) { resolve(out); }
+      });
+    }).catch(function () { return { cursors: {}, outbox: [] }; });
   }
 
   // Lê todas as tabelas (uma chave por tabela) numa única transação e monta
@@ -321,7 +404,9 @@
   function persistLocalMirror(tables) {
     var list = Array.isArray(tables) ? tables : [tables];
     var map = {};
-    list.forEach(function (t) { map[t] = _cache[t]; });
+    // O marcador de sincronização vai gravado junto, na mesma transação, com
+    // os dados que ele descreve (nunca um sem o outro).
+    list.forEach(function (t) { map[t] = _cache[t]; map["cur:" + t] = _cursors[t] || null; });
     idbSetTables(map).catch(function (e) {
       console.error("Erro ao salvar cópia local (IndexedDB) dos dados — tentando reserva enxuta no localStorage", e);
       try {
@@ -394,24 +479,384 @@
 
   var _readyResolve;
   var readyPromise = new Promise(function (resolve) { _readyResolve = resolve; });
+  var _readyDone = false;
+  function resolveReady() { if (_readyDone) return; _readyDone = true; _readyResolve(); }
 
   function rowsToTableData(table, rows) {
     if (table === "settings") return rows.length ? rows[0].data : {};
     return rows.map(function (r) { return r.data; });
   }
 
-  // O Supabase/PostgREST limita cada resposta a no máximo 1000 linhas por
-  // padrão. Tabelas como "appointments" já passam disso (ex.: histórico
-  // migrado + agendamentos novos), então uma busca sem paginação simplesmente
-  // vinha truncada — faltavam registros no cache local sem nenhum aviso.
-  // Esta função busca todas as páginas (1000 em 1000) até a última vir
-  // incompleta, e só então considera que pegou tudo.
+  // ---------------------------------------------------------------
+  // Mini-avisos na tela (26/10/2026). O sistema não tinha NENHUM sinal
+  // visível quando a internet estava lenta: a tela de carregamento some
+  // sozinha depois de 8s e, se os dados ainda não chegaram, o que sobra é
+  // uma página vazia (foi exatamente o que apareceu no iPhone: Agenda em
+  // branco). Estes avisos usam só estilo inline (funcionam em qualquer
+  // página, sem depender de CSS) e ficam por cima da tela de carregamento.
+  // ---------------------------------------------------------------
+  function ui(fn) {
+    try {
+      if (!global.document) return;
+      if (global.document.body) fn(global.document);
+      else global.document.addEventListener("DOMContentLoaded", function () { try { fn(global.document); } catch (e) {} });
+    } catch (e) {}
+  }
+
+  var _barText = "";
+  function showBar(id, text, bg, withButton, onButton) {
+    ui(function (doc) {
+      var el = doc.getElementById(id);
+      if (!el) {
+        el = doc.createElement("div");
+        el.id = id;
+        el.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:10001;max-width:520px;margin:0 auto;" +
+          "padding:10px 14px;border-radius:10px;font:14px/1.35 system-ui,-apple-system,Segoe UI,sans-serif;color:#fff;" +
+          "box-shadow:0 6px 24px rgba(0,0,0,.35);display:flex;align-items:center;gap:10px;";
+        var span = doc.createElement("span");
+        span.style.flex = "1";
+        el.appendChild(span);
+        var btn = doc.createElement("button");
+        btn.type = "button";
+        btn.style.cssText = "border:0;border-radius:8px;padding:7px 12px;font:inherit;font-weight:600;cursor:pointer;background:#fff;color:#111;";
+        btn.textContent = "Tentar agora";
+        btn.style.display = "none";
+        el.appendChild(btn);
+        doc.body.appendChild(el);
+      }
+      el.style.background = bg;
+      el.firstChild.textContent = text;
+      var b = el.lastChild;
+      b.style.display = withButton ? "" : "none";
+      b.onclick = onButton || null;
+    });
+  }
+  function hideBar(id) {
+    ui(function (doc) { var el = doc.getElementById(id); if (el && el.parentNode) el.parentNode.removeChild(el); });
+  }
+
+  // Tela cheia, só quando NÃO há nenhuma cópia local dos dados e o servidor
+  // não respondeu: melhor avisar com clareza do que mostrar uma agenda vazia.
+  function showBlocker(text, onRetry) {
+    ui(function (doc) {
+      var el = doc.getElementById("salao-boot-blocker");
+      if (!el) {
+        el = doc.createElement("div");
+        el.id = "salao-boot-blocker";
+        el.style.cssText = "position:fixed;inset:0;z-index:10002;background:#0c0c0d;color:#fff;display:flex;flex-direction:column;" +
+          "align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;font:16px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;";
+        var p = doc.createElement("div");
+        p.style.cssText = "max-width:420px;";
+        el.appendChild(p);
+        var btn = doc.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Tentar agora";
+        btn.style.cssText = "border:0;border-radius:10px;padding:11px 20px;font:inherit;font-weight:600;cursor:pointer;background:#0eb8d9;color:#04222a;";
+        el.appendChild(btn);
+        doc.body.appendChild(el);
+      }
+      el.firstChild.textContent = text;
+      el.lastChild.onclick = onRetry || null;
+    });
+  }
+  function hideBlocker() {
+    ui(function (doc) { var el = doc.getElementById("salao-boot-blocker"); if (el && el.parentNode) el.parentNode.removeChild(el); });
+  }
+
+  // ---------------------------------------------------------------
+  // Alterações pendentes (OUTBOX) — 26/10/2026.
+  //
+  // Incidente real (semana de 19–26/10): uma profissional fez um
+  // agendamento no celular e, ao conferir depois, ele tinha sumido. Causa:
+  // toda gravação era "dispare e esqueça" — a tela mostrava o agendamento
+  // (cache local), mas o envio ao servidor era uma requisição solta. Se a
+  // rede do celular falhasse nesse instante, ou a pessoa trocasse de tela /
+  // o navegador congelasse o app antes da resposta, o envio se perdia sem
+  // deixar rastro, e o próximo carregamento (que substitui a cópia local
+  // pelo que está no servidor) fazia o agendamento "desaparecer".
+  //
+  // Agora cada gravação entra primeiro numa FILA DURÁVEL no próprio
+  // aparelho (IndexedDB, uma chave por registro) e só sai dela quando o
+  // servidor confirma. Se a internet cair, a aba fechar ou o app for
+  // congelado, a fila continua lá: ela é reenviada sozinha (internet
+  // voltou, aba reaberta, a cada poucos segundos) e, enquanto não for,
+  // continua aparecendo na tela por cima do que veio do servidor.
+  // Regra de conflito = a mesma de sempre (última gravação vence); como a
+  // fila guarda o registro inteiro, reenviar é idempotente.
+  // ---------------------------------------------------------------
+  var OB_PREFIX = "ob:";
+  var _outbox = {};      // "tabela:id" -> { key, table, id, op, record, t, tries, sending, dead, fromIdb }
+  var _recent = {};      // "tabela:id" -> { table, id, record, sentAt } (enviados há pouco; protege contra leitura atrasada)
+  var RECENT_MS = 120000;
+  var _obSeq = 0;
+  var _obRetryTimer = null;
+  var _obBannerShown = false;
+
+  function obKey(table, id) { return table + ":" + id; }
+  function isPending(table, id) { return !!_outbox[obKey(table, id)]; }
+  function isRecentUpsert(table, id) {
+    var r = _recent[obKey(table, id)];
+    return !!(r && (Date.now() - r.sentAt) < RECENT_MS);
+  }
+
+  function idbObPut(e) {
+    idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put({ key: e.key, table: e.table, id: e.id, op: e.op, record: e.record, t: e.t }, OB_PREFIX + e.key);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+        tx.onabort = function () { reject(tx.error); };
+      });
+    }).catch(function (err) { console.warn("Não foi possível guardar a alteração pendente no aparelho (ela segue sendo enviada normalmente).", err); });
+  }
+  function idbObGet(key) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve) {
+        try {
+          var rq = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(OB_PREFIX + key);
+          rq.onsuccess = function () { resolve(rq.result || null); };
+          rq.onerror = function () { resolve(undefined); };
+        } catch (e) { resolve(undefined); }
+      });
+    }).catch(function () { return undefined; });
+  }
+  // Remove da fila local só se o que está guardado é a MESMA versão que foi
+  // enviada (se outra alteração do mesmo registro entrou no meio, ela fica).
+  function idbObDelete(key, t) {
+    idbOpen().then(function (db) {
+      var tx = db.transaction(IDB_STORE, "readwrite");
+      var store = tx.objectStore(IDB_STORE);
+      var rq = store.get(OB_PREFIX + key);
+      rq.onsuccess = function () {
+        if (!rq.result || rq.result.t === t) store.delete(OB_PREFIX + key);
+      };
+    }).catch(function () {});
+  }
+
+  function isTransientError(err) {
+    if (!err) return true;
+    var code = String(err.code || "");
+    var msg = String(err.message || err);
+    if (/fetch|network|timeout|timed out|abort|load failed|failed to|connection|ECONN|socket/i.test(msg)) return true;
+    if (!code) return true;
+    if (/^(08|53|57|PGRST000|PGRST001|PGRST002|PGRST003)/.test(code)) return true;
+    return false;
+  }
+
+  function sendUpsert(table, record) {
+    function check(res) { if (res && res.error) throw res.error; return true; }
+    var lightAtt = isLightAttachment(record.attachment);
+    var lightSelfie = table === "timeClockEntries" && isLightSelfie(record);
+    var out = record;
+    if (table === "timeClockEntries" && "hasSelfie" in out) {
+      out = Object.assign({}, out);
+      delete out.hasSelfie;
+    }
+    if (lightAtt || lightSelfie) {
+      // Busca o anexo/foto de verdade (com dataUrl) que já está salvo nesse
+      // registro no Supabase antes de gravar o resto — assim o registro
+      // "leve" que está na memória (sem o dataUrl) nunca sobrescreve/apaga
+      // o anexo ou a selfie reais. Se essa busca falhar, NÃO grava (antes,
+      // uma falha aqui gravava o anexo como vazio): a fila tenta de novo.
+      return Promise.resolve(supa.from(table).select("data").eq("id", out.id)).then(function (res) {
+        if (res.error) throw res.error;
+        var current = (res.data && res.data[0] && res.data[0].data) || null;
+        var merged = Object.assign({}, out);
+        if (lightAtt) merged.attachment = (current && current.attachment) || null;
+        if (lightSelfie) merged.selfieDataUrl = (current && current.selfieDataUrl) || null;
+        return supa.from(table).upsert({ id: merged.id, data: merged });
+      }).then(check);
+    }
+    return Promise.resolve(supa.from(table).upsert({ id: out.id, data: out })).then(check);
+  }
+
+  function sendDelete(table, id) {
+    return Promise.resolve(supa.from(table).delete().eq("id", id)).then(function (res) {
+      if (res && res.error) throw res.error;
+      return true;
+    });
+  }
+
+  function pendingCount() { return Object.keys(_outbox).length; }
+
+  function updatePendingBanner() {
+    var keys = Object.keys(_outbox);
+    if (!keys.length) {
+      if (_obBannerShown) {
+        _obBannerShown = false;
+        hideBar("salao-pending-bar");
+        if (global.Toast) global.Toast.show("Tudo salvo no servidor.", "success");
+      }
+      return;
+    }
+    var now = Date.now();
+    var slow = keys.some(function (k) {
+      var e = _outbox[k];
+      return e.tries > 0 || e.dead || (now - Math.floor(e.t / 1000)) > 8000;
+    });
+    if (!slow) return;
+    _obBannerShown = true;
+    var n = keys.length;
+    showBar("salao-pending-bar",
+      n + (n === 1 ? " alteração ainda não chegou" : " alterações ainda não chegaram") +
+      " ao servidor. Está guardada neste aparelho e será enviada sozinha — mantenha o sistema aberto e confira a internet.",
+      "#b45309", true, function () { flushAll(); });
+  }
+
+  function notifyPending() {
+    updatePendingBanner();
+    try { global.dispatchEvent(new global.CustomEvent("salao:pending", { detail: { count: pendingCount() } })); } catch (e) {}
+  }
+
+  function scheduleRetry() {
+    if (_obRetryTimer) return;
+    var maxTries = 0;
+    Object.keys(_outbox).forEach(function (k) { if (_outbox[k].tries > maxTries) maxTries = _outbox[k].tries; });
+    var delay = Math.min(30000, 2000 * Math.pow(2, Math.max(0, maxTries - 1)));
+    _obRetryTimer = setTimeout(function () { _obRetryTimer = null; flushAll(); }, delay);
+  }
+
+  function flushAll() {
+    Object.keys(_outbox).forEach(function (k) { _outbox[k].dead = false; pump(k); });
+  }
+
+  function markRecent(e) {
+    if (e.op !== "upsert") return;
+    _recent[e.key] = { table: e.table, id: e.id, record: e.record, sentAt: Date.now() };
+    var now = Date.now();
+    Object.keys(_recent).forEach(function (k) { if (now - _recent[k].sentAt > RECENT_MS) delete _recent[k]; });
+  }
+
+  function pump(key) {
+    var e = _outbox[key];
+    if (!e || e.sending || !supa) return;
+    e.sending = true;
+    var sentT = e.t;
+    // Entrada que veio do disco (aba anterior): confere antes de enviar se
+    // outra aba já enviou, ou se existe uma versão mais nova guardada.
+    var check = e.fromIdb ? idbObGet(key).then(function (stored) {
+      e.fromIdb = false;
+      if (stored === null) return "gone";
+      if (stored && stored.t > e.t) { e.op = stored.op; e.record = stored.record; e.t = stored.t; sentT = e.t; }
+      return "go";
+    }) : Promise.resolve("go");
+    check.then(function (state) {
+      if (state === "gone") return { skip: true };
+      var run = e.op === "delete" ? sendDelete(e.table, e.id) : sendUpsert(e.table, e.record);
+      return run.then(function () { return { ok: true }; }, function (err) { return { err: err }; });
+    }).then(function (r) {
+      e.sending = false;
+      if (r.skip || r.ok) {
+        if (e.t !== sentT) { pump(key); return; } // entrou uma versão mais nova no meio — envia ela também
+        delete _outbox[key];
+        if (r.ok) markRecent(e);
+        idbObDelete(key, sentT);
+        notifyPending();
+        return;
+      }
+      e.tries++;
+      if (!isTransientError(r.err) && e.tries >= 4) e.dead = true;
+      remoteFail(e.table, e.op === "delete" ? "excluir" : "salvar", r.err);
+      if (!e.dead) scheduleRetry();
+      notifyPending();
+    });
+  }
+
+  function queueWrite(op, table, record, id) {
+    if (!supa) return;
+    var rid = id != null ? id : record.id;
+    var key = obKey(table, rid);
+    var e = _outbox[key];
+    if (!e) e = _outbox[key] = { key: key, table: table, id: rid, tries: 0, sending: false, dead: false, fromIdb: false };
+    e.op = op;
+    e.record = op === "upsert" ? record : null;
+    e.t = Date.now() * 1000 + (++_obSeq % 1000);
+    e.dead = false;
+    idbObPut(e);
+    global.setTimeout(updatePendingBanner, 8500);
+    pump(key);
+  }
+
+  function loadOutbox(list) {
+    (list || []).forEach(function (v) {
+      if (!v || !v.key || TABLES.indexOf(v.table) === -1) return;
+      var cur = _outbox[v.key];
+      if (cur && cur.t >= v.t) return;
+      _outbox[v.key] = { key: v.key, table: v.table, id: v.id, op: v.op, record: v.record, t: v.t, tries: 0, sending: false, dead: false, fromIdb: true };
+    });
+  }
+
+  // Põe de volta, por cima do que veio do servidor, as alterações que ainda
+  // não foram confirmadas (e as confirmadas há instantes, caso a leitura do
+  // servidor tenha sido anterior à gravação).
+  function applyOverlay(t) {
+    var arr = _cache && _cache[t];
+    if (!Array.isArray(arr)) return;
+    function idxOf(id) { for (var i = 0; i < arr.length; i++) if (arr[i].id === id) return i; return -1; }
+    var now = Date.now();
+    Object.keys(_recent).forEach(function (k) {
+      var r = _recent[k];
+      if (r.table !== t || _outbox[k] || (now - r.sentAt) > RECENT_MS) return;
+      var i = idxOf(r.id);
+      if (i < 0) arr.push(r.record);
+      else if (String(arr[i].updatedAt || "") < String(r.record.updatedAt || "")) arr[i] = r.record;
+    });
+    Object.keys(_outbox).forEach(function (k) {
+      var e = _outbox[k];
+      if (e.table !== t) return;
+      var i = idxOf(e.id);
+      if (e.op === "delete") { if (i >= 0) arr.splice(i, 1); }
+      else if (i >= 0) arr[i] = e.record;
+      else arr.push(e.record);
+    });
+  }
+
+  global.addEventListener("online", function () { flushAll(); });
+  if (global.document) {
+    global.document.addEventListener("visibilitychange", function () {
+      if (!global.document.hidden && pendingCount()) flushAll();
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // Sincronização de leitura (boot) — 26/10/2026.
+  //
+  // Antes: a CADA tela aberta, baixava as 24 tabelas inteiras (~4 MB) e só
+  // então desenhava. No celular, em rede fraca, isso estourava: sem limite
+  // de tempo, sem nova tentativa, e a tela de carregamento sumia sozinha
+  // depois de 8s deixando a página em branco. Também era o que mais gastava
+  // a cota de tráfego (egress) do Supabase.
+  //
+  // Agora: a primeira vez (ou 1x por dia) baixa tudo e guarda, por tabela,
+  // um "marcador" (maior updated_at do servidor). Nas demais aberturas pede
+  // só o que mudou desde o marcador (+ uma contagem para detectar registros
+  // apagados/faltando). Resultado: poucos KB por tela. Cada tabela é tratada
+  // isoladamente (falha de uma não derruba as outras), toda requisição tem
+  // limite de tempo e nova tentativa, e a sincronização NUNCA escreve nada
+  // no servidor — é só leitura; apenas a fila de alterações acima escreve.
+  // ---------------------------------------------------------------
   var FETCH_PAGE_SIZE = 1000;
+  // Datas do Postgres vêm com microssegundos ("...11.123456+00:00"); alguns
+  // navegadores de celular só entendem 3 casas — normaliza antes de comparar.
+  function parseTs(s) {
+    var n = Date.parse(String(s).replace(/(\.\d{3})\d+/, "$1"));
+    return isNaN(n) ? 0 : n;
+  }
+  var FULL_RESYNC_MS = 24 * 3600 * 1000;
+  var DELTA_OVERLAP_MS = 120000;
+  var EARLY_READY_MS = 9000;
+  var _cursors = {};      // tabela -> { c: maior updated_at do servidor | null, f: ms da última carga completa }
+  var _hasMirror = {};
+  var _changed = {};
+  var _bootLight = false;
+
+  // O Supabase/PostgREST limita cada resposta a 1000 linhas; busca página a página.
   function fetchAllRows(src) {
     return new Promise(function (resolve, reject) {
       var acc = [];
       function fetchPage(offset) {
-        supa.from(src).select("data").range(offset, offset + FETCH_PAGE_SIZE - 1).then(function (res) {
+        Promise.resolve(supa.from(src).select("data").range(offset, offset + FETCH_PAGE_SIZE - 1)).then(function (res) {
           if (res.error) { reject(res.error); return; }
           var rows = res.data || [];
           acc = acc.concat(rows);
@@ -423,17 +868,222 @@
     });
   }
 
+  function fetchPaged(build) {
+    return new Promise(function (resolve, reject) {
+      var acc = [];
+      function page(offset) {
+        Promise.resolve().then(function () { return build(offset, offset + FETCH_PAGE_SIZE - 1); }).then(function (res) {
+          if (res.error) { reject(res.error); return; }
+          var rows = res.data || [];
+          acc = acc.concat(rows);
+          if (rows.length < FETCH_PAGE_SIZE) resolve(acc);
+          else page(offset + FETCH_PAGE_SIZE);
+        }).catch(reject);
+      }
+      page(0);
+    });
+  }
+
+  // Mesma "versão leve" que as views *_boot do banco entregam (sem o
+  // anexo/foto em base64) — aplicada nos registros que chegam pela tabela
+  // base na sincronização incremental, para o cache ficar sempre no mesmo formato.
+  function lightenRecord(table, rec) {
+    if (!rec || typeof rec !== "object") return rec;
+    if ((table === "transactions" || table === "occurrences" || table === "commissionPayouts") &&
+        rec.attachment && typeof rec.attachment === "object" && "dataUrl" in rec.attachment) {
+      var att = Object.assign({}, rec.attachment);
+      delete att.dataUrl;
+      rec = Object.assign({}, rec, { attachment: att });
+    }
+    if (table === "timeClockEntries" && "selfieDataUrl" in rec) {
+      var c = Object.assign({}, rec);
+      var had = !!c.selfieDataUrl;
+      delete c.selfieDataUrl;
+      if (had) c.hasSelfie = true;
+      rec = c;
+    }
+    return rec;
+  }
+
+  function serverMaxUpdated(t) {
+    return Promise.resolve().then(function () {
+      return supa.from(t).select("updated_at").order("updated_at", { ascending: false }).limit(1);
+    }).then(function (res) {
+      if (res.error) throw res.error;
+      return (res.data && res.data[0] && res.data[0].updated_at) || null;
+    });
+  }
+
+  function serverCount(t) {
+    return Promise.resolve().then(function () {
+      return supa.from(t).select("id", { count: "exact", head: true });
+    }).then(function (res) {
+      if (res.error) throw res.error;
+      return typeof res.count === "number" ? res.count : null;
+    });
+  }
+
+  function fetchIdList(t) {
+    return fetchPaged(function (a, b) {
+      return supa.from(t).select("id").order("id", { ascending: true }).range(a, b);
+    }).then(function (rows) { return rows.map(function (r) { return r.id; }); });
+  }
+
+  function fetchByIds(t, ids) {
+    var chunks = [];
+    for (var i = 0; i < ids.length; i += 50) chunks.push(ids.slice(i, i + 50));
+    return Promise.all(chunks.map(function (ch) {
+      return Promise.resolve(supa.from(t).select("id, data, updated_at").in("id", ch)).then(function (res) {
+        if (res.error) throw res.error;
+        return res.data || [];
+      });
+    })).then(function (parts) { return [].concat.apply([], parts); });
+  }
+
+  function mergeRows(t, rows) {
+    if (!rows.length) return false;
+    var arr = _cache[t];
+    var pos = {};
+    arr.forEach(function (r, i) { pos[r.id] = i; });
+    var changed = false;
+    rows.forEach(function (row) {
+      var rec = lightenRecord(t, row.data);
+      if (!rec || rec.id == null) return;
+      if (_outbox[obKey(t, rec.id)]) return; // alteração local ainda não confirmada vale mais
+      var i = pos[rec.id];
+      if (i === undefined) { pos[rec.id] = arr.length; arr.push(rec); } else arr[i] = rec;
+      changed = true;
+    });
+    return changed;
+  }
+
+  // Compara o que há no servidor com o cache local pelo conjunto de ids:
+  // tira do cache o que foi apagado por outra pessoa e busca o que falta.
+  // (Só mexe no cache local, nunca no servidor.)
+  function reconcileIds(t) {
+    return fetchIdList(t).then(function (ids) {
+      var local = _cache[t];
+      if (!ids.length && local.length > 5) return false; // resposta vazia suspeita: não apaga nada do cache
+      var set = {};
+      ids.forEach(function (i) { set[i] = true; });
+      var kept = local.filter(function (r) { return set[r.id] || isPending(t, r.id) || isRecentUpsert(t, r.id); });
+      var pruned = kept.length !== local.length;
+      _cache[t] = kept;
+      var have = {};
+      kept.forEach(function (r) { have[r.id] = true; });
+      var missing = ids.filter(function (i) {
+        var e = _outbox[obKey(t, i)];
+        return !have[i] && !(e && e.op === "delete");
+      });
+      if (!missing.length) return pruned;
+      return fetchByIds(t, missing).then(function (rows) { return mergeRows(t, rows) || pruned; });
+    });
+  }
+
+  function fullTable(t) {
+    var cursorP = t === "settings" ? Promise.resolve(null) : serverMaxUpdated(t).catch(function () { return undefined; });
+    return cursorP.then(function (cursor) {
+      var src = BOOT_VIEW[t] || t;
+      var p = fetchAllRows(src);
+      if (BOOT_VIEW[t]) {
+        // Se a view leve ainda não existir no banco, cai para a tabela
+        // inteira (mais pesado, mas nunca deixa o sistema sem dados).
+        p = p.catch(function (err) {
+          console.warn("View \"" + src + "\" indisponível — buscando a tabela \"" + t + "\" completa.", err);
+          return fetchAllRows(t);
+        });
+      }
+      return p.then(function (rows) {
+        var data = rowsToTableData(t, rows);
+        _cache[t] = data;
+        applyOverlay(t);
+        _cursors[t] = cursor === undefined ? null : { c: cursor, f: Date.now() };
+        _changed[t] = true;
+        if (OPTIONAL_TABLES[t]) delete _missingOptional[t];
+      });
+    });
+  }
+
+  function deltaTable(t, st) {
+    var cMs = st.c ? parseTs(st.c) : 0;
+    var since = cMs ? new Date(cMs - DELTA_OVERLAP_MS).toISOString() : null;
+    var rowsP = fetchPaged(function (a, b) {
+      var q = supa.from(t).select("id, data, updated_at");
+      if (since) q = q.gt("updated_at", since);
+      return q.order("updated_at", { ascending: true }).order("id", { ascending: true }).range(a, b);
+    });
+    return Promise.all([rowsP, serverCount(t)]).then(function (r) {
+      var rows = r[0], count = r[1];
+      var maxC = st.c;
+      rows.forEach(function (x) {
+        if (x.updated_at && (!maxC || parseTs(x.updated_at) > parseTs(maxC))) maxC = x.updated_at;
+      });
+      var changed = mergeRows(t, rows);
+      var after = count != null && count !== _cache[t].length ? reconcileIds(t) : Promise.resolve(false);
+      return after.then(function (rec) {
+        if (changed || rec || maxC !== st.c) {
+          _changed[t] = true;
+          _cursors[t] = { c: maxC, f: st.f };
+        }
+      });
+    });
+  }
+
+  function isMissingTableError(err) {
+    var code = String((err && err.code) || "");
+    var msg = String((err && err.message) || err || "");
+    return code === "PGRST205" || code === "42P01" || /does not exist|could not find the table|relation .* not/i.test(msg);
+  }
+
+  // Sincroniza UMA tabela; nunca rejeita (resolve true/false).
+  function syncOneTable(t) {
+    var st = _cursors[t];
+    var canDelta = _hasMirror[t] && st && st.f && (Date.now() - st.f) < FULL_RESYNC_MS && t !== "settings";
+    var p = canDelta ? deltaTable(t, st).catch(function (err) {
+      // Falha de rede/servidor fora do ar: repetir tudo "completo" só pioraria
+      // (mais espera, mais tráfego) — a tabela fica com a cópia local por ora.
+      if (isTransientError(err)) throw err;
+      console.warn("Sincronização incremental de \"" + t + "\" falhou — buscando a tabela completa.", err);
+      return fullTable(t);
+    }) : fullTable(t);
+    return p.then(function () { return true; }, function (err) {
+      if (OPTIONAL_TABLES[t] && isMissingTableError(err)) {
+        console.warn("Tabela opcional \"" + t + "\" indisponível no Supabase (rode o SQL de criação) — seguindo com lista vazia.", err);
+        _missingOptional[t] = true;
+        if (!_hasMirror[t]) _cache[t] = [];
+        return true;
+      }
+      console.warn("Falha ao sincronizar a tabela \"" + t + "\".", err);
+      return false;
+    });
+  }
+
+  function finishOk(allTables) {
+    if (!_cache.users || !_cache.users.length) _cache.users = emptyDB().users; // rede de segurança: nunca ficar sem usuário
+    var changed = Object.keys(_changed);
+    _changed = {};
+    if (changed.length) persistLocalMirror(changed);
+    if (allTables) { idbDeleteLegacy(); markBootCacheFresh(); }
+  }
+
+  function runSync(wanted) {
+    return Promise.all(wanted.map(function (t) {
+      return syncOneTable(t).then(function (ok) { return ok ? null : t; });
+    })).then(function (res) { return res.filter(Boolean); });
+  }
+
+  var _onOnline = null;
   function bootstrapOnline() {
-    // Cópia local de reserva: tenta o IndexedDB (cota grande, guarda tudo
-    // incluindo fotos/anexos); se não achar nada lá, cai para a reserva
-    // antiga e enxuta que possa existir no localStorage. Isso só é usado
-    // como ponto de partida — nada é desenhado na tela antes de DB.ready,
-    // então esse valor nunca aparece "errado" para quem está usando; ele
-    // só importa de verdade se a internet cair antes da busca abaixo
-    // terminar (ver o .catch mais adiante).
-    idbGetMirror().then(function (idbStored) {
+    _bootLight = !!(global.location && /(^|\/)login\.html$/.test(global.location.pathname || ""));
+    Promise.all([idbGetMirror(), idbGetSyncState()]).then(function (arr) {
+      var idbStored = arr[0];
+      var state = arr[1] || { cursors: {}, outbox: [] };
       var stored = idbStored || loadLocalMirror();
       _cache = stored ? fillMissingTables(stored) : emptyDB();
+      _cursors = idbStored ? state.cursors : {};
+      TABLES.forEach(function (t) { _hasMirror[t] = !!(idbStored && t in idbStored); });
+      loadOutbox(state.outbox);
+      TABLES.forEach(applyOverlay);
 
       if (!supa) {
         // Supabase não configurado/indisponível — segue com a última
@@ -442,60 +1092,105 @@
         if (global.Toast) {
           global.Toast.show("Sem conexão com o banco de dados — verifique a configuração do sistema.", "danger");
         }
-        _readyResolve();
+        resolveReady();
         return;
       }
+
+      // Alterações que ficaram pendentes de uma visita anterior: reenvia já.
+      flushAll();
 
       // Ver comentário do BOOT_CACHE_KEY acima: pula a busca no Supabase se
       // já temos um espelho completo (IndexedDB) e ele foi atualizado há
       // pouco, nesta mesma aba.
-      if (idbStored && (Date.now() - readBootCacheFreshAt()) < BOOT_CACHE_TTL_MS) {
-        _readyResolve();
+      if (!_bootLight && idbStored && (Date.now() - readBootCacheFreshAt()) < BOOT_CACHE_TTL_MS) {
+        resolveReady();
         return;
       }
 
-      var fetches = TABLES.map(function (t) {
-        var src = BOOT_VIEW[t] || t;
-        // Se a view leve ainda não existir no banco, cai para a tabela
-        // inteira (mais pesado, mas nunca deixa o sistema sem dados).
-        var pending = fetchAllRows(src);
-        if (BOOT_VIEW[t]) {
-          pending = pending.catch(function (err) {
-            console.warn("View \"" + src + "\" indisponível — buscando a tabela \"" + t + "\" completa.", err);
-            return fetchAllRows(t);
-          });
-        }
-        return pending.then(function (rows) {
-          if (OPTIONAL_TABLES[t]) delete _missingOptional[t];
-          return { table: t, rows: rows };
-        }).catch(function (err) {
-          if (!OPTIONAL_TABLES[t]) throw err;
-          console.warn("Tabela opcional \"" + t + "\" indisponível no Supabase (rode o SQL de criação) — seguindo com lista vazia.", err);
-          _missingOptional[t] = true;
-          return { table: t, rows: [] };
-        });
-      });
+      var wanted = _bootLight ? ["users", "settings"] : TABLES.slice();
+      var firstTry = true;
+      var slowTimer = null;
+      var earlyTimer = null;
+      var allMirrored = TABLES.every(function (t) { return OPTIONAL_TABLES[t] || _hasMirror[t]; });
 
-      Promise.all(fetches).then(function (results) {
-        var fresh = {};
-        results.forEach(function (r) { fresh[r.table] = rowsToTableData(r.table, r.rows); });
-        fillMissingTables(fresh);
-        // rede de segurança: nunca ficar sem usuário nenhum cadastrado
-        if (!fresh.users || !fresh.users.length) fresh.users = emptyDB().users;
-        _cache = fresh;
-        persistLocalMirror(TABLES);
-        idbDeleteLegacy();
-        markBootCacheFresh();
-        _readyResolve();
-      }).catch(function (err) {
-        console.error("Falha ao sincronizar com o Supabase — usando a última cópia salva neste aparelho.", err);
-        if (global.Toast) {
-          global.Toast.show("Sem conexão com o servidor — mostrando a última cópia salva neste aparelho.", "danger");
+      function done(failedList) {
+        if (slowTimer) clearTimeout(slowTimer);
+        if (earlyTimer) clearTimeout(earlyTimer);
+        hideBar("salao-slow-bar");
+        hideBlocker();
+        if (_onOnline) { global.removeEventListener("online", _onOnline); _onOnline = null; }
+        var late = _readyDone;
+        finishOk(!failedList.length && !_bootLight);
+        if (failedList.length && !_bootLight) {
+          if (global.Toast && !late) {
+            global.Toast.show("Conexão instável — mostrando a última cópia salva neste aparelho. O sistema continua tentando atualizar sozinho.", "danger");
+          }
+          retryInBackground(failedList, 1);
         }
-        _readyResolve();
-      });
+        resolveReady();
+        if (late && !_bootLight) notifyUpdated();
+      }
+
+      function criticalMissing(failedList) {
+        return failedList.filter(function (t) { return !_hasMirror[t] && !OPTIONAL_TABLES[t]; });
+      }
+
+      function attempt(list, n) {
+        runSync(list).then(function (failedList) {
+          if (!failedList.length || _bootLight) { done(failedList); return; }
+          var critical = criticalMissing(failedList);
+          if (!critical.length) { done(failedList); return; }
+          // Sem nenhuma cópia local dessas tabelas e o servidor não respondeu:
+          // não mostra tela vazia; avisa e tenta de novo (sem parar).
+          var wait = Math.min(15000, 2000 * Math.pow(2, Math.min(n, 3)));
+          showBlocker("Não conseguimos carregar os dados do salão agora (internet lenta ou instável). Tentando de novo automaticamente…", function () {
+            clearTimeout(retryTimer); attempt(failedList, 0);
+          });
+          var retryTimer = setTimeout(function () { attempt(failedList, n + 1); }, wait);
+          if (_onOnline) global.removeEventListener("online", _onOnline);
+          _onOnline = function () { global.removeEventListener("online", _onOnline); _onOnline = null; clearTimeout(retryTimer); attempt(failedList, 0); };
+          global.addEventListener("online", _onOnline);
+        });
+      }
+
+      // Conexão lenta: depois de alguns segundos, avisa; e, se já existe uma
+      // cópia local completa, abre com ela em vez de deixar a tela em branco
+      // (a sincronização continua em segundo plano e o ícone de "atualizar"
+      // aparece quando terminar).
+      if (!_bootLight) {
+        slowTimer = setTimeout(function () {
+          if (!_readyDone) showBar("salao-slow-bar", "Conexão lenta — ainda carregando os dados do salão…", "#334155", false);
+        }, 3500);
+        if (allMirrored) {
+          earlyTimer = setTimeout(function () {
+            if (_readyDone) return;
+            hideBar("salao-slow-bar");
+            if (global.Toast) global.Toast.show("Conexão lenta — abrindo com a última cópia salva neste aparelho. Atualizando em segundo plano.", "danger");
+            resolveReady();
+          }, EARLY_READY_MS);
+        }
+      }
+      attempt(wanted, 0);
     });
   }
+
+  function notifyUpdated() {
+    try { global.dispatchEvent(new global.CustomEvent("salao:data-updated")); } catch (e) {}
+  }
+
+  // Tentativas em segundo plano para as tabelas que falharam, quando já
+  // existe cópia local delas (a tela já está aberta).
+  function retryInBackground(list, n) {
+    if (n > 8) return;
+    setTimeout(function () {
+      runSync(list).then(function (failed) {
+        if (_changedAny()) { persistLocalMirror(Object.keys(_changed)); _changed = {}; notifyUpdated(); }
+        if (failed.length) retryInBackground(failed, n + 1);
+        else markBootCacheFresh();
+      });
+    }, Math.min(60000, 5000 * n));
+  }
+  function _changedAny() { return Object.keys(_changed).length > 0; }
 
   bootstrapOnline();
 
@@ -557,7 +1252,7 @@
     var key = table + ":" + action;
     if (global.Toast && !_warnedRecently[key]) {
       _warnedRecently[key] = true;
-      global.Toast.show("Alteração salva neste aparelho, mas houve falha ao sincronizar com o servidor. Verifique sua internet.", "danger");
+      global.Toast.show("Sem conexão com o servidor agora. Sua alteração ficou guardada neste aparelho e será enviada sozinha quando a internet voltar — não limpe os dados do navegador.", "danger");
       setTimeout(function () { _warnedRecently[key] = false; }, 15000);
     }
   }
@@ -583,35 +1278,10 @@
     return !!(record && record.hasSelfie && !("selfieDataUrl" in record));
   }
 
+  // Envio de uma gravação: entra na FILA durável (ver "Alterações pendentes"
+  // mais acima) e é enviada na hora; se falhar, a fila reenvia sozinha.
   function remoteUpsert(table, record) {
-    if (!supa) return;
-    var lightAtt = isLightAttachment(record.attachment);
-    var lightSelfie = table === "timeClockEntries" && isLightSelfie(record);
-    var out = record;
-    if (table === "timeClockEntries" && "hasSelfie" in out) {
-      out = Object.assign({}, out);
-      delete out.hasSelfie;
-    }
-    if (lightAtt || lightSelfie) {
-      // Busca o anexo/foto de verdade (com dataUrl) que já está salvo nesse
-      // registro no Supabase antes de gravar o resto — assim o registro
-      // "leve" que está na memória (sem o dataUrl) nunca sobrescreve/apaga
-      // o anexo ou a selfie reais. Só acontece para registros que de fato
-      // têm anexo/foto (a maioria não tem, e nem entra nesse caminho).
-      supa.from(table).select("data").eq("id", out.id).then(function (res) {
-        var current = (res.data && res.data[0] && res.data[0].data) || null;
-        var merged = Object.assign({}, out);
-        if (lightAtt) merged.attachment = (current && current.attachment) || null;
-        if (lightSelfie) merged.selfieDataUrl = (current && current.selfieDataUrl) || null;
-        return supa.from(table).upsert({ id: merged.id, data: merged });
-      }).then(function (res) {
-        if (res && res.error) remoteFail(table, "salvar", res.error);
-      }).catch(function (err) { remoteFail(table, "salvar", err); });
-      return;
-    }
-    supa.from(table).upsert({ id: out.id, data: out }).then(function (res) {
-      if (res.error) remoteFail(table, "salvar", res.error);
-    }).catch(function (err) { remoteFail(table, "salvar", err); });
+    queueWrite("upsert", table, record);
   }
 
   // Busca só as selfies (um campo) de uma lista de marcações, em lotes, e as
@@ -667,10 +1337,7 @@
   }
 
   function remoteDelete(table, id) {
-    if (!supa) return;
-    supa.from(table).delete().eq("id", id).then(function (res) {
-      if (res.error) remoteFail(table, "excluir", res.error);
-    }).catch(function (err) { remoteFail(table, "excluir", err); });
+    queueWrite("delete", table, null, id);
   }
 
   // BUG CORRIGIDO (18/09/2026): usado pelo fluxo de Bater Ponto (ver
@@ -764,11 +1431,13 @@
   // trigger set_updated_at já existente no schema); se alguém gravou no
   // meio, busca de novo, do zero, e tenta de novo — em vez de gravar por
   // cima cegamente ou desistir.
-  function casMergeWrite(table, id, computePatch, attemptsLeft) {
+  function casMergeWrite(table, id, computePatch, attemptsLeft, netTries) {
     if (!supa) return Promise.resolve();
     attemptsLeft = attemptsLeft == null ? 6 : attemptsLeft;
+    netTries = netTries || 0;
+    var readFailed = false;
     return supa.from(table).select("data, updated_at").eq("id", id).then(function (res) {
-      if (res.error) throw res.error;
+      if (res.error) { readFailed = true; throw res.error; }
       var row = res.data && res.data[0];
       if (!row) return null; // registro ainda não existe no servidor — nada a mesclar aqui
       var server = row.data;
@@ -786,7 +1455,19 @@
         }
         throw new Error("Não foi possível gravar sem sobrepor uma alteração concorrente, mesmo após várias tentativas");
       });
-    }).catch(function (err) { remoteFail(table, "salvar", err); });
+    }, function (err) {
+      readFailed = true; throw err;
+    }).catch(function (err) {
+      // Falha na LEITURA (antes de qualquer gravação, ex.: sem sinal no
+      // celular): é seguro tentar de novo — nada foi aplicado ainda. Falha
+      // depois de enviar a gravação não é repetida aqui (o resultado é incerto
+      // e repetir poderia aplicar duas vezes uma soma/subtração de estoque).
+      if (readFailed && netTries < 3) {
+        return new Promise(function (r) { setTimeout(r, [2000, 5000, 12000][netTries]); })
+          .then(function () { return casMergeWrite(table, id, computePatch, attemptsLeft, netTries + 1); });
+      }
+      remoteFail(table, "salvar", err);
+    });
   }
 
   function remoteMergeField(table, id, field, transformFn) {
@@ -944,7 +1625,17 @@
     // imediata for importante (ex.: Bater Ponto); no resto do sistema, o
     // padrão continua sendo otimista (não chamar isto à toa).
     confirmSaved: function (table, id) {
-      return confirmRemoteSaved(table, id);
+      // Se o registro ainda está na fila de envio, espera (até 20s) ela
+      // esvaziar antes de conferir no servidor.
+      var key = obKey(table, id);
+      var drained = new Promise(function (resolve) {
+        var t0 = Date.now();
+        (function poll() {
+          if (!_outbox[key] || Date.now() - t0 > 20000) { resolve(); return; }
+          setTimeout(poll, 250);
+        })();
+      });
+      return drained.then(function () { return confirmRemoteSaved(table, id); });
     },
 
     // Verdadeiro quando há um Supabase configurado e conectado nesta
@@ -954,6 +1645,11 @@
     // configurado, é melhor simplesmente confiar no cache local como o
     // resto do sistema já faz.
     hasRemote: function () { return !!supa; },
+
+    // Quantas alterações ainda não foram confirmadas pelo servidor (fila
+    // durável — ver "Alterações pendentes") e como forçar o reenvio agora.
+    pendingCount: function () { return pendingCount(); },
+    flushPending: function () { flushAll(); },
 
     // Verdadeiro se, no último carregamento, o Supabase não tinha uma tabela
     // opcional (ver OPTIONAL_TABLES) — ex.: "timeSheets" ainda não criada.
