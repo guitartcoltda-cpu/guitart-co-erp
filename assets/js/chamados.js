@@ -51,6 +51,8 @@
     Utils.qs("#btn-new-chamado").addEventListener("click", function () { openChamadoModal(); });
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["chamados"], cold: [] });
   }
 
   function getChamados() {

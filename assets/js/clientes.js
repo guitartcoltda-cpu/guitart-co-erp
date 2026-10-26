@@ -16,6 +16,8 @@
     Utils.qs("#c-search").addEventListener("input", Utils.debounce(function (e) { filt.search = e.target.value.toLowerCase(); page = 1; render(); }, 200));
     Utils.qs("#btn-new-client").addEventListener("click", function () { openClientModal(null); });
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["clients"], cold: ["appointments", "transactions"] });
   }
 
   function clientSpend(clientId) {

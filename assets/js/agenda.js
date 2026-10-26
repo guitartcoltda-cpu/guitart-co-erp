@@ -155,6 +155,9 @@
     updateRailVisibility();
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js): o que outras pessoas
+    // lançam aparece aqui sem recarregar, mantendo filtros/dia/rolagem.
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["appointments", "occurrences"], cold: ["clients", "employees", "services"] });
   }
 
   // ---- Mini calendário (substitui o antigo bloco "Ir para data" +1/3/6

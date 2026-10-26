@@ -12,6 +12,8 @@
       onChange: function (range) { renderDashboard(range); }
     });
     renderDashboard(pfCtrl.getRange());
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(function () { renderDashboard(pfCtrl.getRange()); }, { hot: ["transactions", "appointments"], cold: ["employees", "clients", "products", "categories", "services"] });
   }
 
   function renderDashboard(range) {

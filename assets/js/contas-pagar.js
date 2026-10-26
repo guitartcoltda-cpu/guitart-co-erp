@@ -71,6 +71,8 @@
     });
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["transactions"], cold: ["categories", "costCenters"] });
   }
 
   function bucketFor(dateStr, today) {

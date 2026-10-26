@@ -50,6 +50,8 @@
     renderProducts();
     renderMoves();
     renderConsumo();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(function () { renderProducts(); renderMoves(); renderConsumo(); }, { hot: ["products", "stockMovements", "productConsumptions"], cold: ["employees"] });
   }
 
   function getProducts() {

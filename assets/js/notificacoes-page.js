@@ -88,6 +88,8 @@
     });
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["notifications"], cold: [] });
   }
 
   function getItems() {

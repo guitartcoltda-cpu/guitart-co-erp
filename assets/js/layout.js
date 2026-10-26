@@ -406,104 +406,157 @@
   }
 
   // ---------------------------------------------------------------
-  // "Tempo real" (18/09/2026, varredura de "múltiplos usuários em tempo
-  // real"; revisado no mesmo dia a pedido do usuário — ver abaixo): antes
-  // desta correção, uma aba só buscava dados do Supabase UMA VEZ, no
-  // carregamento — mudanças feitas por outra pessoa, em outro aparelho,
-  // só apareciam se esta aba fosse recarregada manualmente (ver
-  // comentário de hasRemoteChangesSince em db.js). Numa recepção com
-  // várias pessoas trabalhando ao mesmo tempo (é comum um computador
-  // ficar com uma aba aberta o dia inteiro), isso significa trabalhar com
-  // uma "foto" cada vez mais velha da agenda/estoque/financeiro sem
-  // perceber.
+  // Atualização automática e invisível (26/10/2026).
   //
-  // Primeira versão publicada em 18/09/2026 avisava com uma faixa fixa no
-  // topo da tela ("Há atualizações — Atualizar agora"/"Agora não") e
-  // esperava um clique antes de recarregar. Ainda no mesmo dia, a pedido
-  // do usuário ("Essa atualização não pode existir, tem que ser
-  // automático, ninguém tem que clicar em nada"), essa faixa foi
-  // removida e o recarregamento passou a ser 100% automático.
+  // Histórico: em 18/09 a tela recarregava sozinha ao detectar mudança de
+  // outra pessoa; em 23/09 isso foi trocado por um ícone ("atualizar"), porque
+  // o recarregamento apagava filtros e interrompia o trabalho. Agora NENHUMA
+  // das duas coisas: a tela busca no servidor só o que mudou (poucos KB) e se
+  // redesenha NO LUGAR — sem recarregar a página, mantendo filtros, dia
+  // aberto, aba, página da lista e posição de rolagem. O ícone foi removido.
   //
-  // 23/09/2026: na prática, o recarregamento automático se mostrou
-  // disruptivo — a pedido do usuário ("Está com um bug de atualização,
-  // está atualizando a tela sozinho e sempre que atualiza, tira o
-  // filtro, sai de tudo, interrompe toda a operação"): mesmo evitando
-  // recarregar por cima de um modal/painel aberto, um `location.reload()`
-  // sozinho ainda reseta qualquer filtro aplicado na tela (período,
-  // busca, abas), fecha o que a pessoa estava vendo/rolando e interrompe
-  // o que estava fazendo mesmo fora de um formulário. A partir de agora a
-  // página NUNCA recarrega sozinha: ao detectar mudança de outra pessoa,
-  // mostra só um ícone pequeno e discreto no canto inferior direito da
-  // tela (ver showLiveSyncIcon) — sem interromper nada, sem apagar
-  // filtro nenhum. A pessoa decide se e quando quer atualizar, clicando
-  // no ícone.
-  var LIVE_SYNC_INTERVAL_MS = 45000;
-  var liveSyncTimer = null;
-  var liveSyncNotified = false; // já mostrou o ícone nesta aba — evita duplicar/checar de novo à toa
+  // Segurança: não redesenha enquanto a pessoa está mexendo (janela/gaveta
+  // aberta, campo em edição, itens marcados em lista, ou qualquer toque/tecla/
+  // rolagem nos últimos segundos) — espera ela parar e então aplica. Só LÊ
+  // do servidor; nunca grava nada por conta própria.
+  //
+  // Cada tela se registra com LiveRefresh.register(redesenhar, { hot, cold }):
+  // `hot` = tabelas que mudam toda hora (checadas a cada ~15s), `cold` = as
+  // que raramente mudam (a cada ~60s). Telas sem registro (ex.: Comissões,
+  // Folha, Conciliação, DRE, Configurações) continuam atualizando só ao abrir
+  // — são telas de conferência/fechamento, onde mudar números sozinho não é
+  // desejável.
+  // ---------------------------------------------------------------
+  var LiveRefresh = (function () {
+    var reg = null;
+    var lastInput = Date.now();
+    var lastHotAt = 0, lastColdAt = 0, n = 0;
+    var pending = null; // { tabela: true } já buscadas no cache, aguardando momento de redesenhar
+    var started = false, busyFetch = false;
+    var HOT_MS = 15000, COLD_MS = 60000, IDLE_AFTER_MS = 15 * 60000;
 
-  function reloadNow() {
-    if (global.DB && DB.clearBootCache) DB.clearBootCache();
-    global.location.reload();
-  }
+    function markInput() { lastInput = Date.now(); }
 
-  // Ícone discreto de "sistema atualizado" (23/09/2026) — canto inferior
-  // direito, por cima de tudo mas sem bloquear nem cobrir nenhum conteúdo
-  // da tela, não interrompe preenchimento de formulário nem reseta filtro
-  // nenhum (não mexe em mais nada da página). Clicar nele recarrega a
-  // página quando a própria pessoa decidir (mesma limpeza de cache de
-  // boot de sempre) — nunca é forçado.
-  function showLiveSyncIcon() {
-    if (liveSyncNotified) return;
-    liveSyncNotified = true;
-    if (!document.getElementById("live-sync-icon-style")) {
-      var style = document.createElement("style");
-      style.id = "live-sync-icon-style";
-      style.textContent =
-        "#live-sync-icon{position:fixed;right:18px;bottom:18px;z-index:9999;" +
-        "width:44px;height:44px;border-radius:50%;background:var(--primary-color,#1f3a5f);" +
-        "color:#fff;border:none;display:flex;align-items:center;justify-content:center;" +
-        "box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer;font-size:17px;padding:0;" +
-        "animation:live-sync-pop .25s ease-out;}" +
-        "#live-sync-icon:hover{filter:brightness(1.12);}" +
-        "#live-sync-icon .live-sync-dot{position:absolute;top:-2px;right:-2px;width:12px;height:12px;" +
-        "border-radius:50%;background:#22c55e;border:2px solid #fff;}" +
-        "@keyframes live-sync-pop{from{transform:scale(.6);opacity:0;}to{transform:scale(1);opacity:1;}}";
-      document.head.appendChild(style);
+    function isBusy() {
+      if (Date.now() - lastInput < 3000) return true;
+      if (document.getElementById("active-modal-overlay")) return true;
+      if (document.querySelector(".modal-overlay.open, .drawer-overlay.open")) return true;
+      // campo de texto em edição (digitou nos últimos 15s); um campo que só
+      // ficou com o foco depois de escolher um filtro não segura a atualização
+      var a = document.activeElement;
+      if (Date.now() - lastInput < 15000 && a && a !== document.body &&
+          (a.isContentEditable || a.tagName === "TEXTAREA" ||
+           (a.tagName === "INPUT" && !/^(button|submit|checkbox|radio|range|color|file)$/.test(a.type)))) return true;
+      if (document.querySelector(".page-content table input[type=checkbox]:checked")) return true;
+      return false;
     }
-    var btn = document.createElement("button");
-    btn.id = "live-sync-icon";
-    btn.type = "button";
-    btn.title = "O sistema foi atualizado por outra pessoa — clique para atualizar esta tela quando quiser";
-    btn.setAttribute("aria-label", "Sistema atualizado — clique para atualizar");
-    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i><span class="live-sync-dot"></span>';
-    btn.addEventListener("click", function () { reloadNow(); });
-    document.body.appendChild(btn);
-  }
 
-  // 26/10/2026: se a tela abriu com a última cópia salva no aparelho (conexão
-  // lenta) e a sincronização terminou depois, o db.js avisa por este evento —
-  // aparece o mesmo ícone discreto de "atualizar"; nada recarrega sozinho.
-  global.addEventListener("salao:data-updated", function () { showLiveSyncIcon(); });
+    // guarda/restaura a rolagem (janela e áreas roláveis internas) para o
+    // redesenho não "pular" a tela
+    function snapScroll() {
+      var snap = { y: global.scrollY, x: global.scrollX, els: [] };
+      var all = document.querySelectorAll(".main-area *, .page-content *");
+      for (var i = 0; i < all.length; i++) {
+        var el = all[i];
+        if (el.scrollTop > 0 || el.scrollLeft > 0) {
+          var key = el.id ? "#" + el.id : null;
+          if (!key && el.className && typeof el.className === "string") {
+            var same = document.getElementsByClassName(el.className.split(" ")[0]);
+            for (var j = 0; j < same.length; j++) if (same[j] === el) { key = "." + el.className.split(" ")[0] + "|" + j; break; }
+          }
+          if (key) snap.els.push({ key: key, top: el.scrollTop, left: el.scrollLeft });
+        }
+      }
+      return snap;
+    }
+    function restoreScroll(snap) {
+      snap.els.forEach(function (e) {
+        var el = null;
+        if (e.key.charAt(0) === "#") el = document.getElementById(e.key.slice(1));
+        else { var p = e.key.slice(1).split("|"); el = document.getElementsByClassName(p[0])[+p[1]] || null; }
+        if (el) { el.scrollTop = e.top; el.scrollLeft = e.left; }
+      });
+      global.scrollTo(snap.x, snap.y);
+    }
 
-  function startLiveSync() {
-    if (!global.DB || !DB.hasRemote || !DB.hasRemote()) return; // sem Supabase configurado: nada a checar
-    if (liveSyncTimer) return; // proteção contra dupla inicialização
-    function tick() {
-      if (document.hidden) return; // aba em segundo plano: não gasta consulta à toa
-      if (liveSyncNotified) return; // já avisou nesta aba, não precisa checar de novo
-      DB.hasRemoteChangesSince(DB.syncedAt()).then(function (changed) {
-        if (changed) showLiveSyncIcon();
+    function applyIfIdle() {
+      if (!pending || !reg || document.hidden || isBusy()) return;
+      var changed = Object.keys(pending);
+      pending = null;
+      var snap = snapScroll();
+      try { reg.fn(changed); } catch (e) { console.error("Falha ao atualizar a tela ao vivo", e); }
+      restoreScroll(snap);
+    }
+
+    function relevant(tables) {
+      if (!reg) return false;
+      return tables.some(function (t) { return reg.all.indexOf(t) !== -1; });
+    }
+
+    function poll(force) {
+      if (!reg || busyFetch || document.hidden || global.navigator.onLine === false) return;
+      var now = Date.now();
+      var idle = (now - lastInput) > IDLE_AFTER_MS;
+      var hotMs = idle ? 45000 : HOT_MS, coldMs = idle ? 180000 : COLD_MS;
+      var hotDue = force || (now - lastHotAt) >= hotMs;
+      var coldDue = force || (now - lastColdAt) >= coldMs;
+      if (!hotDue && !coldDue) return;
+      var tables = [];
+      if (hotDue) { tables = tables.concat(reg.hot); lastHotAt = now; }
+      if (coldDue) { tables = tables.concat(reg.cold); lastColdAt = now; }
+      n++;
+      busyFetch = true;
+      DB.refresh(tables, { withCount: n % 2 === 0 }).then(function (changed) {
+        // mudou algo nas tabelas "quentes": traz já as de apoio (clientes,
+        // profissionais, serviços...) para o redesenho não mostrar um
+        // agendamento novo com o nome do cliente ainda em branco
+        var hotChanged = (changed || []).some(function (t) { return reg && reg.hot.indexOf(t) !== -1; });
+        var cold = reg ? reg.cold.filter(function (t) { return tables.indexOf(t) === -1; }) : [];
+        if (hotChanged && cold.length) {
+          return DB.refresh(cold, { withCount: false }).then(function (more) { return (changed || []).concat(more || []); });
+        }
+        return changed;
+      }).then(function (changed) {
+        busyFetch = false;
+        if (changed && relevant(changed)) {
+          pending = pending || {};
+          changed.forEach(function (t) { pending[t] = true; });
+        }
+        applyIfIdle();
+      }, function () { busyFetch = false; });
+    }
+
+    function start() {
+      if (started) return;
+      started = true;
+      ["pointerdown", "keydown", "input", "touchstart", "wheel", "scroll"].forEach(function (ev) {
+        document.addEventListener(ev, markInput, { passive: true, capture: true });
+      });
+      setInterval(function () { poll(false); applyIfIdle(); }, 3000);
+      document.addEventListener("visibilitychange", function () { if (!document.hidden) { lastHotAt = 0; poll(false); } });
+      global.addEventListener("online", function () { poll(true); });
+      // sincronização de boot que terminou depois da tela já aberta (conexão lenta)
+      global.addEventListener("salao:data-updated", function () {
+        if (!reg) return;
+        pending = pending || {};
+        reg.all.forEach(function (t) { pending[t] = true; });
+        applyIfIdle();
       });
     }
-    liveSyncTimer = setInterval(tick, LIVE_SYNC_INTERVAL_MS);
-    // Ao voltar para esta aba depois de um tempo em segundo plano (troca
-    // de aba/aplicativo), checa na hora em vez de esperar o próximo
-    // intervalo — é o momento em que a "foto" tem mais chance de já
-    // estar velha.
-    document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) tick();
-    });
-  }
+
+    return {
+      register: function (fn, opts) {
+        opts = opts || {};
+        var hot = opts.hot || [], cold = opts.cold || [];
+        reg = { fn: fn, hot: hot, cold: cold, all: hot.concat(cold) };
+        lastHotAt = lastColdAt = Date.now();
+        start();
+      }
+    };
+  })();
+  global.LiveRefresh = LiveRefresh;
+
+  function startLiveSync() { /* mantida só por compatibilidade; a atualização ao vivo é iniciada por LiveRefresh.register */ }
 
   document.addEventListener("DOMContentLoaded", function () {
     // If this page is about to be redirected to login.html (see the inline

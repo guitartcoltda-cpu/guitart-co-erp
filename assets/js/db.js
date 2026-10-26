@@ -431,6 +431,7 @@
   // o batch mais externo termina (ver DB.batch abaixo).
   function persist(tables) {
     if (!tables) return;
+    if (tables === "settings" || (Array.isArray(tables) && tables.indexOf("settings") !== -1)) _lastSettingsWrite = Date.now();
     if (_batchDepth > 0) {
       (Array.isArray(tables) ? tables : [tables]).forEach(function (t) { _batchDirty[t] = true; });
       return;
@@ -843,6 +844,25 @@
     var n = Date.parse(String(s).replace(/(\.\d{3})\d+/, "$1"));
     return isNaN(n) ? 0 : n;
   }
+  // Igualdade "de conteúdo" (ignora a ordem das chaves — o Postgres reordena
+  // as chaves do JSON — e chaves undefined). Usada para só avisar a tela de
+  // que algo mudou quando mudou de verdade.
+  function deepEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    var ka = Object.keys(a).filter(function (k) { return a[k] !== undefined; });
+    var kb = Object.keys(b).filter(function (k) { return b[k] !== undefined; });
+    if (ka.length !== kb.length) return false;
+    for (var i = 0; i < ka.length; i++) {
+      var k = ka[i];
+      if (!Object.prototype.hasOwnProperty.call(b, k) || !deepEqual(a[k], b[k])) return false;
+    }
+    return true;
+  }
+  var _contentChanged = {};   // tabelas cujo CONTEÚDO mudou na última sincronização
+  var _bootDone = false;
+  var _lastSettingsWrite = 0;
   var FULL_RESYNC_MS = 24 * 3600 * 1000;
   var DELTA_OVERLAP_MS = 120000;
   var EARLY_READY_MS = 9000;
@@ -946,13 +966,19 @@
     var pos = {};
     arr.forEach(function (r, i) { pos[r.id] = i; });
     var changed = false;
+    var now = Date.now();
     rows.forEach(function (row) {
       var rec = lightenRecord(t, row.data);
       if (!rec || rec.id == null) return;
-      if (_outbox[obKey(t, rec.id)]) return; // alteração local ainda não confirmada vale mais
+      var key = obKey(t, rec.id);
+      if (_outbox[key]) return; // alteração local ainda não confirmada vale mais
+      // Leitura que começou ANTES de uma gravação nossa recém-confirmada pode
+      // trazer a versão antiga — não deixa ela por cima da nova.
+      var rc = _recent[key];
+      if (rc && (now - rc.sentAt) < RECENT_MS && String(rec.updatedAt || "") < String(rc.record.updatedAt || "")) return;
       var i = pos[rec.id];
-      if (i === undefined) { pos[rec.id] = arr.length; arr.push(rec); } else arr[i] = rec;
-      changed = true;
+      if (i === undefined) { pos[rec.id] = arr.length; arr.push(rec); changed = true; }
+      else if (!deepEqual(arr[i], rec)) { arr[i] = rec; changed = true; }
     });
     return changed;
   }
@@ -999,12 +1025,14 @@
         applyOverlay(t);
         _cursors[t] = cursor === undefined ? null : { c: cursor, f: Date.now() };
         _changed[t] = true;
+        _contentChanged[t] = true;
         if (OPTIONAL_TABLES[t]) delete _missingOptional[t];
       });
     });
   }
 
-  function deltaTable(t, st) {
+  function deltaTable(t, st, withCount) {
+    if (withCount === undefined) withCount = true;
     var cMs = st.c ? parseTs(st.c) : 0;
     var since = cMs ? new Date(cMs - DELTA_OVERLAP_MS).toISOString() : null;
     var rowsP = fetchPaged(function (a, b) {
@@ -1012,7 +1040,7 @@
       if (since) q = q.gt("updated_at", since);
       return q.order("updated_at", { ascending: true }).order("id", { ascending: true }).range(a, b);
     });
-    return Promise.all([rowsP, serverCount(t)]).then(function (r) {
+    return Promise.all([rowsP, withCount ? serverCount(t) : Promise.resolve(null)]).then(function (r) {
       var rows = r[0], count = r[1];
       var maxC = st.c;
       rows.forEach(function (x) {
@@ -1025,6 +1053,7 @@
           _changed[t] = true;
           _cursors[t] = { c: maxC, f: st.f };
         }
+        if (changed || rec) _contentChanged[t] = true;
       });
     });
   }
@@ -1062,8 +1091,55 @@
     if (!_cache.users || !_cache.users.length) _cache.users = emptyDB().users; // rede de segurança: nunca ficar sem usuário
     var changed = Object.keys(_changed);
     _changed = {};
+    _contentChanged = {};
     if (changed.length) persistLocalMirror(changed);
     if (allTables) { idbDeleteLegacy(); markBootCacheFresh(); }
+    _bootDone = true;
+  }
+
+  // ---------------------------------------------------------------
+  // Atualização ao vivo (26/10/2026): com a tela já aberta, busca só o que
+  // mudou nas tabelas pedidas (a Agenda de uma profissional lançada por ela
+  // aparece para a recepção sem ninguém recarregar nada) e devolve QUAIS
+  // tabelas mudaram de conteúdo, para a tela se redesenhar no lugar (ver
+  // LiveRefresh em layout.js). Só LÊ do servidor. Falhas de rede são
+  // silenciosas (tenta de novo no próximo ciclo).
+  // ---------------------------------------------------------------
+  var _refreshing = false;
+  function refreshSettingsLive() {
+    if (Date.now() - _lastSettingsWrite < 20000) return Promise.resolve(); // gravação nossa em andamento
+    return fetchAllRows("settings").then(function (rows) {
+      var data = rowsToTableData("settings", rows);
+      if (!deepEqual(_cache.settings, data)) {
+        _cache.settings = data;
+        _changed.settings = true;
+        _contentChanged.settings = true;
+      }
+    });
+  }
+  function refreshTables(list, withCount) {
+    if (!supa || !_bootDone || _refreshing || !_cache) return Promise.resolve([]);
+    _refreshing = true;
+    _contentChanged = {};
+    return Promise.all((list || []).map(function (t) {
+      if (TABLES.indexOf(t) === -1) return null;
+      var p;
+      if (t === "settings") p = refreshSettingsLive();
+      else {
+        var st = _cursors[t];
+        if (!st || !st.f || !Array.isArray(_cache[t])) return null; // sem marcador: fica para a carga normal
+        p = deltaTable(t, st, withCount);
+      }
+      return Promise.resolve(p).catch(function () {});
+    })).then(function () {
+      _refreshing = false;
+      var changed = Object.keys(_contentChanged);
+      var toPersist = Object.keys(_changed);
+      _contentChanged = {};
+      _changed = {};
+      if (toPersist.length) persistLocalMirror(toPersist);
+      return changed;
+    }, function () { _refreshing = false; return []; });
   }
 
   function runSync(wanted) {
@@ -1103,6 +1179,7 @@
       // já temos um espelho completo (IndexedDB) e ele foi atualizado há
       // pouco, nesta mesma aba.
       if (!_bootLight && idbStored && (Date.now() - readBootCacheFreshAt()) < BOOT_CACHE_TTL_MS) {
+        _bootDone = true;
         resolveReady();
         return;
       }
@@ -1649,6 +1726,9 @@
     // Quantas alterações ainda não foram confirmadas pelo servidor (fila
     // durável — ver "Alterações pendentes") e como forçar o reenvio agora.
     pendingCount: function () { return pendingCount(); },
+    // Atualização ao vivo — ver refreshTables. Resolve com a lista de tabelas
+    // cujo conteúdo mudou.
+    refresh: function (tables, opts) { return refreshTables(tables, !(opts && opts.withCount === false)); },
     flushPending: function () { flushAll(); },
 
     // Verdadeiro se, no último carregamento, o Supabase não tinha uma tabela

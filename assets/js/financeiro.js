@@ -45,6 +45,8 @@
     Utils.qs("#btn-export-csv").addEventListener("click", exportCSV);
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["transactions"], cold: ["clients", "employees", "categories", "costCenters"] });
   }
 
   function fillSelect(sel, items, valueKey, labelKey) {
