@@ -11,7 +11,7 @@
    abaixo), redefinir a paleta aqui já propaga o novo visual para as
    ~19 telas de uma vez, com risco mínimo. */
 
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap');
+/* 26/10/2026: as fontes do Google deixaram de ser carregadas por @import (que bloqueia a página inteira se a rede do Google estiver lenta); agora entram por <link> não bloqueante em cada .html. */
 
 :root {
   /* Brand palette — azul-marinho (estrutural) + ciano elétrico (destaque,
