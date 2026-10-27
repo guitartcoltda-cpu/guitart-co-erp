@@ -63,7 +63,7 @@ function makeServer() {
       }
       let rows = T(base).map(r => {
         let d = r.data;
-        if (/_boot$/.test(name)) { d = Object.assign({}, d); if (d.attachment) { d.attachment = Object.assign({}, d.attachment); delete d.attachment.dataUrl; } }
+        if (/_boot$/.test(name)) { d = Object.assign({}, d); if (d.attachment) { d.attachment = Object.assign({}, d.attachment); delete d.attachment.dataUrl; } if (d.selfieDataUrl) { d.hasSelfie = true; delete d.selfieDataUrl; } }
         return { id: r.id, data: d, updated_at: r.updated_at };
       });
       st.filters.forEach(f => {
@@ -359,6 +359,23 @@ function dataRequests(server) { return server.reqs.filter(r => r.op === "select"
     // só persiste o que mudou e continua funcionando em nova abertura
     const w2 = await openPage(dev, server);
     ok(!!w2.DB.get("appointments", "mine1") && !!w2.DB.get("appointments", "other1"), "nova abertura enxerga tudo");
+  }
+
+  // ---------- 14. Foto do ponto já carregada não é descartada pela atualização ao vivo ----------
+  {
+    const server = makeServer(); seed(server);
+    const dev = makeDevice();
+    const w = await openPage(dev, server); await wait(80);
+    const k = w.DB.get("timeClockEntries", "k1");
+    k.selfieDataUrl = "data:image/jpeg;base64,AAAA"; // como se a foto já tivesse sido aberta na tela
+    server.put("timeClockEntries", { id: "k1", employeeId: "e1", selfieDataUrl: "data:image/jpeg;base64,AAAA" });
+    let ch = await w.DB.refresh(["timeClockEntries"], { withCount: false });
+    ok(ch.length === 0, "foto já carregada + servidor igual: não conta como mudança (" + JSON.stringify(ch) + ")");
+    ok(w.DB.get("timeClockEntries", "k1").selfieDataUrl === "data:image/jpeg;base64,AAAA", "a foto continua no cache (não baixa de novo)");
+    server.put("timeClockEntries", { id: "k1", employeeId: "e1", reviewed: true, selfieDataUrl: "data:image/jpeg;base64,AAAA" });
+    ch = await w.DB.refresh(["timeClockEntries"], { withCount: false });
+    ok(ch.indexOf("timeClockEntries") !== -1 && w.DB.get("timeClockEntries", "k1").reviewed === true, "edição real (revisado) é percebida");
+    ok(w.DB.get("timeClockEntries", "k1").selfieDataUrl === "data:image/jpeg;base64,AAAA", "e a foto já carregada é preservada");
   }
 
   console.log("\n" + passed + " passaram, " + failed + " falharam");
