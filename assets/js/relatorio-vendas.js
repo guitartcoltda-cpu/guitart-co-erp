@@ -46,6 +46,8 @@
     Utils.qs("#btn-rv-export").addEventListener("click", exportCSV);
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["transactions"], cold: ["employees", "clients", "services", "products"] });
   }
 
   // A "venda" is any receita transaction: revenue from a concluded service

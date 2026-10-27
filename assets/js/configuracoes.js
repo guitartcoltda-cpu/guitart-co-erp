@@ -152,6 +152,16 @@
 
     renderCC(); renderCat(); renderSrv(); renderRoles(); renderPaymentMethods(); renderPacotes(); renderGroups(); renderUsers(); renderLog(); renderPerms(); renderApprovals();
 
+    // Atualização ao vivo (ver LiveRefresh em layout.js). As listas se
+    // atualizam sozinhas; os formulários (nome da empresa, e-mail, permissões
+    // ainda não salvas) NÃO são tocados — a tela de Permissões só é atualizada
+    // quando nenhum acesso está aberto para edição.
+    if (window.LiveRefresh) window.LiveRefresh.register(function () {
+      renderCC(); renderCat(); renderSrv(); renderRoles(); renderPaymentMethods(); renderPacotes(); renderGroups(); renderUsers(); renderLog(); renderApprovals();
+      var permCard = Utils.qs("#perm-card");
+      if (!permCard || permCard.style.display === "none") renderPerms();
+    }, { hot: ["users", "approvals", "settings"], cold: ["employees", "services", "costCenters", "categories", "activityLog"] });
+
     // Deep-link vindo do sininho de aprovações no topbar (?tab=aprovacoes).
     if (/tab=aprovacoes/.test(location.search)) {
       var approvalsTabBtn = Utils.qs('[data-panel="p-approvals"]');

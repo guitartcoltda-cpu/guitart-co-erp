@@ -30,8 +30,36 @@
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
+  var _lastVisibleAt = 0;
+
   function init() {
     renderPicker();
+    // Atualização ao vivo (ver LiveRefresh em layout.js). Só atualiza o que é
+    // seguro: a lista de funcionárias e a tela "Meu Dia" parada. Nunca mexe
+    // durante selfie, "Salvando...", tela de confirmação/erro nem nas abas de
+    // assinatura (Folhas/Holerites), para não perder nada que esteja em curso.
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) _lastVisibleAt = Date.now(); });
+    if (window.LiveRefresh) window.LiveRefresh.register(liveRefresh, { hot: ["timeClockEntries", "timeSheets", "payslips"], cold: ["employees"] });
+  }
+
+  function liveRefresh() {
+    // acabou de voltar da câmera/outro app: o campo da selfie pode estar prestes a disparar
+    if (Date.now() - _lastVisibleAt < 8000) return false; // false = "agora não": a atualização fica pendente
+    var picker = document.getElementById("ponto-picker");
+    if (picker && picker.style.display !== "none") { renderPicker(); return; }
+    var confirmBox = document.getElementById("ponto-confirm");
+    if (!confirmBox || confirmBox.style.display === "none" || !selectedEmployee) return;
+    if (dayTab !== "dia" || !document.getElementById("ponto-pane-dia")) return;
+    var saving = document.getElementById("ponto-saving");
+    if (saving && saving.style.display !== "none") return false;
+    var sig = daySignature(selectedEmployee);
+    if (sig !== _daySig) renderDay(); // novo registro (outro aparelho) ou folha/holerite novo
+    else renderEspelho();
+  }
+
+  var _daySig = "";
+  function daySignature(e) {
+    return todaysEntries(e.id).map(function (t) { return t.type; }).sort().join(",") + "|" + pendingSheetsCount(e.id) + "|" + pendingPayslipsCount(e.id);
   }
 
   function eligibleEmployees() {
@@ -126,6 +154,7 @@
   function renderDay() {
     var e = selectedEmployee;
     selectedStep = nextStepFor(e.id);
+    _daySig = daySignature(e);
     var body = document.getElementById("ponto-confirm-body");
 
     var actionHtml;

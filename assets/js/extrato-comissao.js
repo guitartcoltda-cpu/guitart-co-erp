@@ -92,6 +92,8 @@
       return;
     }
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["appointments", "transactions", "commissionBonuses"], cold: ["employees", "clients", "services", "products", "categories", "users"] });
   }
 
   var _commCatId = null;

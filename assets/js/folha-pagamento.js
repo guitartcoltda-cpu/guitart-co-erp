@@ -48,6 +48,8 @@
     if (window.Holerite) Holerite.onChange(function () { render(); });
     if (hp && window.Holerite) holPanel = Holerite.mountManagerPanel(hp, { getMonth: function () { return monthKey; }, employees: payrollEmployees, slipFor: payslipFor });
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(function () { cache = null; render(); }, { hot: ["transactions", "appointments", "timeClockEntries", "payslips", "timeSheets"], cold: ["employees", "commissionBonuses", "clients", "services", "products", "categories", "costCenters", "users", "settings"] });
   }
 
   var holPanel = null;

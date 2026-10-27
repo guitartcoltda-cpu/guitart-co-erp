@@ -78,6 +78,8 @@
     var sendBtn = Utils.qs("#btn-com-send-admins");
     if (sendBtn) sendBtn.addEventListener("click", openSendToAdminsModal);
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(function () { render(); }, { hot: ["appointments", "transactions", "commissionBonuses"], cold: ["employees", "clients", "services", "products", "costCenters", "categories", "users"] });
   }
 
   function monthLastDay(monthKey) {

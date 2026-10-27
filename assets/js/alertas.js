@@ -30,7 +30,18 @@
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
 
+  var _alertasLiveBound = false;
+
   function init() {
+    redraw();
+    // Atualização ao vivo (ver LiveRefresh em layout.js): recalcula tudo a partir dos dados mais novos.
+    if (!_alertasLiveBound && window.LiveRefresh) {
+      _alertasLiveBound = true;
+      window.LiveRefresh.register(redraw, { hot: ["appointments", "transactions"], cold: ["clients", "employees", "services", "categories"] });
+    }
+  }
+
+  function redraw() {
     var data = loadData();
 
     var noShow = computeNoShow(data);

@@ -57,6 +57,8 @@
     Utils.qs("#btn-export-dre").addEventListener("click", exportCSV);
     Utils.qs("#btn-export-dre-pdf").addEventListener("click", generateDrePdf);
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["transactions"], cold: ["costCenters", "categories"] });
   }
 
   function monthsRange(n) {

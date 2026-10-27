@@ -52,6 +52,8 @@
     });
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["bankLines", "transactions"], cold: ["categories", "costCenters", "clients"] });
   }
 
   // Direção (Entradas/Saídas) de uma linha do extrato: pelo sinal do valor

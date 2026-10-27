@@ -90,6 +90,8 @@
     Utils.qs("#e-search").addEventListener("input", Utils.debounce(function (e) { filt.search = e.target.value.toLowerCase(); render(); }, 200));
     Utils.qs("#btn-new-emp").addEventListener("click", function () { openEmpModal(null); });
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["employees"], cold: ["users"] });
   }
 
   function getEmployees() {

@@ -77,6 +77,9 @@
     Utils.qs("#pg-occ-end").addEventListener("change", function (ev) { pgOccRange.end = ev.target.value; renderOcorrenciasTab(); });
 
     renderAll();
+    // Atualização ao vivo (ver LiveRefresh em layout.js). Não redesenha com
+    // gaveta/janela aberta nem com campo em edição (a regra vale para toda tela).
+    if (window.LiveRefresh) window.LiveRefresh.register(renderAll, { hot: ["timeClockEntries", "approvals", "timeSheets", "payslips"], cold: ["employees", "users"] });
   }
 
   // ---------------- Selfies sob demanda ----------------

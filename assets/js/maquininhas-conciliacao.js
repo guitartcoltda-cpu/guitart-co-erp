@@ -48,6 +48,8 @@
     wireUploadZone("upload-zone-bank", "file-input-bank", "bank");
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["bankLines", "cardMachines"], cold: [] });
   }
 
   function wireUploadZone(zoneId, inputId, side) {

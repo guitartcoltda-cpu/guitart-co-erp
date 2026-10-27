@@ -978,7 +978,21 @@
       if (rc && (now - rc.sentAt) < RECENT_MS && String(rec.updatedAt || "") < String(rc.record.updatedAt || "")) return;
       var i = pos[rec.id];
       if (i === undefined) { pos[rec.id] = arr.length; arr.push(rec); changed = true; }
-      else if (!deepEqual(arr[i], rec)) { arr[i] = rec; changed = true; }
+      else {
+        // A foto do ponto já carregada sob demanda não conta como diferença
+        // (a versão "leve" que chega do servidor não traz a foto): mantém a
+        // foto no cache em vez de descartá-la e baixá-la de novo.
+        var cur = arr[i];
+        if (t === "timeClockEntries" && cur && cur.selfieDataUrl && rec.hasSelfie && !("selfieDataUrl" in rec)) {
+          var curLight = Object.assign({}, cur);
+          delete curLight.selfieDataUrl;
+          if (deepEqual(curLight, rec)) return;
+          rec = Object.assign({}, rec, { selfieDataUrl: cur.selfieDataUrl });
+          arr[i] = rec; changed = true;
+          return;
+        }
+        if (!deepEqual(cur, rec)) { arr[i] = rec; changed = true; }
+      }
     });
     return changed;
   }

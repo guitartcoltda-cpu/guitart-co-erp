@@ -66,6 +66,8 @@
     Utils.qs("#mq-sim").addEventListener("change", function (e) { state.simMachineId = e.target.value; render(); });
 
     render();
+    // Atualização ao vivo (ver LiveRefresh em layout.js).
+    if (window.LiveRefresh) window.LiveRefresh.register(render, { hot: ["cardMachines", "transactions"], cold: [] });
   }
 
   function getMachines() {

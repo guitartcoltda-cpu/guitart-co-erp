@@ -422,10 +422,8 @@
   //
   // Cada tela se registra com LiveRefresh.register(redesenhar, { hot, cold }):
   // `hot` = tabelas que mudam toda hora (checadas a cada ~15s), `cold` = as
-  // que raramente mudam (a cada ~60s). Telas sem registro (ex.: Comissões,
-  // Folha, Conciliação, DRE, Configurações) continuam atualizando só ao abrir
-  // — são telas de conferência/fechamento, onde mudar números sozinho não é
-  // desejável.
+  // que raramente mudam (a cada ~60s). Todas as telas
+  // com dados compartilhados se registram aqui.
   // ---------------------------------------------------------------
   var LiveRefresh = (function () {
     var reg = null;
@@ -484,7 +482,13 @@
       var changed = Object.keys(pending);
       pending = null;
       var snap = snapScroll();
-      try { reg.fn(changed); } catch (e) { console.error("Falha ao atualizar a tela ao vivo", e); }
+      var deferred = false;
+      reg.fns.forEach(function (fn) {
+        try { if (fn(changed) === false) deferred = true; } catch (e) { console.error("Falha ao atualizar a tela ao vivo", e); }
+      });
+      // a tela pode responder `false` = "agora não" (ex.: Bater Ponto logo depois
+      // de voltar da câmera): mantém a atualização pendente para a próxima rodada
+      if (deferred) { pending = pending || {}; changed.forEach(function (t) { pending[t] = true; }); }
       restoreScroll(snap);
     }
 
@@ -545,10 +549,21 @@
     }
 
     return {
+      isRegistered: function () { return !!reg; },
       register: function (fn, opts) {
         opts = opts || {};
         var hot = opts.hot || [], cold = opts.cold || [];
-        reg = { fn: fn, hot: hot, cold: cold, all: hot.concat(cold) };
+        // Mais de um registro na mesma página (ex.: Maquininhas + Conciliação
+        // de Maquininhas): junta as tabelas e redesenha todos.
+        if (reg) {
+          reg.fns.push(fn);
+          hot.forEach(function (t) { if (reg.hot.indexOf(t) === -1) reg.hot.push(t); });
+          cold.forEach(function (t) { if (reg.cold.indexOf(t) === -1 && reg.hot.indexOf(t) === -1) reg.cold.push(t); });
+          reg.all = reg.hot.concat(reg.cold);
+        } else {
+          reg = { fns: [fn], hot: hot.slice(), cold: cold.filter(function (t) { return hot.indexOf(t) === -1; }), all: [] };
+          reg.all = reg.hot.concat(reg.cold);
+        }
         lastHotAt = lastColdAt = Date.now();
         start();
       }
