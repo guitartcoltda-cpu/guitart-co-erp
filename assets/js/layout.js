@@ -117,6 +117,7 @@
         '</div>' +
         '<div class="topbar-right">' +
           '<div id="approvals-badge-slot"></div>' +
+          '<span data-pwa-install-slot="topbar"></span>' +
           '<button type="button" class="btn btn-icon btn-ghost" id="btn-theme-toggle" title="' + themeTitle + '" aria-label="' + themeTitle + '"><i class="fa-solid ' + themeIcon + '"></i></button>' +
           '<div class="topbar-user-wrap">' +
             '<button type="button" class="topbar-user" id="topbar-user-btn" aria-haspopup="true" aria-expanded="false">' +
