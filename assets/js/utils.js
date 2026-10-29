@@ -997,21 +997,37 @@
       for (var k = 0; k < n; k++) heads.push(label);
     });
     Array.prototype.forEach.call(tbl.querySelectorAll("tbody tr, tfoot tr"), function (tr) {
-      var idx = 0;
+      var idx = 0, titled = false;
       Array.prototype.forEach.call(tr.children, function (td) {
         var span = Number(td.getAttribute("colspan")) || 1;
         var label = heads[idx];
-        if (span > 1) { td.classList.add("tc-full"); if (idx === 0) td.classList.add("tc-title"); }
-        else if (idx === 0 || label === "Funcionário") { td.classList.add("tc-title"); }
-        else if (label === "" && td.querySelector("button, a")) { td.classList.add("tc-actions"); }
+        if (span > 1) { td.classList.add("tc-full"); if (!titled) { td.classList.add("tc-title"); titled = true; } }
+        else if (!label && (td.classList.contains("col-check") || td.querySelector("input[type=checkbox]"))) { td.classList.add("tc-check"); }
+        else if (!titled || label === "Funcionário") { td.classList.add("tc-title"); titled = true; }
+        else if ((label === "" || label === "Ações") && td.querySelector("button, a")) { td.classList.add("tc-actions"); }
         else if (label && !td.hasAttribute("data-label")) { td.setAttribute("data-label", label); }
+        // célula sem conteúdo visível: some do cartão (ex.: Tags vazias)
+        if (td.hasAttribute("data-label") && !(td.textContent || "").trim() && !td.querySelector("img, svg, button, input, select, i")) td.classList.add("tc-empty");
+        else td.classList.remove("tc-empty");
         idx += span;
       });
     });
   }
   var cardifyQueued = false;
+  // Tabelas de lista que viram cartões no celular (Lote B, 29/10/2026). Fica de
+  // fora o DRE (matriz de meses: cartão não faz sentido). Só aparência: em tela
+  // larga a classe table-cards não tem efeito algum.
+  var CARD_TABLE_IDS = ["tbl-upcoming", "tbl-clients", "tbl-products", "tbl-moves", "tbl-consumo", "tbl-chamados",
+    "tbl-txn", "tbl-cp", "tbl-commission", "tbl-ec", "tbl-folha", "tbl-history", "tbl-mq", "tbl-mqr-history", "tbl-emp",
+    "tbl-rv", "tbl-noshow", "tbl-inactive", "tbl-lowprod", "tbl-recurrence", "tbl-followup", "tbl-sales-breakdown",
+    "tbl-cc", "tbl-cat", "tbl-srv", "tbl-roles", "tbl-pacotes", "tbl-paymethods", "tbl-users", "tbl-groups",
+    "tbl-approvals", "tbl-log"];
   function cardifyAll() {
     cardifyQueued = false;
+    CARD_TABLE_IDS.forEach(function (id) {
+      var t = document.getElementById(id);
+      if (t && !t.classList.contains("table-cards")) t.classList.add("table-cards");
+    });
     Array.prototype.forEach.call(document.querySelectorAll("table.table-cards"), cardifyTable);
   }
   function queueCardify() {
