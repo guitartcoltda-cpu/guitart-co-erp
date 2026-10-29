@@ -1253,3 +1253,64 @@ body[data-page="ponto"] .gap-16, body[data-page="ponto-gestao"] .gap-16 { gap: 1
 /* Botão "Instalar app" (ver assets/js/pwa.js): no celular fica só o ícone, para não apertar o topo da tela */
 .pwa-install-btn i { margin-right: 2px; }
 @media (max-width: 640px) { .topbar .pwa-install-btn span { display: none; } }
+
+
+/* ============================================================
+   Revisão do celular (29/10/2026) — Lote A
+   Só mexe na aparência em telas estreitas; nada de dados.
+   ============================================================ */
+@media (max-width: 900px) {
+  /* Cabeçalho: nada passa da largura da tela (botão Sair sempre visível).
+     O bloco do título encolhe e quebra em 2 linhas; os botões da direita não encolhem. */
+  .topbar { gap: 8px; }
+  .topbar > div:first-child { min-width: 0; flex: 1 1 auto; }
+  .topbar h1 { overflow-wrap: anywhere; line-height: 1.15; }
+  .topbar-right { flex: 0 0 auto; gap: 6px; }
+  .topbar .btn-icon { width: 36px; height: 36px; }
+  .topbar-user .avatar { width: 32px; height: 32px; }
+  /* o título da página já aparece no topo; a repetição logo abaixo só gasta espaço */
+  .toolbar-title h2 { display: none; }
+  .toolbar-title p { margin-top: 0; }
+  .toolbar { gap: 10px; }
+
+  /* Abas numa única linha rolável para o lado (em vez de 3–5 linhas) */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs .tab-btn { flex: 0 0 auto; white-space: nowrap; }
+
+  /* Cartões de números: 2 por linha, mais compactos */
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpi-card { padding: 12px 12px 12px 14px; }
+  .kpi-card .kpi-label { font-size: 11px; letter-spacing: .03em; padding-right: 30px; line-height: 1.25; }
+  .kpi-card .kpi-value { font-size: 16px; margin-top: 4px; }
+  .kpi-card .kpi-delta { font-size: 11px; margin-top: 4px; flex-wrap: wrap; }
+  .kpi-card .kpi-icon { right: 10px; top: 10px; width: 28px; height: 28px; border-radius: 8px; font-size: 13px; }
+  .kpi-menu-btn { right: 6px; top: 40px; width: 34px; height: 34px; }
+  .kpi-card { min-height: 88px; }
+  .kpi-card .kpi-delta { max-width: calc(100% - 36px); }
+
+  /* Alvos de toque maiores */
+  .btn-icon { width: 42px; height: 42px; }
+  .btn-sm { min-height: 38px; }
+  .kebab-btn, .ri-kebab-btn { min-width: 40px; min-height: 40px; }
+  .pf-preset-btn { min-height: 38px; padding-left: 12px; padding-right: 12px; }
+  td .btn-icon + .btn-icon { margin-left: 6px; }
+  .nt-type-badge { max-width: 100%; white-space: normal !important; }
+
+  /* Filtros recolhíveis (ver LayoutFilters em layout.js) */
+  .filters-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; min-height: 42px; }
+  .filters-toggle .ft-count { background: var(--color-primary); color: #fff; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 8px; margin-left: 6px; }
+  .filters-toggle .ft-caret { transition: transform .15s; }
+  .filters-toggle[aria-expanded="true"] .ft-caret { transform: rotate(180deg); }
+  .fc-collapsed { display: none !important; }
+}
+@media (max-width: 340px) {
+  .kpi-grid { grid-template-columns: 1fr; }
+}
+@media (min-width: 901px) {
+  .filters-toggle { display: none; }
+}
+@media (max-width: 640px) {
+  .approvals-badge .ab-text { display: none; }
+  .approvals-badge { padding: 6px 10px; }
+}
