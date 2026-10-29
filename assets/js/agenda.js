@@ -2407,7 +2407,7 @@
     // packageServiceFor) ficam fora do combo normal de Serviço: reception
     // nunca os seleciona à mão, só através do fluxo dedicado de pacotes
     // abaixo (modo "Sessão de um pacote já comprado"/"Vender novo pacote").
-    var services = DB.all("services").filter(function (s) { return !s.isPackageService; }).sort(function (x, y) { return x.group.localeCompare(y.group) || x.name.localeCompare(y.name); });
+    var services = DB.all("services").filter(function (s) { return !s.isPackageService; }).sort(function (x, y) { return String(x.group || "").localeCompare(String(y.group || "")) || String(x.name || "").localeCompare(String(y.name || "")); });
     var employees = DB.all("employees").filter(function (e) { return e.status === "ativo" && employeePerformsServices(e); }).sort(function (x, y) { return x.name.localeCompare(y.name); });
     var allActiveEmployees = DB.all("employees").filter(function (e) { return e.status === "ativo"; }).sort(function (x, y) { return x.name.localeCompare(y.name); });
     var clients = DB.all("clients").sort(function (x, y) { return x.name.localeCompare(y.name); });

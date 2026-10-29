@@ -1560,7 +1560,7 @@
   // ---------------- Services ----------------
   var srvSortState = { field: null, dir: "asc" };
   function renderSrv() {
-    var list = DB.all("services").sort(function (a, b) { return a.group.localeCompare(b.group) || a.name.localeCompare(b.name); });
+    var list = DB.all("services").sort(function (a, b) { return String(a.group || "").localeCompare(String(b.group || "")) || String(a.name || "").localeCompare(String(b.name || "")); });
     list = Utils.sortBy(list, srvSortState);
     var tbl = Utils.qs("#tbl-srv");
     tbl.innerHTML = '<thead><tr>' +

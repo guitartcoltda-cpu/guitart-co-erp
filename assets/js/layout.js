@@ -572,6 +572,82 @@
   })();
   global.LiveRefresh = LiveRefresh;
 
+  // ---------------------------------------------------------------
+  // Filtros recolhíveis no celular (revisão do celular, 29/10/2026).
+  // Em telas estreitas, as barras de filtro (.filters-bar) e o seletor de
+  // período (#...-period-filter) ficam recolhidos atrás de um botão "Filtros"
+  // (com a contagem dos que estão ativos), para a lista/agenda aparecer logo.
+  // Só esconde/mostra a área (CSS .fc-collapsed, que só vale até 900 px): os
+  // campos continuam na página com os mesmos valores, então nada muda no que
+  // cada tela lê ou filtra. No computador o botão nem aparece.
+  // ---------------------------------------------------------------
+  var LayoutFilters = (function () {
+    var seq = 0;
+    function activeCount(box) {
+      var n = 0;
+      Array.prototype.forEach.call(box.querySelectorAll("select, input, textarea"), function (el) {
+        if (el.type === "hidden" || el.type === "button" || el.type === "submit" || el.disabled) return;
+        if (el.type === "checkbox" || el.type === "radio") { if (el.checked && el.defaultChecked === false) n++; return; }
+        if (el.tagName === "SELECT") { if (el.selectedIndex > 0) n++; return; }
+        if (String(el.value || "").trim() !== "" && String(el.value) !== String(el.defaultValue || "")) n++;
+      });
+      return n;
+    }
+    function periodSummary(box) {
+      var el = box.querySelector(".pf-range-summary");
+      return el ? el.textContent.replace(/\s+/g, " ").trim() : "";
+    }
+    function attach(box, isPeriod) {
+      if (!box || box.getAttribute("data-fc") || box.closest(".modal-box, .drawer-box, #active-modal-overlay")) return;
+      box.setAttribute("data-fc", "1");
+      var id = "fc-box-" + (++seq);
+      box.id = box.id || id;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-secondary filters-toggle";
+      btn.setAttribute("aria-expanded", "false");
+      btn.setAttribute("aria-controls", box.id);
+      function label() {
+        var n = isPeriod ? 0 : activeCount(box);
+        var extra = isPeriod ? periodSummary(box) : "";
+        btn.innerHTML = '<span><i class="fa-solid fa-sliders"></i> ' + (isPeriod ? "Período" : "Filtros") +
+          (n ? '<span class="ft-count">' + n + '</span>' : '') +
+          (extra ? ' <span class="small text-muted" style="font-weight:500;">· ' + extra + '</span>' : '') +
+          '</span><i class="fa-solid fa-chevron-down ft-caret"></i>';
+      }
+      label();
+      box.classList.add("fc-collapsed");
+      btn.addEventListener("click", function () {
+        var open = btn.getAttribute("aria-expanded") !== "true";
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        box.classList.toggle("fc-collapsed", !open);
+        label();
+      });
+      box.parentNode.insertBefore(btn, box);
+      box.addEventListener("change", label);
+      box.addEventListener("input", label);
+      box.addEventListener("click", function () { setTimeout(label, 30); });
+      if (isPeriod && typeof MutationObserver !== "undefined") new MutationObserver(label).observe(box, { childList: true, subtree: true, characterData: true });
+    }
+    function init() {
+      Array.prototype.forEach.call(document.querySelectorAll(".page-content .filters-bar"), function (b) { attach(b, false); });
+      Array.prototype.forEach.call(document.querySelectorAll('.page-content [id$="-period-filter"]'), function (b) { attach(b, true); });
+    }
+    return { init: init };
+  })();
+
+  // Abas rolantes: leva a aba ativa para dentro da área visível
+  function initTabsScroll() {
+    function reveal(btn) {
+      try { if (btn && btn.scrollIntoView) btn.scrollIntoView({ block: "nearest", inline: "center" }); } catch (e) {}
+    }
+    document.addEventListener("click", function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest(".tabs .tab-btn") : null;
+      if (b) setTimeout(function () { reveal(b); }, 30);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".tabs .tab-btn.active"), function (b) { if (b.closest(".tabs").scrollWidth > b.closest(".tabs").clientWidth) reveal(b); });
+  }
+
   function startLiveSync() { /* mantida só por compatibilidade; a atualização ao vivo é iniciada por LiveRefresh.register */ }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -585,6 +661,7 @@
       render();
       hideLoadingOverlay();
       startLiveSync();
+      try { LayoutFilters.init(); initTabsScroll(); } catch (e) { if (global.console) console.error(e); }
     });
   });
 

@@ -147,7 +147,7 @@
     var n = countPending();
     if (!n) { containerEl.innerHTML = ""; return; }
     containerEl.innerHTML = '<a href="configuracoes.html?tab=aprovacoes" class="approvals-badge" title="Solicitações pendentes de aprovação">' +
-      '<i class="fa-solid fa-user-check"></i> ' + n + ' pendente' + (n > 1 ? "s" : "") + '</a>';
+      '<i class="fa-solid fa-user-check"></i> ' + n + '<span class="ab-text"> pendente' + (n > 1 ? "s" : "") + '</span></a>';
   }
 
   global.Approvals = {
