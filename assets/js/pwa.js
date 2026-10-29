@@ -4,7 +4,7 @@
      continuar abrindo sem internet.
    - Mostra o botão "Instalar app" (topo da tela / tela de login):
        • Android e computador (Chrome/Edge): abre a janela de instalação.
-       • iPhone/iPad (Safari): não existe instalação por botão no iOS —
+       • iPhone/iPad (Safari ou Chrome): não existe instalação por botão no iOS —
          o botão mostra o passo a passo (Compartilhar → Adicionar à Tela de Início).
        • Já instalado (aberto como app) ou navegador sem suporte: o botão não aparece.
    Não lê nem grava nenhum dado do sistema.
@@ -27,11 +27,18 @@
     return /iPhone|iPad|iPod/.test(ua) || iPadOS;
   }
 
-  // iOS só instala pelo Safari (Chrome/Firefox no iPhone não têm a opção)
+  // iPhone/iPad: Safari e Chrome permitem "Adicionar à Tela de Início" (o Chrome
+  // ganhou isso no iOS 16.4+). Navegadores embutidos (Instagram, Facebook, app do
+  // Google etc.) e outros não oferecem — nesses o botão não aparece.
+  function isIOSChrome() {
+    var ua = (global.navigator && global.navigator.userAgent) || "";
+    return isIOS() && /CriOS/.test(ua) && !/GSA\/|FBAN|FBAV|Instagram/.test(ua);
+  }
   function isIOSSafari() {
     var ua = (global.navigator && global.navigator.userAgent) || "";
-    return isIOS() && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA\//.test(ua);
+    return isIOS() && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA\/|FBAN|FBAV|Instagram/.test(ua);
   }
+  function canInstallOnIOS() { return isIOSSafari() || isIOSChrome(); }
 
   // ---------- service worker ----------
   function registerSW() {
@@ -48,14 +55,17 @@
   // ---------- botão "Instalar app" ----------
   function canOfferInstall() {
     if (isStandalone()) return false;
-    return !!deferredPrompt || isIOSSafari();
+    return !!deferredPrompt || canInstallOnIOS();
   }
 
   function showIOSHelp() {
+    var chrome = isIOSChrome();
     var body =
-      '<p>No iPhone/iPad a instalação é feita pelo próprio Safari:</p>' +
+      '<p>No iPhone/iPad a instalação é feita pelo botão de compartilhar do próprio navegador:</p>' +
       '<ol style="padding-left:20px;line-height:1.8;">' +
-        '<li>Toque no botão <strong>Compartilhar</strong> <i class="fa-solid fa-arrow-up-from-bracket"></i> (barra inferior do Safari).</li>' +
+        (chrome
+          ? '<li>Toque no botão <strong>Compartilhar</strong> <i class="fa-solid fa-arrow-up-from-bracket"></i> (no Chrome, fica na <strong>barra de endereço</strong>, no canto direito).</li>'
+          : '<li>Toque no botão <strong>Compartilhar</strong> <i class="fa-solid fa-arrow-up-from-bracket"></i> (barra inferior do Safari).</li>') +
         '<li>Role e toque em <strong>Adicionar à Tela de Início</strong>.</li>' +
         '<li>Toque em <strong>Adicionar</strong>. O ícone Guitart &amp; Co. aparece na tela do aparelho.</li>' +
       '</ol>' +
@@ -77,7 +87,7 @@
       } catch (e) { refreshButtons(); }
       return;
     }
-    if (isIOSSafari()) showIOSHelp();
+    if (canInstallOnIOS()) showIOSHelp();
   }
 
   function refreshButtons() {
