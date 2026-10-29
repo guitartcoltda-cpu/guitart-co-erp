@@ -1318,3 +1318,13 @@ body[data-page="ponto"] .gap-16, body[data-page="ponto-gestao"] .gap-16 { gap: 1
   .approvals-badge .ab-text { display: none; }
   .approvals-badge { padding: 6px 10px; }
 }
+
+/* ---------------- Trava offline (29/10/2026) ----------------
+   A faixa vermelha (#salao-offline-bar) é criada por db.js; o corpo da página
+   desce para ela não cobrir o topo. Botões que gravam ficam esmaecidos. */
+:root { --offline-h: 40px; }
+body.salao-offline { padding-top: var(--offline-h); }
+body.salao-offline .sidebar { top: var(--offline-h); }
+body.salao-offline .topbar { top: var(--offline-h); }
+.offline-blocked { opacity: .45; cursor: not-allowed !important; filter: grayscale(.5); }
+@media (max-width: 640px) { :root { --offline-h: 68px; } }
