@@ -27,7 +27,7 @@ var PRECACHE = [
   "./contas-pagar.html", "./comissoes.html", "./extrato-comissao.html", "./folha-pagamento.html",
   "./dre.html", "./conciliacao.html", "./maquininhas.html", "./funcionarios.html", "./estoque.html",
   "./relatorio-vendas.html", "./alertas.html", "./chamados.html", "./notificacoes.html",
-  "./ponto.html", "./ponto-gestao.html", "./configuracoes.html",
+  "./ponto.html", "./ponto-gestao.html", "./configuracoes.html", "./instalar.html",
   "./manifest.webmanifest",
   "./assets/css/style.css",
   "./assets/img/logo-guitart.png", "./assets/img/icon-192.png", "./assets/img/apple-touch-icon.png",

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function () {
+    try {
+      // 03/10/2026: restaura a sessão guardada por "Manter conectado" (localStorage) em aba nova
+      if (!sessionStorage.getItem('salao_erp_session') && !(function () {
+        try {
+          var p = JSON.parse(localStorage.getItem('salao_erp_session_persist') || 'null');
+          if (p && p.user && p.user.id && (Date.now() - (p.savedAt || 0)) < 15552000000) {
+            sessionStorage.setItem('salao_erp_session', JSON.stringify(p.user));
+            return true;
+          }
+        } catch (e) {}
+        return false;
+      })()) {
+        var here = location.pathname.split('/').pop() || 'index.html';
+        location.replace('login.html?redirect=' + encodeURIComponent(here));
+      }
+    } catch (e) {}
+  })();
+</script>
+<script>
+  (function () {
+    try {
+      if (localStorage.getItem('salao_erp_theme') === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) {}
+  })();
+</script>
+<title>Instalar App · Guitart & Co.</title>
+<link rel="stylesheet" href="assets/vendor/fontawesome.min.css">
+<link rel="icon" href="assets/img/logo-guitart.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0e18">
+<link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Guitart & Co.">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script src="assets/js/pwa.js" defer></script>
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
+<script>window.PAGE_META = { title: "Instalar App", subtitle: "Coloque o Guitart & Co. na tela do seu aparelho" };</script>
+</head>
+<body data-page="instalar">
+  <div id="page-loading-overlay" class="page-loading-overlay">
+    <img src="assets/img/logo-guitart.png" alt="Guitart & Co." class="page-loading-logo">
+    <div class="page-loading-spinner"></div>
+  </div>
+  <script>
+    // Rede de segurança: se por algum motivo o JavaScript da página
+    // travar/falhar antes de esconder este overlay (ver layout.js),
+    // não deixa a tela presa num carregamento infinito.
+    setTimeout(function () {
+      var ov = document.getElementById("page-loading-overlay");
+      if (ov) ov.classList.add("is-hidden");
+    }, 8000);
+  </script>
+  <div class="app-shell">
+    <div id="sidebar-placeholder"></div>
+    <div class="main-area">
+      <div id="topbar-placeholder"></div>
+      <main class="page-content">
+
+        <div class="toolbar">
+          <div class="toolbar-title">
+            <h2>Instalar App</h2>
+            <p>Coloque o ícone do Guitart &amp; Co. na tela do seu aparelho e abra o sistema em tela cheia, como um aplicativo</p>
+          </div>
+        </div>
+
+        <!-- O botão "Instalar app" é desenhado por assets/js/pwa.js neste espaço (some quando o app já está instalado) -->
+        <div id="pwa-install-card"></div>
+
+        <div class="card mb-16" id="inst-done" style="display:none;">
+          <div class="card-body">
+            <h3 style="margin:0 0 4px;"><i class="fa-solid fa-circle-check" style="color:var(--success,#16a34a);"></i> App já instalado neste aparelho</h3>
+            <p class="small text-muted" style="margin:0;">Você está usando o Guitart &amp; Co. como aplicativo. Não precisa fazer mais nada.</p>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-16">
+          <div class="card">
+            <div class="card-header"><h3><i class="fa-brands fa-android"></i> Android (Chrome)</h3></div>
+            <div class="card-body">
+              <ol style="padding-left:20px;line-height:1.8;margin:0;list-style:decimal;">
+                <li>Toque em <strong>Instalar app</strong> no cartão acima.</li>
+                <li>Se não abrir nada, toque no menu <strong>&#8942;</strong> (três pontinhos, canto superior direito) e em <strong>Instalar app</strong> ou <strong>Adicionar à tela inicial</strong>.</li>
+                <li>Confirme em <strong>Instalar</strong>. O ícone aparece na tela do aparelho.</li>
+              </ol>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3><i class="fa-brands fa-apple"></i> iPhone / iPad (Safari)</h3></div>
+            <div class="card-body">
+              <ol style="padding-left:20px;line-height:1.8;margin:0;list-style:decimal;">
+                <li>Abra este endereço no <strong>Safari</strong> (ou no Chrome atualizado).</li>
+                <li>Toque em <strong>Compartilhar</strong> <i class="fa-solid fa-arrow-up-from-bracket"></i> (no Safari, na barra de baixo; no Chrome, na barra de endereço).</li>
+                <li>Toque em <strong>Adicionar à Tela de Início</strong> e depois em <strong>Adicionar</strong>.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <p class="small text-muted" style="margin:0 0 6px;"><strong>Dicas:</strong></p>
+            <ul class="small text-muted" style="padding-left:20px;line-height:1.7;margin:0;list-style:disc;">
+              <li>Não funciona dentro do Instagram, WhatsApp ou app do Google: abra o endereço no Safari (iPhone) ou no Chrome (Android).</li>
+              <li>Ao entrar no app, marque <strong>Manter conectado neste aparelho</strong>.</li>
+              <li>Sem internet o app abre só para consulta; para alterar qualquer coisa, a conexão precisa estar ativa.</li>
+            </ul>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+  <div id="toast-stack"></div>
+
+  <script src="assets/js/env-config.js"></script>
+  <script src="assets/vendor/supabase.js"></script>
+  <script src="assets/js/db.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/utils.js"></script>
+  <script src="assets/js/approvals.js"></script>
+  <script src="assets/js/recorrencia.js"></script>
+  <script src="assets/js/notificacoes.js"></script>
+  <script src="assets/js/layout.js"></script>
+  <script>
+    // App já instalado (aberto pelo ícone): troca o cartão de instalar por um aviso.
+    window.addEventListener("load", function () {
+      try {
+        if (window.PWA && window.PWA.isStandalone()) {
+          var d = document.getElementById("inst-done");
+          if (d) d.style.display = "";
+        }
+      } catch (e) {}
+    });
+  </script>
+</body>
+</html>
