@@ -7,8 +7,8 @@
        • iPhone/iPad (Safari ou Chrome): não existe instalação por botão no iOS —
          o botão mostra o passo a passo (Compartilhar → Adicionar à Tela de Início).
        • Já instalado (aberto como app) ou navegador sem suporte: o botão não aparece.
-   - Configurações: cartão fixo "Instalar o app no celular" (div#pwa-install-card), fácil de
-     achar no celular. Some quando o app já está instalado; se o navegador não oferecer a
+   - Tela "Instalar App" (instalar.html, no menu para todos os perfis): cartão fixo
+     "Instalar o app no celular" (div#pwa-install-card), fácil de achar no celular. Some quando o app já está instalado; se o navegador não oferecer a
      instalação por botão, mostra o passo a passo do aparelho.
    Não lê nem grava nenhum dado do sistema.
    ============================================================ */
@@ -134,6 +134,7 @@
     if (!host) return;
     if (isStandalone()) { host.innerHTML = ""; host.style.display = "none"; return; }
     host.style.display = "";
+    host.setAttribute("data-offline-ok", "");   // instalar não grava dados: não entra na trava offline
     if (host.querySelector(".pwa-card-btn")) return;
     host.innerHTML =
       '<div class="card mb-16"><div class="card-body" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">' +

@@ -459,7 +459,8 @@
   // própria tela (ver enforceConfigTabsAccess em init()), porque auth.js só
   // sabe bloquear página inteira, não sub-recurso dentro dela.
   function permPageItems() {
-    return (window.AppLayout ? window.AppLayout.NAV : []).filter(function (item) { return !item.section; });
+    // alwaysAllowed (Instalar App) fica fora: todo mundo tem, não faz sentido liberar/bloquear aqui.
+    return (window.AppLayout ? window.AppLayout.NAV : []).filter(function (item) { return !item.section && !item.alwaysAllowed; });
   }
 
   function configTabItems() {

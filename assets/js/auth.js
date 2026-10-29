@@ -53,6 +53,8 @@
     return null;
   }
 
+  var ALWAYS_ALLOWED_PAGES = ["instalar.html"];
+
   var CurrentUser = {
     get: function () {
       try {
@@ -118,6 +120,9 @@
     canAccess: function (pageFile) {
       var session = this.get();
       if (!session) return false;
+      // Telas liberadas para qualquer usuário logado, fora do controle de Permissões
+      // (hoje só "Instalar App": é só um guia de instalação, não lê nem grava dados).
+      if (ALWAYS_ALLOWED_PAGES.indexOf(pageFile) !== -1) return true;
       var dbUser = global.DB ? DB.get("users", session.id) : null;
       var allowed = dbUser ? dbUser.allowedPages : session.allowedPages;
       if (!allowed || !Array.isArray(allowed)) return true;

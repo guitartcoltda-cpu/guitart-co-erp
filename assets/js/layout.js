@@ -29,6 +29,9 @@
     { page: "estoque", href: "estoque.html", icon: "fa-boxes-stacked", label: "Estoque" },
     { page: "ponto-gestao", href: "ponto-gestao.html", icon: "fa-user-clock", label: "Gestão de Ponto" },
     { section: "Sistema" },
+    // alwaysAllowed (29/10/2026): "Instalar App" aparece para TODOS os perfis, mesmo com telas
+    // restritas (ex.: quem só bate ponto) — não depende de Permissões e não aparece lá (ver auth.js).
+    { page: "instalar", href: "instalar.html", icon: "fa-mobile-screen-button", label: "Instalar App", alwaysAllowed: true },
     { page: "chamados", href: "chamados.html", icon: "fa-headset", label: "Chamados" },
     { page: "configuracoes", href: "configuracoes.html", icon: "fa-gear", label: "Configurações" }
   ];
