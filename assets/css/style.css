@@ -1249,3 +1249,7 @@ body[data-page="ponto"] .gap-16, body[data-page="ponto-gestao"] .gap-16 { gap: 1
   .fp-list .tc-actions .btn { margin: 2px 4px 2px 0; }
 }
 #fpm-search { padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: #fff; min-width: 200px; }
+
+/* Botão "Instalar app" (ver assets/js/pwa.js): no celular fica só o ícone, para não apertar o topo da tela */
+.pwa-install-btn i { margin-right: 2px; }
+@media (max-width: 640px) { .topbar .pwa-install-btn span { display: none; } }
