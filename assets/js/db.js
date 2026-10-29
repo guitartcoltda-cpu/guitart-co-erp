@@ -751,11 +751,12 @@
       if (r.skip || r.ok) {
         if (e.t !== sentT) { pump(key); return; } // entrou uma versão mais nova no meio — envia ela também
         delete _outbox[key];
-        if (r.ok) markRecent(e);
+        if (r.ok) { markRecent(e); noteNetOk(); }
         idbObDelete(key, sentT);
         notifyPending();
         return;
       }
+      noteNetFail(r.err);
       e.tries++;
       if (!isTransientError(r.err) && e.tries >= 4) e.dead = true;
       remoteFail(e.table, e.op === "delete" ? "excluir" : "salvar", r.err);
@@ -813,12 +814,171 @@
     });
   }
 
-  global.addEventListener("online", function () { flushAll(); });
+  global.addEventListener("online", function () { flushAll(); tryUnlock(); });
   if (global.document) {
     global.document.addEventListener("visibilitychange", function () {
       if (!global.document.hidden && pendingCount()) flushAll();
+      if (!global.document.hidden && _offline) tryUnlock();
     });
   }
+
+  // ---------------------------------------------------------------
+  // TRAVA OFFLINE (29/10/2026, ideia do João): quando o aparelho fica sem
+  // conexão com o servidor, o sistema vira "só consulta" — faixa fixa no topo
+  // e NENHUMA gravação (inserir/alterar/apagar/mesclar) é aceita até a internet
+  // voltar. Assim duas pessoas nunca editam o mesmo registro "às cegas" e uma
+  // alteração feita offline nunca sobrescreve a de outra pessoa ao reconectar.
+  //
+  // Como detecta: (1) o navegador avisa que está sem rede (evento offline /
+  // navigator.onLine); (2) duas falhas seguidas de rede no envio de uma
+  // alteração ou na leitura ao vivo; (3) a carga inicial não conseguiu baixar
+  // alguma tabela. Como volta: a cada 5 s (e ao evento online / ao voltar para a
+  // aba) testa o servidor, ATUALIZA todas as tabelas (para ninguém editar uma
+  // cópia velha) e só então libera.
+  //
+  // O que continua valendo: a fila durável de envio (alterações aceitas ANTES de
+  // cair a conexão seguem sendo reenviadas sozinhas). A trava fica na entrada
+  // das funções de gravação (antes de mexer no cache local), nunca no meio.
+  // Dentro de um clique/toque do usuário a gravação recusada LANÇA um erro
+  // (a janela fica aberta, com o texto digitado, em vez de fingir que salvou);
+  // fora disso (rotinas de fundo) é ignorada em silêncio.
+  var _offline = false, _netFails = 0, _probeTimer = null, _unlocking = false;
+  var _lastGesture = 0, _lastBlockedWarn = 0, _bootFailed = [], _refreshFailed = false;
+  var NET_FAILS_TO_LOCK = 2, PROBE_MS = 5000, GESTURE_MS = 8000;
+
+  function offlineError() {
+    var e = new Error("Sem conexão — o sistema está só para consulta. Nada foi salvo.");
+    e.name = "OfflineLockError";
+    e.offlineLock = true;
+    return e;
+  }
+
+  function showOfflineBar() {
+    ui(function (doc) {
+      var el = doc.getElementById("salao-offline-bar");
+      if (!el) {
+        el = doc.createElement("div");
+        el.id = "salao-offline-bar";
+        el.setAttribute("role", "alert");
+        el.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:10003;min-height:var(--offline-h,40px);box-sizing:border-box;" +
+          "padding:7px 12px;background:#b91c1c;color:#fff;display:flex;align-items:center;justify-content:center;gap:10px;" +
+          "font:13.5px/1.3 system-ui,-apple-system,Segoe UI,sans-serif;text-align:left;box-shadow:0 2px 10px rgba(0,0,0,.3);";
+        var span = doc.createElement("span");
+        span.style.cssText = "flex:1 1 auto;max-width:760px;";
+        span.innerHTML = "<strong>Sem conexão.</strong> O sistema está só para consulta — alterações ficam bloqueadas até a internet voltar.";
+        el.appendChild(span);
+        var btn = doc.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Tentar agora";
+        btn.style.cssText = "flex:0 0 auto;border:0;border-radius:8px;padding:6px 12px;font:inherit;font-weight:700;cursor:pointer;background:#fff;color:#7f1d1d;";
+        btn.onclick = function () { btn.textContent = "Verificando…"; tryUnlock(function () { btn.textContent = "Tentar agora"; }); };
+        el.appendChild(btn);
+        doc.body.insertBefore(el, doc.body.firstChild);
+      }
+      doc.body.classList.add("salao-offline");
+    });
+  }
+  function hideOfflineBar() {
+    ui(function (doc) {
+      var el = doc.getElementById("salao-offline-bar");
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      doc.body.classList.remove("salao-offline");
+    });
+  }
+
+  function setOffline(v) {
+    if (v === _offline) return;
+    if (v && !supa) return; // sem servidor configurado não há o que proteger
+    _offline = v;
+    if (v) {
+      showOfflineBar();
+      if (!_probeTimer) _probeTimer = setInterval(function () { tryUnlock(); }, PROBE_MS);
+    } else {
+      _netFails = 0;
+      if (_probeTimer) { clearInterval(_probeTimer); _probeTimer = null; }
+      hideOfflineBar();
+      if (global.Toast) global.Toast.show("Conexão restabelecida — dados atualizados. Você já pode editar.", "success");
+      flushAll();
+      notifyUpdated();
+    }
+    try { global.dispatchEvent(new global.CustomEvent("salao:connection", { detail: { offline: _offline } })); } catch (e) {}
+  }
+
+  function noteNetOk() {
+    _netFails = 0;
+    if (_offline) tryUnlock();
+  }
+  function noteNetFail(err) {
+    if (!isTransientError(err)) return;
+    _netFails++;
+    if (_netFails >= NET_FAILS_TO_LOCK) setOffline(true);
+  }
+
+  // Pergunta pequena ao servidor (1 linha, só o id), com limite de tempo.
+  function probe() {
+    if (!supa) return Promise.resolve(false);
+    if (global.navigator && global.navigator.onLine === false) return Promise.resolve(false);
+    var timer;
+    var timeout = new Promise(function (resolve) { timer = setTimeout(function () { resolve(false); }, 6000); });
+    var ask = Promise.resolve(supa.from("settings").select("id").limit(1)).then(function (res) {
+      return !(res && res.error && isTransientError(res.error));
+    }, function () { return false; });
+    return Promise.race([ask, timeout]).then(function (ok) { clearTimeout(timer); return ok; });
+  }
+
+  // Atualiza tudo o que pode ter mudado enquanto estava sem conexão. Só
+  // resolve true se NADA falhou (senão continua travado e tenta de novo).
+  function catchUp() {
+    var pre = _bootFailed.length ? runSync(_bootFailed).then(function (still) {
+      _bootFailed = still;
+      if (_changedAny()) { persistLocalMirror(Object.keys(_changed)); _changed = {}; }
+    }) : Promise.resolve();
+    return pre.then(function () {
+      if (_bootFailed.length) return false;
+      if (!_bootDone || !_cache) return true;
+      if (_refreshing) return false;
+      var list = TABLES.filter(function (t) { return _cursors[t] && _cursors[t].f; });
+      _refreshFailed = false;
+      return refreshTables(list, true).then(function () { return !_refreshFailed; });
+    });
+  }
+
+  function tryUnlock(done) {
+    if (!_offline || _unlocking) { if (done) done(); return; }
+    _unlocking = true;
+    probe().then(function (ok) { return ok ? catchUp() : false; }).then(function (ok) {
+      _unlocking = false;
+      if (ok) setOffline(false);
+      if (done) done();
+    }, function () { _unlocking = false; if (done) done(); });
+  }
+
+  // Aviso (no máximo a cada 4 s) quando uma gravação é recusada pela trava.
+  function warnBlocked() {
+    var now = Date.now();
+    if (now - _lastBlockedWarn < 4000) return;
+    _lastBlockedWarn = now;
+    if (global.Toast) global.Toast.show("Sem conexão — nada foi salvo. Aguarde a internet voltar para alterar.", "danger");
+    try { global.dispatchEvent(new global.CustomEvent("salao:write-blocked")); } catch (e) {}
+  }
+  // true = a gravação NÃO deve acontecer. `fallback` é o que a função devolve
+  // quando a recusa é silenciosa (rotina de fundo, login).
+  function writeLocked() {
+    if (!_offline) return false;
+    warnBlocked();
+    return true;
+  }
+  function refuse(fallback) {
+    if (!_bootLight && Date.now() - _lastGesture < GESTURE_MS) throw offlineError();
+    return fallback;
+  }
+  ui(function (doc) {
+    ["pointerdown", "touchstart", "click", "keydown", "change", "submit"].forEach(function (ev) {
+      doc.addEventListener(ev, function () { _lastGesture = Date.now(); }, true);
+    });
+  });
+  global.addEventListener("offline", function () { setOffline(true); });
+  if (global.navigator && global.navigator.onLine === false) setOffline(true);
 
   // ---------------------------------------------------------------
   // Sincronização de leitura (boot) — 26/10/2026.
@@ -1135,6 +1295,7 @@
     if (!supa || !_bootDone || _refreshing || !_cache) return Promise.resolve([]);
     _refreshing = true;
     _contentChanged = {};
+    var _rOk = 0, _rFail = 0;
     return Promise.all((list || []).map(function (t) {
       if (TABLES.indexOf(t) === -1) return null;
       var p;
@@ -1144,9 +1305,11 @@
         if (!st || !st.f || !Array.isArray(_cache[t])) return null; // sem marcador: fica para a carga normal
         p = deltaTable(t, st, withCount);
       }
-      return Promise.resolve(p).catch(function () {});
+      return Promise.resolve(p).then(function () { _rOk++; }, function (err) { if (isTransientError(err)) _rFail++; });
     })).then(function () {
       _refreshing = false;
+      if (_rFail) { _refreshFailed = true; if (!_rOk) noteNetFail({ message: "network" }); }
+      else if (_rOk) noteNetOk();
       var changed = Object.keys(_contentChanged);
       var toPersist = Object.keys(_changed);
       _contentChanged = {};
@@ -1213,6 +1376,8 @@
         var late = _readyDone;
         finishOk(!failedList.length && !_bootLight);
         if (failedList.length && !_bootLight) {
+          _bootFailed = failedList.slice();
+          setOffline(true);
           if (global.Toast && !late) {
             global.Toast.show("Conexão instável — mostrando a última cópia salva neste aparelho. O sistema continua tentando atualizar sozinho.", "danger");
           }
@@ -1276,8 +1441,9 @@
     setTimeout(function () {
       runSync(list).then(function (failed) {
         if (_changedAny()) { persistLocalMirror(Object.keys(_changed)); _changed = {}; notifyUpdated(); }
+        _bootFailed = failed.slice();
         if (failed.length) retryInBackground(failed, n + 1);
-        else markBootCacheFresh();
+        else { markBootCacheFresh(); if (_offline) tryUnlock(); }
       });
     }, Math.min(60000, 5000 * n));
   }
@@ -1700,6 +1866,7 @@
     },
 
     insert: function (table, record) {
+      if (writeLocked()) return refuse(record);
       var db = load();
       if (!record.id) record.id = uid(table.slice(0, 3));
       record.createdAt = record.createdAt || nowISO();
@@ -1740,6 +1907,9 @@
     // Quantas alterações ainda não foram confirmadas pelo servidor (fila
     // durável — ver "Alterações pendentes") e como forçar o reenvio agora.
     pendingCount: function () { return pendingCount(); },
+    // Trava offline (ver "TRAVA OFFLINE" acima).
+    isOffline: function () { return _offline; },
+    checkConnection: function (done) { tryUnlock(done); },
     // Atualização ao vivo — ver refreshTables. Resolve com a lista de tabelas
     // cujo conteúdo mudou.
     refresh: function (tables, opts) { return refreshTables(tables, !(opts && opts.withCount === false)); },
@@ -1823,6 +1993,7 @@
     // valor mais recente do SERVIDOR (para a gravação de verdade nunca
     // apagar uma mudança concorrente nesse campo).
     mergeFieldUpdate: function (table, id, field, transformFn) {
+      if (writeLocked()) return refuse(null);
       var db = load();
       var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
       if (idx === -1) return null;
@@ -1841,6 +2012,7 @@
     // servidor na sincronização em segundo plano) e devolve só o PATCH
     // (objeto com os campos que mudam), nunca o registro inteiro.
     mergeRecordUpdate: function (table, id, transformFn) {
+      if (writeLocked()) return refuse(null);
       var db = load();
       var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
       if (idx === -1) return null;
@@ -1859,6 +2031,7 @@
     // uma lista RECALCULADA (map/concat/filter) a partir da lista já
     // existente, em vez de um valor totalmente novo e independente.
     mergeSettingsField: function (field, transformFn) {
+      if (writeLocked()) return refuse(load().settings || {});
       var db = load();
       var patch = {};
       patch[field] = transformFn(db.settings ? db.settings[field] : undefined);
@@ -1869,6 +2042,7 @@
     },
 
     insertMany: function (table, records) {
+      if (writeLocked()) return refuse(records);
       var db = load();
       records.forEach(function (r) {
         if (!r.id) r.id = uid(table.slice(0, 3));
@@ -1882,6 +2056,7 @@
     },
 
     update: function (table, id, patch) {
+      if (writeLocked()) return refuse(null);
       var db = load();
       var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
       if (idx === -1) return null;
@@ -1892,6 +2067,7 @@
     },
 
     remove: function (table, id) {
+      if (writeLocked()) return refuse(false);
       var db = load();
       var before = db[table].length;
       db[table] = db[table].filter(function (r) { return r.id !== id; });
@@ -1902,6 +2078,7 @@
     },
 
     removeWhere: function (table, predicate) {
+      if (writeLocked()) return refuse(undefined);
       var db = load();
       var toRemove = db[table].filter(predicate);
       db[table] = db[table].filter(function (r) { return !predicate(r); });
@@ -1910,6 +2087,7 @@
     },
 
     setTable: function (table, records) {
+      if (writeLocked()) return refuse(undefined);
       var db = load();
       var ts = nowISO();
       if (Array.isArray(records)) {
@@ -1928,6 +2106,7 @@
 
     getSettings: function () { return load().settings || {}; },
     updateSettings: function (patch) {
+      if (writeLocked()) return refuse(load().settings || {});
       var db = load();
       db.settings = Object.assign({}, db.settings, patch);
       persist("settings");
@@ -1945,6 +2124,7 @@
       var current = (db.settings && db.settings.roles) || [];
       if (!current.length) {
         current = DEFAULT_ROLES.slice();
+        if (_offline) return current; // sem gravar enquanto a trava está ativa
         db.settings = Object.assign({}, db.settings, { roles: current });
         persist("settings");
         remoteMergeSettings({ roles: current });
@@ -1952,6 +2132,7 @@
       return current;
     },
     saveRoles: function (list) {
+      if (writeLocked()) return refuse(list);
       var db = load();
       db.settings = Object.assign({}, db.settings, { roles: list });
       persist("settings");
@@ -1982,7 +2163,7 @@
         current = current.concat([{ id: "pmt_pacote", name: "Pacote", isParceria: false, isPackage: true }]);
         changed = true;
       }
-      if (changed) {
+      if (changed && !_offline) {
         db.settings = Object.assign({}, db.settings, { paymentMethods: current });
         persist("settings");
         remoteMergeSettings({ paymentMethods: current });
@@ -1990,6 +2171,7 @@
       return current;
     },
     savePaymentMethods: function (list) {
+      if (writeLocked()) return refuse(list);
       var db = load();
       db.settings = Object.assign({}, db.settings, { paymentMethods: list });
       persist("settings");
@@ -2005,6 +2187,7 @@
       return (db.settings && db.settings.treatmentPackages) || [];
     },
     saveTreatmentPackages: function (list) {
+      if (writeLocked()) return refuse(list);
       var db = load();
       db.settings = Object.assign({}, db.settings, { treatmentPackages: list });
       persist("settings");
@@ -2056,6 +2239,7 @@
     hydrateSelfies: function (ids) { return hydrateSelfies(ids); },
 
     importJSON: function (jsonStr) {
+      if (writeLocked()) return refuse(undefined);
       var parsed = JSON.parse(jsonStr);
       _cache = fillMissingTables(parsed);
       persist(TABLES);
@@ -2090,6 +2274,7 @@
     // Records an entry in the activity log (auditoria). Keeps only the most
     // recent MAX_LOG_ENTRIES to avoid unbounded growth.
     log: function (action, description, extra) {
+      if (_offline) return null; // registro de atividade não é gravado enquanto a trava está ativa
       var db = load();
       var entry = Object.assign({
         id: uid("log"),

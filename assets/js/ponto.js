@@ -304,6 +304,13 @@
   }
 
   function saveEntry(e, step, selfieDataUrl, earlyInfo) {
+    // Trava offline (29/10/2026): sem conexão com o servidor o ponto NÃO é
+    // registrado (só vale a batida que chegou ao servidor). Nada é gravado.
+    if (DB.isOffline && DB.isOffline()) {
+      Toast.show("Sem conexão — o ponto não foi registrado. Quando a internet voltar, tire a selfie de novo.", "danger");
+      renderDay();
+      return;
+    }
     // Rechecagem de última hora: se essa pessoa bateu esse mesmo passo em
     // outra aba/aparelho nos segundos entre abrir a tela e tirar a selfie,
     // não deixa duplicar.

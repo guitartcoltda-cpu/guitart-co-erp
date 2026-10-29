@@ -648,6 +648,76 @@
     Array.prototype.forEach.call(document.querySelectorAll(".tabs .tab-btn.active"), function (b) { if (b.closest(".tabs").scrollWidth > b.closest(".tabs").clientWidth) reveal(b); });
   }
 
+  // ---------------------------------------------------------------
+  // Trava offline — parte visual (29/10/2026). A trava de verdade está em
+  // db.js (nenhuma gravação é aceita sem conexão); aqui os botões que gravam
+  // ficam esmaecidos e os cliques neles viram um aviso, para ninguém ficar
+  // digitando à toa. Janelas já abertas continuam abertas (o texto digitado não
+  // se perde); só o "Salvar" fica travado. Consulta, filtros, abas, PDF/Excel
+  // e navegação continuam funcionando.
+  // ---------------------------------------------------------------
+  var OfflineGuard = (function () {
+    var WRITE_ATTR = "[data-pay],[data-approve],[data-approve-req],[data-hl-sign],[data-fp-sign],[data-mark-sent]";
+    var OK_TEXT = /^(exportar|baixar|gerar pdf|gerar folha|imprimir|entendi|fechar$|cancelar|voltar|tentar|ver |filtrar|buscar|pesquisar|limpar)/i;
+    var OK_ID = /(export|pdf|csv|xlsx|folha-ponto|backup|retry|close)/i;
+    var observer = null, timer = null;
+
+    function isOffline() { return !!(global.DB && global.DB.isOffline && global.DB.isOffline()); }
+
+    function isWriteControl(el) {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.closest("[data-offline-ok], #salao-offline-bar")) return false;
+      if (el.matches("input[type=file]") || (el.tagName === "LABEL" && el.querySelector("input[type=file]"))) return true;
+      if (el.matches(WRITE_ATTR)) return true;
+      if (el.hasAttribute("data-close-modal")) return false;
+      var cls = el.classList;
+      var heavy = cls.contains("btn-primary") || cls.contains("btn-danger") || cls.contains("btn-success") || cls.contains("btn-warning");
+      if (heavy) {
+        if (el.tagName === "A" && el.getAttribute("href") && el.getAttribute("href") !== "#") return false;
+        var txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (OK_TEXT.test(txt) || OK_ID.test(el.id || "")) return false;
+        return true;
+      }
+      if ((el.tagName === "BUTTON" || cls.contains("btn")) && el.querySelector("i.fa-trash, i.fa-trash-can")) return true;
+      return false;
+    }
+
+    function mark() {
+      var on = isOffline();
+      var nodes = document.querySelectorAll(".offline-blocked");
+      if (!on) { Array.prototype.forEach.call(nodes, function (n) { n.classList.remove("offline-blocked"); n.removeAttribute("aria-disabled"); }); return; }
+      Array.prototype.forEach.call(document.querySelectorAll("button, a.btn, label.btn, " + WRITE_ATTR), function (n) {
+        if (isWriteControl(n)) { n.classList.add("offline-blocked"); n.setAttribute("aria-disabled", "true"); }
+        else if (n.classList.contains("offline-blocked")) { n.classList.remove("offline-blocked"); n.removeAttribute("aria-disabled"); }
+      });
+    }
+    function queueMark() { if (timer) return; timer = setTimeout(function () { timer = null; mark(); }, 250); }
+    function sync() {
+      mark();
+      if (isOffline()) {
+        if (!observer && typeof MutationObserver !== "undefined") {
+          observer = new MutationObserver(queueMark);
+          observer.observe(document.body, { childList: true, subtree: true });
+        }
+      } else if (observer) { observer.disconnect(); observer = null; }
+    }
+
+    function init() {
+      document.addEventListener("click", function (ev) {
+        if (!isOffline()) return;
+        var t = ev.target;
+        var el = t && t.closest ? t.closest("button, a, label, input, " + WRITE_ATTR) : null;
+        if (!el || !isWriteControl(el)) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+        if (global.Toast) global.Toast.show("Sem conexão — o sistema está só para consulta. Aguarde a internet voltar para alterar.", "danger");
+      }, true);
+      global.addEventListener("salao:connection", sync);
+      sync();
+    }
+    return { init: init, isWriteControl: isWriteControl };
+  })();
+
   function startLiveSync() { /* mantida só por compatibilidade; a atualização ao vivo é iniciada por LiveRefresh.register */ }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -657,6 +727,7 @@
     // visit can race the redirect — harmless on its own, but simplest fix
     // is to do nothing on a page we're about to leave anyway.
     if (global.CurrentUser && !global.CurrentUser.isLoginPage() && !global.CurrentUser.get()) return;
+    try { OfflineGuard.init(); } catch (e) { if (global.console) console.error(e); }
     DB.ready.then(function () {
       render();
       hideLoadingOverlay();
