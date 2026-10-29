@@ -1184,7 +1184,11 @@ body.modal-open-lock { overflow: hidden; }
   table.data-table.table-cards tbody td.tc-actions { justify-content: flex-start; gap: 8px; padding-top: 10px; border-top: 1px solid var(--gray-100); margin-top: 4px; }
   table.data-table.table-cards td.tc-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 40px; }
   table.data-table.table-cards td.tc-actions .btn-icon[data-open-day]::after { content: "Ver marcações do dia"; margin-left: 8px; font-size: 13px; font-weight: 600; }
-  table.data-table.table-cards td:empty { display: none; }
+  table.data-table.table-cards td:empty, table.data-table.table-cards tbody td.tc-empty, table.data-table.table-cards tbody td.tc-check:empty { display: none; }
+  table.table-cards tbody tr:has(> td.tc-check), table.table-cards tfoot tr:has(> td.tc-check) { position: relative; }
+  table.data-table.table-cards tbody td.tc-check { position: absolute; top: 10px; right: 12px; width: auto; padding: 0; display: block; }
+  table.data-table.table-cards tbody td.tc-check input[type=checkbox] { width: 22px; height: 22px; }
+  table.table-cards tbody tr:has(> td.tc-check) td.tc-title { padding-right: 38px; }
   table.table-cards .badge { white-space: normal; }
   table.table-cards.ponto-espelho-cards tfoot tr { background: var(--gray-50); border-width: 2px; }
   table.table-cards tr.ponto-row-pend td.text-num, table.table-cards tr.ponto-row-folga td.text-num { display: none; }
