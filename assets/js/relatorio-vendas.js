@@ -222,3 +222,5 @@
     if (DB.log) DB.log("Exportação", "Exportou relatório de vendas em CSV (" + sales.length + " venda(s))");
   }
 })();
+
+/* Sinal de agendamento (isDeposit) nao conta como venda no Nº de Vendas/ticket medio. */
