@@ -26,6 +26,31 @@
   // (não guarda em cache aqui) para refletir qualquer alteração feita lá
   // sem precisar recarregar a página, mesmo padrão de DB.getRoles().
   function paymentMethods() { return DB.getPaymentMethods(); }
+
+  // ---------------- Sinal no Agendamento (04/11/2026) ----------------
+  // Valor recebido ANTECIPADAMENTE do cliente para reservar o horário. É só um
+  // REGISTRO informativo gravado no próprio agendamento, em campos PRÓPRIOS
+  // (depositPaid / depositAmount / depositMethod) — de propósito NÃO usa
+  // price (base de comissão e de receita de serviço) nem paymentMethod
+  // (forma de pagamento da CONCLUSÃO), e NÃO cria lançamento financeiro,
+  // comissão, gorjeta, estoque nem movimento de caixa. Nenhum relatório,
+  // dashboard, DRE ou conciliação lê estes campos. O valor cobrado ao
+  // concluir continua sendo o valor cheio do atendimento (o sinal NÃO é
+  // descontado automaticamente).
+  function apptHasDeposit(a) { return !!(a && a.depositPaid && Number(a.depositAmount) > 0); }
+  function apptDepositText(a) {
+    if (!apptHasDeposit(a)) return "";
+    return "Sinal recebido: " + Utils.fmtMoney(a.depositAmount) + (a.depositMethod ? " (" + a.depositMethod + ")" : "");
+  }
+  // Formas de pagamento oferecidas para o sinal: as cadastradas em Configurações,
+  // menos "Pacote" e "Parceria" (não são dinheiro recebido do cliente).
+  function depositMethodNames(current) {
+    var names = paymentMethods().filter(function (p) { return !p.isPackage && !p.isParceria; }).map(function (p) { return p.name; });
+    // forma já gravada que depois foi renomeada/removida em Configurações: mantém
+    // visível para o registro não "sumir" ao abrir o agendamento
+    if (current && names.indexOf(current) === -1) names.push(current);
+    return names;
+  }
   var OCC_TYPES = ["Ausência Médica", "Falta Justificada", "Compromisso Pessoal", "Bloqueio / Manutenção", "Outro"];
 
   // Grade da Visão do Dia: das 08:00 às 21:00, 0.8px por minuto — compacto o
@@ -461,7 +486,8 @@
       '<div class="avatar">' + Utils.initials(c ? c.name : "?") + '</div>' +
       '<div class="ai-main">' +
         '<div class="ai-service">' + Utils.escapeHtml(s ? s.name : "-") + ' — ' + Utils.escapeHtml(c ? c.name : "-") + '</div>' +
-        '<div class="ai-meta">Profissional: ' + Utils.escapeHtml(e ? e.name : "-") + (asst ? ' · Assistente: ' + Utils.escapeHtml(asst.name) : '') + ' · ' + Utils.fmtMoney(a.price) + '</div>' +
+        '<div class="ai-meta">Profissional: ' + Utils.escapeHtml(e ? e.name : "-") + (asst ? ' · Assistente: ' + Utils.escapeHtml(asst.name) : '') + ' · ' + Utils.fmtMoney(a.price) +
+          (apptHasDeposit(a) ? ' · <span class="badge badge-info" title="' + Utils.escapeHtml(apptDepositText(a)) + '"><i class="fa-solid fa-hand-holding-dollar"></i> Sinal ' + Utils.fmtMoney(a.depositAmount) + '</span>' : '') + '</div>' +
       '</div>' +
       statusBadgeHtml(a.status) +
       '<div class="flex gap-6">' + actions +
@@ -685,8 +711,8 @@
         "width:calc((100% - 6px) / " + lanes + " - 3px);";
     }
     return '<div class="cal-block status-' + (a.status || "agendado") + '" style="top:' + top + 'px;height:' + height + 'px;' + posStyle + '" data-appt-id="' + a.id + '" title="' +
-      Utils.escapeHtml((s ? s.name : "") + " - " + (c ? c.name : "") + (durAdjusted ? " (" + dur + "min)" : "")) + '">' +
-      '<div class="cb-time">' + a.time + (hasAsst ? ' <i class="fa-solid fa-user-plus" title="Com assistente"></i>' : '') + (durAdjusted ? ' <i class="fa-solid fa-clock" title="Duração ajustada: ' + dur + ' min"></i>' : '') + '</div>' +
+      Utils.escapeHtml((s ? s.name : "") + " - " + (c ? c.name : "") + (durAdjusted ? " (" + dur + "min)" : "") + (apptHasDeposit(a) ? " — " + apptDepositText(a) : "")) + '">' +
+      '<div class="cb-time">' + a.time + (hasAsst ? ' <i class="fa-solid fa-user-plus" title="Com assistente"></i>' : '') + (apptHasDeposit(a) ? ' <i class="fa-solid fa-hand-holding-dollar" title="' + Utils.escapeHtml(apptDepositText(a)) + '"></i>' : '') + (durAdjusted ? ' <i class="fa-solid fa-clock" title="Duração ajustada: ' + dur + ' min"></i>' : '') + '</div>' +
       '<div class="cb-title">' + Utils.escapeHtml(s ? s.name : "-") + '</div>' +
       '<div class="cb-meta">' + Utils.escapeHtml(c ? c.name : "-") + '</div>' +
     '</div>';
@@ -2519,6 +2545,24 @@
       (a && a.status === "concluido" && a.paymentMethod ?
         '<div class="form-field full"><label>Forma de Pagamento</label><input type="text" value="' + Utils.escapeHtml(a.paymentMethod) + (a.installments > 1 ? " (" + a.installments + "x)" : "") + '" disabled></div>'
       : "") +
+      // Sinal no Agendamento (ver apptHasDeposit no topo do arquivo): só registro
+      // informativo, fica no agendamento e não vai para o financeiro.
+      '<div class="form-field full" id="am-dep-wrap" style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;">' +
+        '<div class="form-grid">' +
+          '<div class="form-field"><label>Sinal no Agendamento</label><select id="am-dep-paid">' +
+            '<option value="nao">Não houve sinal</option>' +
+            '<option value="sim"' + (apptHasDeposit(a) ? " selected" : "") + '>Sim, recebeu sinal</option>' +
+          '</select></div>' +
+          '<div id="am-dep-fields" class="form-grid" style="grid-column:1/-1;display:' + (apptHasDeposit(a) ? "grid" : "none") + ';">' +
+            '<div class="form-field"><label>Valor do sinal (R$)</label><input type="text" id="am-dep-amount" inputmode="decimal"></div>' +
+            '<div class="form-field"><label>Forma de pagamento do sinal</label><select id="am-dep-method">' +
+              '<option value="">Selecione...</option>' +
+              depositMethodNames(a ? a.depositMethod : "").map(function (n) { return '<option value="' + Utils.escapeHtml(n) + '"' + (a && a.depositMethod === n ? " selected" : "") + '>' + Utils.escapeHtml(n) + '</option>'; }).join("") +
+            '</select></div>' +
+          '</div>' +
+          '<div class="form-field full"><div class="small text-muted">O sinal é só um registro deste agendamento: não entra no financeiro, nas comissões nem nos relatórios, e não é descontado automaticamente ao concluir — ao concluir, o sistema continua cobrando o valor do atendimento.</div></div>' +
+        '</div>' +
+      '</div>' +
       '</div>' +
       '<div class="divider" style="margin:14px 0;"></div>' +
       '<div class="form-grid">' +
@@ -2565,6 +2609,11 @@
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
     var box = Modal.open({ title: a ? "Editar Agendamento" : "Novo Agendamento", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#am-price"), a ? a.price : 0);
+    Utils.wireMoneyMask(box.querySelector("#am-dep-amount"), apptHasDeposit(a) ? a.depositAmount : 0);
+    (function wireDeposit() {
+      var sel = box.querySelector("#am-dep-paid"), fields = box.querySelector("#am-dep-fields");
+      sel.addEventListener("change", function () { fields.style.display = sel.value === "sim" ? "grid" : "none"; });
+    })();
 
     var amClientCombo = NameCombo.wire(box, { id: "am-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }) });
     var amEmployeeCombo = NameCombo.wire(box, { id: "am-employee", items: [] });
@@ -3139,6 +3188,24 @@
       if (!patch.date || !patch.time) { Toast.show("Informe data e hora", "danger"); return; }
       if (!patch.employeeId) { Toast.show("Selecione um profissional", "danger"); return; }
       if (hasAsst && !patch.assistantId) { Toast.show("Selecione o assistente ou desmarque a opção", "danger"); return; }
+      // Sinal no Agendamento: só mexe nos campos depositPaid/depositAmount/
+      // depositMethod. Agendamento sem sinal que continua sem sinal NÃO recebe
+      // nenhum campo novo (registros antigos ficam intactos).
+      var depositNote = "";
+      var hadDeposit = apptHasDeposit(a);
+      if (box.querySelector("#am-dep-paid").value === "sim") {
+        var depAmount = round2(Utils.moneyMaskToFloat(box.querySelector("#am-dep-amount")));
+        var depMethod = box.querySelector("#am-dep-method").value;
+        if (!(depAmount > 0)) { Toast.show("Informe o valor do sinal recebido", "danger"); return; }
+        if (!depMethod) { Toast.show("Selecione a forma de pagamento do sinal", "danger"); return; }
+        patch.depositPaid = true; patch.depositAmount = depAmount; patch.depositMethod = depMethod;
+        if (!hadDeposit || Number(a.depositAmount) !== depAmount || a.depositMethod !== depMethod) {
+          depositNote = "Registrou sinal de " + Utils.fmtMoney(depAmount) + " (" + depMethod + ")" + (hadDeposit ? " — antes: " + Utils.fmtMoney(a.depositAmount) + " (" + (a.depositMethod || "-") + ")" : "");
+        }
+      } else if (hadDeposit) {
+        patch.depositPaid = false; patch.depositAmount = null; patch.depositMethod = null;
+        depositNote = "Removeu o sinal registrado (" + Utils.fmtMoney(a.depositAmount) + (a.depositMethod ? ", " + a.depositMethod : "") + ")";
+      }
       // Lançamento em data/hora retroativa é permitido para qualquer status
       // (inclusive "agendado") — a pedido do usuário, para registrar
       // atendimentos feitos no passado sem precisar passar por "Concluído"
@@ -3211,6 +3278,10 @@
         Toast.show("Pacote vendido — lembre-se de cobrar o valor cheio ao concluir esta sessão", "success");
       }
       else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
+      if (depositNote && savedAppt) {
+        var depClient = DB.get("clients", savedAppt.clientId);
+        DB.log("Agenda", depositNote + " — agendamento de " + (depClient ? depClient.name : "cliente") + " em " + savedAppt.date + " " + savedAppt.time);
+      }
       // A agenda permite salvar agendamentos no mesmo horário/sobrepostos
       // sem mexer em mais nada — o sistema não reorganiza automaticamente
       // os agendamentos seguintes do profissional; quem administra a
