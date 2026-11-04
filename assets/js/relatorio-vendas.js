@@ -83,16 +83,21 @@
     var total = sum(sales);
     var produtoTotal = sum(sales.filter(function (t) { return !!t.productId; }));
     var servicoTotal = total - produtoTotal;
-    var ticketMedio = sales.length ? total / sales.length : 0;
+    // Sinal de agendamento (04/11/2026): o lançamento do sinal (isDeposit) entra no
+    // TOTAL (dinheiro recebido), mas não conta como uma venda a mais — a venda é
+    // contada uma vez, no lançamento da conclusão. Evita Nº de Vendas inflado e
+    // Ticket Médio reduzido por um mesmo atendimento pago em duas parcelas.
+    var salesCount = sales.filter(function (t) { return !t.isDeposit; }).length;
+    var ticketMedio = salesCount ? total / salesCount : 0;
 
     document.getElementById("rv-summary").innerHTML = [
       kpi("Total de Vendas", Utils.fmtMoney(total), "fa-cash-register", "#0eb8d9", "#dbf7fc"),
-      kpi("Nº de Vendas", String(sales.length), "fa-receipt", "#4a3aa7", "#ece8f8"),
+      kpi("Nº de Vendas", String(salesCount), "fa-receipt", "#4a3aa7", "#ece8f8"),
       kpi("Ticket Médio", Utils.fmtMoney(ticketMedio), "fa-tags", "#6d5efc", "#ece9ff"),
       kpi("Serviços x Produtos", Utils.fmtMoney(servicoTotal) + " / " + Utils.fmtMoney(produtoTotal), "fa-scale-balanced", "#1baf7a", "#e2f5ec")
     ].join("");
 
-    document.getElementById("rv-count-sub").textContent = sales.length + " venda(s) no período selecionado";
+    document.getElementById("rv-count-sub").textContent = salesCount + " venda(s) no período selecionado" + (salesCount !== sales.length ? " (+ " + (sales.length - salesCount) + " sinal(is) de agendamento nos lançamentos abaixo)" : "");
 
     // daily trend
     var byDay = {};

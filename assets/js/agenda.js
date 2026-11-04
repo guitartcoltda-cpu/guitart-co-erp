@@ -28,19 +28,78 @@
   function paymentMethods() { return DB.getPaymentMethods(); }
 
   // ---------------- Sinal no Agendamento (04/11/2026) ----------------
-  // Valor recebido ANTECIPADAMENTE do cliente para reservar o horário. É só um
-  // REGISTRO informativo gravado no próprio agendamento, em campos PRÓPRIOS
-  // (depositPaid / depositAmount / depositMethod) — de propósito NÃO usa
-  // price (base de comissão e de receita de serviço) nem paymentMethod
-  // (forma de pagamento da CONCLUSÃO), e NÃO cria lançamento financeiro,
-  // comissão, gorjeta, estoque nem movimento de caixa. Nenhum relatório,
-  // dashboard, DRE ou conciliação lê estes campos. O valor cobrado ao
-  // concluir continua sendo o valor cheio do atendimento (o sinal NÃO é
-  // descontado automaticamente).
+  // Valor recebido ANTECIPADAMENTE do cliente para reservar o horário.
+  // 04/11/2026 (2ª etapa, decisão do João): o sinal agora É lançado no
+  // financeiro, vinculado ao agendamento, e abatido na conclusão:
+  //   • Ao salvar o sinal cria-se UM lançamento de RECEITA (isDeposit:true,
+  //     appointmentId do agendamento, data = data do recebimento, forma de
+  //     pagamento do sinal). É a fonte da verdade do valor do sinal.
+  //   • Ao CONCLUIR, o valor cobrado do atendimento continua o valor cheio
+  //     (price, base da comissão e da receita de serviço — NÃO muda), mas o
+  //     lançamento da conclusão leva só o RESTANTE (cheio − sinal) e o "A
+  //     Receber" da tela também. Assim receita total = valor cheio, sem
+  //     cobrar nem contar duas vezes.
+  //   • Campos no agendamento (espelho para exibição): depositPaid,
+  //     depositAmount, depositMethod, depositDate, depositTxnId e, depois da
+  //     conclusão, depositApplied/depositAppliedAmount (trava a edição).
+  // Aviso sobre o sinal ao excluir/cancelar/marcar falta: o dinheiro já foi
+  // recebido e está lançado como receita — essas ações NÃO mexem nesse lançamento.
+  function depositKeepNote(a) {
+    return apptHasDeposit(a) ? " Este agendamento tem sinal de " + Utils.fmtMoney(a.depositAmount) + " já lançado no financeiro como receita; essa ação NÃO altera nem estorna esse lançamento (se for devolver o sinal ao cliente, faça o estorno em Lançamentos)." : "";
+  }
   function apptHasDeposit(a) { return !!(a && a.depositPaid && Number(a.depositAmount) > 0); }
   function apptDepositText(a) {
     if (!apptHasDeposit(a)) return "";
     return "Sinal recebido: " + Utils.fmtMoney(a.depositAmount) + (a.depositMethod ? " (" + a.depositMethod + ")" : "");
+  }
+  // Lançamento financeiro do sinal deste agendamento (pelo vínculo gravado;
+  // se o vínculo se perdeu, procura por isDeposit+appointmentId para nunca
+  // criar um segundo lançamento).
+  function depositTxnOf(a) {
+    if (!a) return null;
+    var t = a.depositTxnId ? DB.get("transactions", a.depositTxnId) : null;
+    if (t && t.isDeposit && t.appointmentId === a.id) return t;
+    var found = DB.all("transactions").filter(function (x) { return x.isDeposit && x.appointmentId === a.id; });
+    return found.length ? found[0] : null;
+  }
+  // O que a CONCLUSÃO deve abater: valor do lançamento do sinal (fonte da
+  // verdade) — nada se já foi abatido antes (não abate duas vezes) ou se o
+  // lançamento não existe mais (aí o aviso `missing` é mostrado).
+  function depositForConclusion(appt) {
+    var out = { amount: 0, txn: null, missing: false, method: "", date: "" };
+    if (!appt || !appt.depositPaid || appt.depositApplied) return out;
+    var t = depositTxnOf(appt);
+    if (!t || t.type !== "receita") { out.missing = true; return out; }
+    out.txn = t; out.amount = round2(Number(t.amount) || 0); out.method = t.paymentMethod || ""; out.date = t.date || "";
+    return out;
+  }
+  function depositConclusionBoxHtml(id, dep) {
+    if (dep.amount > 0) {
+      return '<div class="form-field full" id="' + id + '"><div style="border:1px solid #bfe3c8;background:#eef7f0;border-radius:var(--radius-md);padding:10px 12px;font-size:13px;">' +
+        '<i class="fa-solid fa-hand-holding-dollar"></i> <strong>Sinal já recebido: ' + Utils.fmtMoney(dep.amount) + '</strong>' + (dep.method ? ' (' + Utils.escapeHtml(dep.method) + ')' : '') + (dep.date ? ' em ' + Utils.fmtDate(dep.date) : '') + ' — já lançado no financeiro. ' +
+        '<span data-dep-rest>O restante a receber agora é calculado abaixo; o sinal não será cobrado nem lançado de novo.</span></div></div>';
+    }
+    if (dep.missing) {
+      return '<div class="form-field full" id="' + id + '"><div style="border:1px solid #f0d4b0;background:#fdf3ea;border-radius:var(--radius-md);padding:10px 12px;font-size:13px;">' +
+        '<i class="fa-solid fa-triangle-exclamation"></i> Este agendamento tem sinal registrado, mas o lançamento do sinal não foi encontrado em Lançamentos. Nada será abatido: confira antes de cobrar.</div></div>';
+    }
+    return "";
+  }
+  // Monta o lançamento financeiro do sinal.
+  function buildDepositTxn(appt, spec) {
+    var service = DB.get("services", appt.serviceId);
+    var client = DB.get("clients", appt.clientId);
+    var category = service ? DB.findOne("categories", function (c) { return c.id === service.categoryId; }) : null;
+    var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
+    var isCredit = spec.method === "Cartão de Crédito";
+    var isCard = isCredit || spec.method === "Cartão de Débito";
+    return {
+      type: "receita", description: "Sinal - " + (service ? service.name : "Atendimento") + " - " + (client ? client.name : "Cliente"),
+      amount: spec.amount, date: spec.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+      paymentMethod: spec.method, status: "pago", installments: isCredit ? (spec.installments || 1) : null,
+      cardMachineId: isCard ? (spec.machineId || null) : null, feePaidBy: null,
+      employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, isDeposit: true, reconciled: false
+    };
   }
   // Formas de pagamento oferecidas para o sinal: as cadastradas em Configurações,
   // menos "Pacote" e "Parceria" (não são dinheiro recebido do cliente).
@@ -506,7 +565,7 @@
         guardApptTransition(id, ["agendado"], function () {
           DB.update("appointments", id, { status: "cancelado" });
           if (appt) DB.log("Agenda", "Cancelou o agendamento de " + appt.date + " " + appt.time);
-          Toast.show("Agendamento cancelado", "info"); render();
+          Toast.show("Agendamento cancelado" + (apptHasDeposit(appt) ? " — o sinal de " + Utils.fmtMoney(appt.depositAmount) + " continua lançado no financeiro" : ""), "info", apptHasDeposit(appt) ? 7000 : undefined); render();
         }, function (fresh) {
           Toast.show("Este agendamento já foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + "). A tela foi atualizada.", "danger", 6500);
           render();
@@ -518,7 +577,7 @@
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-del");
         Modal.confirm({
-          title: "Excluir agendamento", message: "Deseja excluir este agendamento?", danger: true,
+          title: "Excluir agendamento", message: "Deseja excluir este agendamento?" + depositKeepNote(DB.get("appointments", id)), danger: true,
           onConfirm: function () {
             var appt = DB.get("appointments", id);
             DB.remove("appointments", id);
@@ -1753,6 +1812,10 @@
     // sobrescrever appt.price com o valor cobrado nesta tela.
     var isPackageSale = !!(appt.packagePurchaseId && appt.packageSessionIndex === 1);
     var packagePurchase = isPackageSale ? (client.packages || []).find(function (pp) { return pp.id === appt.packagePurchaseId; }) : null;
+    // Sinal já recebido e lançado no financeiro (ver depositForConclusion): é
+    // abatido do que será cobrado AGORA. Valor cheio (appt.price = base da
+    // comissão) não muda.
+    var dep = depositForConclusion(appt);
 
     // 09/09/2026: consumo de pacote via Forma de Pagamento (ver
     // isPackagePayMethod/activePackagePurchasesForService acima) — só
@@ -1767,6 +1830,7 @@
     var visiblePayMethods = methods.filter(function (p) { return !p.isPackage || pkgConsumeMatches.length > 0; });
 
     var body = '<div class="form-grid">' +
+      depositConclusionBoxHtml("cc-deposit-box", dep) +
       (isPackageSale && packagePurchase ? '<div class="form-field full"><div style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;background:var(--gray-50);font-size:13px;">' +
         'Venda do pacote "' + Utils.escapeHtml(packagePurchase.packageName) + '" (' + Utils.escapeHtml(packagePurchase.sizeLabel) + ', ' + packagePurchase.sessionsTotal + ' sessões). ' +
         'O valor abaixo é o valor CHEIO do pacote, cobrado uma única vez, agora. Em cada uma das próximas sessões, o profissional que atender recebe comissão sobre o valor diluído (' + Utils.fmtMoney(appt.price) + ' por sessão), conforme os atendimentos forem acontecendo.' +
@@ -1815,7 +1879,9 @@
     var amountWrap = box.querySelector("#cc-amount-wrap");
     var amountInput = box.querySelector("#cc-amount");
     var installmentsCtrl = wireInstallmentsField(box, "cc", paySelect);
-    var feeCtrl = wireFeeBreakdown(box, "cc", paySelect, installmentsCtrl, function () { return Utils.moneyMaskToFloat(amountInput) || 0; });
+    // Com sinal já recebido, só o RESTANTE passa pela maquininha/recebimento agora.
+    function ccChargeNow() { return Math.max(0, round2((Utils.moneyMaskToFloat(amountInput) || 0) - dep.amount)); }
+    var feeCtrl = wireFeeBreakdown(box, "cc", paySelect, installmentsCtrl, function () { return ccChargeNow(); });
     (function wireFeeSync() {
       var installmentsSelectEl = box.querySelector("#cc-installments");
       var machineSelectEl = box.querySelector("#cc-machine");
@@ -1846,7 +1912,7 @@
     if (packageChoiceEl) packageChoiceEl.addEventListener("change", updatePackageInfo);
 
     var recon = wireReconciliation(box, "cc", client, methods.filter(function (p) { return !p.isPackage; }),
-      function () { return (isParceriaMethod(paySelect.value, methods) || isPackagePayMethod(paySelect.value, methods)) ? 0 : (Utils.moneyMaskToFloat(amountInput) || 0); },
+      function () { return (isParceriaMethod(paySelect.value, methods) || isPackagePayMethod(paySelect.value, methods)) ? 0 : ccChargeNow(); },
       function () { return !isParceriaMethod(paySelect.value, methods) && !isPackagePayMethod(paySelect.value, methods); });
     function syncPayVisibility() {
       var isParc = isParceriaMethod(paySelect.value, methods);
@@ -1859,8 +1925,17 @@
       recon.refresh();
     }
     paySelect.addEventListener("change", syncPayVisibility);
-    amountInput.addEventListener("input", function () { recon.refresh(); });
+    function updateDepositBox() {
+      var restEl = box.querySelector("#cc-deposit-box [data-dep-rest]");
+      if (!restEl || !(dep.amount > 0)) return;
+      var gross = Utils.moneyMaskToFloat(amountInput) || 0;
+      restEl.textContent = gross + 0.004 < dep.amount
+        ? "ATENÇÃO: o valor cobrado (" + Utils.fmtMoney(gross) + ") é menor que o sinal já recebido. Ajuste o valor cobrado ou corrija o sinal antes de concluir."
+        : "Valor cobrado " + Utils.fmtMoney(gross) + " − sinal " + Utils.fmtMoney(dep.amount) + " = restante a receber agora: " + Utils.fmtMoney(round2(gross - dep.amount)) + ". O sinal não será cobrado nem lançado de novo.";
+    }
+    amountInput.addEventListener("input", function () { recon.refresh(); updateDepositBox(); });
     syncPayVisibility();
+    updateDepositBox();
 
     var rowsEl = box.querySelector("#cc-insumo-rows");
     box.querySelector("#cc-add-insumo").addEventListener("click", function () {
@@ -1880,6 +1955,13 @@
       var packageDilutedValue = chosenPurchase ? round2((chosenPurchase.totalPrice || 0) / (chosenPurchase.sessionsTotal || 1)) : null;
       var packageSessionIndexForLog = chosenPurchase ? (chosenPurchase.appointmentIds || []).length + 1 : null;
       var amount = isPkgPay ? packageDilutedValue : (Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || (isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price));
+      // Sinal já recebido: não combina com Parceria/Pacote (nada a cobrar do
+      // cliente) — o dinheiro do sinal ficaria sem destino — e não pode ser maior
+      // que o valor cobrado (sobraria dinheiro recebido sem atendimento).
+      if (dep.amount > 0 && (isParceria || isPkgPay)) { Toast.show("Este atendimento tem sinal de " + Utils.fmtMoney(dep.amount) + " já recebido: não pode ser concluído como Parceria ou Pacote. Escolha uma forma de pagamento normal ou corrija o sinal.", "danger", 7000); return; }
+      if (dep.amount > 0 && amount + 0.004 < dep.amount) { Toast.show("O valor cobrado (" + Utils.fmtMoney(amount) + ") é menor que o sinal já recebido (" + Utils.fmtMoney(dep.amount) + "). Ajuste o valor cobrado ou corrija o sinal.", "danger", 7000); return; }
+      var depApplied = dep.amount > 0 ? dep.amount : 0;
+      var chargeNow = round2(amount - depApplied);       // o que entra como receita AGORA (restante)
       var rows = Utils.qsa(".insumo-item-row", rowsEl);
       var revendaCat = DB.findOne("categories", function (c) { return c.name === "Venda de Produtos"; });
       var comercialCc = DB.findOne("costCenters", function (c) { return c.key === "comercial"; });
@@ -1909,7 +1991,8 @@
         // exibição em "Editar Agendamento" — payMethod já é "Pacote" no
         // caso de consumo de pacote (isPkgPay), então nenhum caso especial
         // é necessário aqui.
-        var apptPatch = { status: "concluido", paymentMethod: payMethod, installments: installments };
+        var apptPatch = { status: "concluido", paymentMethod: (depApplied > 0 && chargeNow <= 0.004) ? (dep.method || payMethod) : payMethod, installments: installments };
+        if (depApplied > 0) { apptPatch.depositApplied = true; apptPatch.depositAppliedAmount = depApplied; apptPatch.depositAmount = depApplied; apptPatch.depositTxnId = dep.txn.id; }
         if (isPkgPay) {
           apptPatch.price = packageDilutedValue;
           apptPatch.packagePurchaseId = chosenPurchase.id;
@@ -1962,7 +2045,7 @@
           // restante na forma alternativa — o total registrado continua
           // batendo exatamente com o Valor Cobrado, só a forma de
           // pagamento de uma fração dele é que fica dividida em duas.
-          var mainRevenue = round2(amount);
+          var mainRevenue = round2(chargeNow);
           if (recRes.diff < -0.004 && recRes.shortfallChoice === "outra_forma") {
             var shortfall = round2(Math.abs(recRes.diff));
             mainRevenue = round2(Math.max(0, mainRevenue - shortfall));
@@ -1973,12 +2056,18 @@
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           }
-          DB.insert("transactions", {
-            type: "receita", description: service.name + " - " + client.name, amount: mainRevenue,
-            date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-            paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy,
-            employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
-          });
+          // Sinal cobrindo o valor inteiro: não há restante a lançar (a receita já
+          // está no lançamento do sinal) — não cria lançamento de R$ 0,00.
+          if (!(depApplied > 0 && mainRevenue <= 0.004)) {
+            var mainTxn = {
+              type: "receita", description: service.name + " - " + client.name + (depApplied > 0 ? " (restante — sinal de " + Utils.fmtMoney(depApplied) + " já recebido)" : ""), amount: mainRevenue,
+              date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+              paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy,
+              employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+            };
+            if (depApplied > 0) { mainTxn.depositAppliedAmount = depApplied; mainTxn.depositTxnId = dep.txn.id; }
+            DB.insert("transactions", mainTxn);
+          }
           // Crédito do cliente: usado agora (desconta), gerado agora
           // (pagou a mais) e/ou pendência (se optou por deixar em aberto).
           if (recRes.creditToUse > 0) applyCreditChange(client, -recRes.creditToUse, "Crédito utilizado no atendimento (" + service.name + ")", appt);
@@ -2026,7 +2115,7 @@
 
       DB.log("Agenda", "Concluiu o atendimento " + service.name + " - " + client.name +
         (isPkgPay ? " consumindo a sessão " + packageSessionIndexForLog + " de " + chosenPurchase.sessionsTotal + " do pacote \"" + chosenPurchase.packageName + "\" (comissão sobre " + Utils.fmtMoney(packageDilutedValue) + ", sem cobrança nova)" :
-         isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + ")") +
+         isParceria ? " como Parceria (divisão " + splitPct + "% profissional / " + round2(100 - splitPct) + "% salão, base " + Utils.fmtMoney(amount) + ")" : " (" + Utils.fmtMoney(amount) + (depApplied > 0 ? ", sendo " + Utils.fmtMoney(depApplied) + " já recebido de sinal e " + Utils.fmtMoney(chargeNow) + " recebido agora" : "") + ")") +
         (installments > 1 ? " em " + installments + "x no crédito" : "") +
         (isPackageSale && packagePurchase ? " — venda do pacote \"" + packagePurchase.packageName + "\" (comissão desta sessão sobre " + Utils.fmtMoney(appt.price) + ")" : "") +
         (rows.length ? " com " + rows.length + " item(ns) de insumo/produto" : ""));
@@ -2071,9 +2160,11 @@
         service: DB.get("services", appt.serviceId),
         employee: DB.get("employees", appt.employeeId),
         assistant: appt.assistantId ? DB.get("employees", appt.assistantId) : null,
-        rowPrefix: "ccg" + idx
+        rowPrefix: "ccg" + idx,
+        dep: depositForConclusion(appt)   // sinal já recebido deste atendimento (ver depositForConclusion)
       };
     });
+    var groupDepTotal = round2(lines.reduce(function (sm, l) { return sm + l.dep.amount; }, 0));
 
     var body = '<div class="small text-muted mb-16"><i class="fa-solid fa-circle-info"></i> ' + Utils.escapeHtml(client.name) + ' tem ' + group.length + ' atendimentos agendados para ' + Utils.fmtDate(group[0].date) + '. Confira e conclua tudo de uma vez.</div>' +
       lines.map(function (l) {
@@ -2082,6 +2173,7 @@
             '<div class="small text-muted">Profissional: ' + Utils.escapeHtml(l.employee ? l.employee.name : "-") + (l.assistant ? " · Assistente: " + Utils.escapeHtml(l.assistant.name) : "") + '</div>' +
           '</div>' +
           '<div class="form-grid">' +
+            depositConclusionBoxHtml(l.rowPrefix + "-deposit-box", l.dep) +
             '<div class="form-field"><label>Valor Cobrado (R$)</label><input type="text" id="' + l.rowPrefix + '-amount"></div>' +
           '</div>' +
           '<div id="' + l.rowPrefix + '-parceria-block" class="form-grid" style="display:none;margin-top:8px;">' +
@@ -2101,6 +2193,7 @@
         '<div class="form-field"><label>Forma de Pagamento</label><select id="ccg-pay">' + methods.map(function (p) { return '<option value="' + Utils.escapeHtml(p.name) + '">' + Utils.escapeHtml(p.name) + '</option>'; }).join("") + '</select></div>' +
         installmentsFieldHtml("ccg") +
         '<div class="form-field"><label>Total</label><input type="text" id="ccg-total" disabled></div>' +
+        (groupDepTotal > 0 ? '<div class="form-field"><label>Restante a receber agora (total − sinais já recebidos)</label><input type="text" id="ccg-net" disabled></div>' : '') +
         machineSelectFieldHtml("ccg") +
         feePayerFieldHtml("ccg") +
         feeBreakdownHtml("ccg") +
@@ -2112,7 +2205,9 @@
 
     var paySelectG = box.querySelector("#ccg-pay");
     var installmentsCtrlG = wireInstallmentsField(box, "ccg", paySelectG);
-    var feeCtrlG = wireFeeBreakdown(box, "ccg", paySelectG, installmentsCtrlG, function () { return Utils.moneyMaskToFloat(box.querySelector("#ccg-total")) || 0; });
+    // Com sinais já recebidos, só o RESTANTE (total − sinais) passa pela maquininha/recebimento agora.
+    function ccgChargeNow() { return Math.max(0, round2((Utils.moneyMaskToFloat(box.querySelector("#ccg-total")) || 0) - groupDepTotal)); }
+    var feeCtrlG = wireFeeBreakdown(box, "ccg", paySelectG, installmentsCtrlG, function () { return ccgChargeNow(); });
 
     function isGroupParceria() { return isParceriaMethod(paySelectG.value, methods); }
 
@@ -2123,6 +2218,11 @@
         total += Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || 0;
       });
       Utils.setMoneyMaskValue(box.querySelector("#ccg-total"), total);
+      var netEl = box.querySelector("#ccg-net");
+      if (netEl) {
+        if (!netEl.getAttribute("data-wired")) { Utils.wireMoneyMask(netEl, 0); netEl.setAttribute("data-wired", "1"); }
+        Utils.setMoneyMaskValue(netEl, Math.max(0, round2(total - groupDepTotal)));
+      }
       feeCtrlG.sync();
     }
 
@@ -2131,7 +2231,7 @@
         if (isGroupParceria()) return 0;
         var total = 0;
         lines.forEach(function (l) { total += Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || 0; });
-        return total;
+        return Math.max(0, round2(total - groupDepTotal));
       },
       function () { return !isGroupParceria(); });
 
@@ -2189,6 +2289,18 @@
       // Cobrado de cada linha (usado na comissão) não é alterado por isso.
       var pendingShortfall = (!isParceria && recRes.diff < -0.004 && recRes.shortfallChoice === "outra_forma") ? round2(Math.abs(recRes.diff)) : 0;
 
+      // Sinal já recebido (ver depositForConclusion): não combina com Parceria
+      // (cliente não paga) e não pode ser maior que o valor cobrado da linha.
+      if (groupDepTotal > 0 && isParceria) { Toast.show("Há atendimentos com sinal já recebido neste Fechar Conta: não pode ser fechado como Parceria. Escolha uma forma de pagamento normal ou corrija o sinal.", "danger", 7000); return; }
+      for (var gi = 0; gi < lines.length; gi++) {
+        var gl = lines[gi];
+        var glAmount = Utils.moneyMaskToFloat(box.querySelector("#" + gl.rowPrefix + "-amount")) || gl.appt.price;
+        if (gl.dep.amount > 0 && glAmount + 0.004 < gl.dep.amount) {
+          Toast.show("O valor cobrado de " + (gl.service ? gl.service.name : "um atendimento") + " (" + Utils.fmtMoney(glAmount) + ") é menor que o sinal já recebido (" + Utils.fmtMoney(gl.dep.amount) + "). Ajuste o valor cobrado ou corrija o sinal.", "danger", 7000);
+          return;
+        }
+      }
+
       // BUG CORRIGIDO (18/09/2026, varredura de "múltiplos usuários em
       // tempo real"): este modal reúne VÁRIOS agendamentos capturados uma
       // única vez (`group`, antes mesmo do modal abrir) e pode ficar
@@ -2209,7 +2321,10 @@
           // Mesma forma de pagamento (e parcelas) do "Fechar Conta" (payMethod,
           // escolhida uma única vez para o grupo inteiro) gravada em cada
           // agendamento do grupo — só para exibição em "Editar Agendamento".
-          var apptPatch = { status: "concluido", price: amount, paymentMethod: payMethod, installments: installments };
+          var lineDep = l.dep.amount > 0 ? l.dep.amount : 0;
+          var lineCharge = round2(amount - lineDep);   // restante a lançar agora (sinal já está lançado)
+          var apptPatch = { status: "concluido", price: amount, paymentMethod: (lineDep > 0 && lineCharge <= 0.004) ? (l.dep.method || payMethod) : payMethod, installments: installments };
+          if (lineDep > 0) { apptPatch.depositApplied = true; apptPatch.depositAppliedAmount = lineDep; apptPatch.depositAmount = lineDep; apptPatch.depositTxnId = l.dep.txn.id; }
           var splitPct = null;
           if (isParceria) {
             splitPct = resolvedParceriaSplitPercent(box, l.rowPrefix + "-parceria-pct", appt, l.employee);
@@ -2229,18 +2344,23 @@
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           } else {
-            var lineRevenue = round2(amount);
+            var lineRevenue = round2(lineCharge);
             if (pendingShortfall > 0) {
               var take = Math.min(pendingShortfall, lineRevenue);
               lineRevenue = round2(lineRevenue - take);
               pendingShortfall = round2(pendingShortfall - take);
             }
-            DB.insert("transactions", {
-              type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name, amount: lineRevenue,
-              date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
-              paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy,
-              employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
-            });
+            // Sinal cobrindo a linha inteira: nada a lançar agora (receita já no lançamento do sinal).
+            if (!(lineDep > 0 && lineCharge <= 0.004)) {
+              var lineTxn = {
+                type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name + (lineDep > 0 ? " (restante — sinal de " + Utils.fmtMoney(lineDep) + " já recebido)" : ""), amount: lineRevenue,
+                date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
+                paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy,
+                employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
+              };
+              if (lineDep > 0) { lineTxn.depositAppliedAmount = lineDep; lineTxn.depositTxnId = l.dep.txn.id; }
+              DB.insert("transactions", lineTxn);
+            }
           }
 
           var tipEmp = Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-tip-emp")) || 0;
@@ -2307,7 +2427,7 @@
         }
       });
 
-      DB.log("Agenda", "Fechou conta consolidada de " + client.name + " (" + summaryParts.join(" + ") + ")" + (isParceria ? " como Parceria" : " — total " + Utils.fmtMoney(totalAmount)) + (insumoCount ? " com " + insumoCount + " item(ns) de insumo/produto" : ""));
+      DB.log("Agenda", "Fechou conta consolidada de " + client.name + " (" + summaryParts.join(" + ") + ")" + (isParceria ? " como Parceria" : " — total " + Utils.fmtMoney(totalAmount) + (groupDepTotal > 0 ? " (sinais já recebidos: " + Utils.fmtMoney(groupDepTotal) + "; recebido agora: " + Utils.fmtMoney(round2(totalAmount - groupDepTotal)) + ")" : "")) + (insumoCount ? " com " + insumoCount + " item(ns) de insumo/produto" : ""));
       // Um único pedido de avaliação por visita (não um por serviço), para
       // não mandar vários pedidos de avaliação seguidos para o mesmo
       // cliente por causa de um mesmo atendimento com vários serviços.
@@ -2450,6 +2570,33 @@
     var currentEmployee = a ? DB.all("employees").find(function (e) { return e.id === a.employeeId; }) : null;
     var currentAssistant = a && a.assistantId ? DB.all("employees").find(function (e) { return e.id === a.assistantId; }) : null;
 
+    // Sinal no Agendamento — estado do bloco (ver apptHasDeposit/depositTxnOf):
+    // o lançamento financeiro, quando existe, é a fonte da verdade dos valores.
+    var depTxn = a ? depositTxnOf(a) : null;
+    var depHas = apptHasDeposit(a);
+    var depView = depHas ? {
+      amount: depTxn ? Number(depTxn.amount) : Number(a.depositAmount),
+      method: depTxn ? depTxn.paymentMethod : a.depositMethod,
+      date: depTxn ? depTxn.date : (a.depositDate || ""),
+      installments: depTxn ? depTxn.installments : (a.depositInstallments || null),
+      machineId: depTxn ? depTxn.cardMachineId : (a.depositMachineId || null)
+    } : null;
+    var depApplied = !!(a && a.depositApplied);
+    var depReconciled = !!(depTxn && depTxn.reconciled);
+    var depSessionBlocked = !!(a && a.packagePurchaseId && a.packageSessionIndex > 1);
+    // Depois de concluído o atendimento (valor cheio já cobrado): nem registrar nem
+    // alterar sinal — senão o dinheiro seria contado em dobro.
+    var depConcludedBlocked = !!(a && a.status === "concluido");
+    var depReadOnly = depApplied || depReconciled || depSessionBlocked || depConcludedBlocked;
+    var depNote = "";
+    if (depApplied) depNote = "Este sinal já foi abatido na conclusão do atendimento e não pode mais ser alterado aqui. Para corrigir, ajuste o lançamento em Lançamentos.";
+    else if (depReconciled) depNote = "O lançamento deste sinal já foi conciliado com o extrato bancário e não pode ser alterado aqui. Para corrigir, desfaça a conciliação em Conciliação Bancária.";
+    else if (depSessionBlocked) depNote = "Sessão de pacote já pago: não há valor a cobrar, então não se registra sinal nela.";
+    else if (depConcludedBlocked) depNote = "Atendimento já concluído: não é possível registrar sinal depois da conclusão (o valor já foi cobrado por inteiro).";
+    else if (depHas && !depTxn && a.depositTxnId) depNote = "O lançamento financeiro deste sinal não foi encontrado em Lançamentos (foi excluído?). Para lançar de novo, altere o valor ou a forma e salve.";
+    else if (depHas && !depTxn) depNote = "Este sinal foi registrado antes da integração com o financeiro: ao salvar o agendamento ele será lançado em Lançamentos.";
+    var depMethodNames_ = depositMethodNames(depView ? depView.method : "");
+
     // Um pedido de alteração de comissão feito ANTES do agendamento existir
     // (tela de Novo Agendamento) não tem um appointmentId para anexar ainda
     // — fica guardado aqui e só vira uma solicitação de verdade (Approvals.request)
@@ -2545,22 +2692,25 @@
       (a && a.status === "concluido" && a.paymentMethod ?
         '<div class="form-field full"><label>Forma de Pagamento</label><input type="text" value="' + Utils.escapeHtml(a.paymentMethod) + (a.installments > 1 ? " (" + a.installments + "x)" : "") + '" disabled></div>'
       : "") +
-      // Sinal no Agendamento (ver apptHasDeposit no topo do arquivo): só registro
-      // informativo, fica no agendamento e não vai para o financeiro.
+      // Sinal no Agendamento (ver apptHasDeposit no topo do arquivo): vira receita
+      // vinculada ao agendamento e é abatido na conclusão.
       '<div class="form-field full" id="am-dep-wrap" style="border:1px solid var(--border-color);border-radius:var(--radius-md);padding:12px;">' +
         '<div class="form-grid">' +
-          '<div class="form-field"><label>Sinal no Agendamento</label><select id="am-dep-paid">' +
+          '<div class="form-field"><label>Sinal no Agendamento</label><select id="am-dep-paid"' + (depReadOnly ? " disabled" : "") + '>' +
             '<option value="nao">Não houve sinal</option>' +
-            '<option value="sim"' + (apptHasDeposit(a) ? " selected" : "") + '>Sim, recebeu sinal</option>' +
+            '<option value="sim"' + (depHas ? " selected" : "") + '>Sim, recebeu sinal</option>' +
           '</select></div>' +
-          '<div id="am-dep-fields" class="form-grid" style="grid-column:1/-1;display:' + (apptHasDeposit(a) ? "grid" : "none") + ';">' +
-            '<div class="form-field"><label>Valor do sinal (R$)</label><input type="text" id="am-dep-amount" inputmode="decimal"></div>' +
-            '<div class="form-field"><label>Forma de pagamento do sinal</label><select id="am-dep-method">' +
+          '<div id="am-dep-fields" class="form-grid" style="grid-column:1/-1;display:' + (depHas ? "grid" : "none") + ';">' +
+            '<div class="form-field"><label>Valor do sinal (R$)</label><input type="text" id="am-dep-amount" inputmode="decimal"' + (depReadOnly ? " disabled" : "") + '></div>' +
+            '<div class="form-field"><label>Forma de pagamento do sinal</label><select id="am-dep-method"' + (depReadOnly ? " disabled" : "") + '>' +
               '<option value="">Selecione...</option>' +
-              depositMethodNames(a ? a.depositMethod : "").map(function (n) { return '<option value="' + Utils.escapeHtml(n) + '"' + (a && a.depositMethod === n ? " selected" : "") + '>' + Utils.escapeHtml(n) + '</option>'; }).join("") +
+              depMethodNames_.map(function (n) { return '<option value="' + Utils.escapeHtml(n) + '"' + (depView && depView.method === n ? " selected" : "") + '>' + Utils.escapeHtml(n) + '</option>'; }).join("") +
             '</select></div>' +
+            '<div class="form-field"><label>Data do recebimento</label><input type="date" id="am-dep-date" max="' + Utils.todayISO() + '" value="' + (depView && depView.date ? depView.date : Utils.todayISO()) + '"' + (depReadOnly ? " disabled" : "") + '></div>' +
+            installmentsFieldHtml("am-dep") +
+            machineSelectFieldHtml("am-dep") +
           '</div>' +
-          '<div class="form-field full"><div class="small text-muted">O sinal é só um registro deste agendamento: não entra no financeiro, nas comissões nem nos relatórios, e não é descontado automaticamente ao concluir — ao concluir, o sistema continua cobrando o valor do atendimento.</div></div>' +
+          '<div class="form-field full"><div class="small text-muted">' + (depNote ? '<i class="fa-solid fa-circle-info"></i> ' + depNote : 'O sinal é lançado no financeiro como receita, na data do recebimento, e abatido automaticamente do valor a receber ao concluir o atendimento — assim o cliente não paga duas vezes e a receita não é contada em dobro. Comissão e valor do atendimento não mudam.') + '</div></div>' +
         '</div>' +
       '</div>' +
       '</div>' +
@@ -2609,10 +2759,21 @@
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
     var box = Modal.open({ title: a ? "Editar Agendamento" : "Novo Agendamento", wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#am-price"), a ? a.price : 0);
-    Utils.wireMoneyMask(box.querySelector("#am-dep-amount"), apptHasDeposit(a) ? a.depositAmount : 0);
+    Utils.wireMoneyMask(box.querySelector("#am-dep-amount"), depView ? depView.amount : 0);
+    var depInstCtrl = wireInstallmentsField(box, "am-dep", box.querySelector("#am-dep-method"));
     (function wireDeposit() {
       var sel = box.querySelector("#am-dep-paid"), fields = box.querySelector("#am-dep-fields");
+      var methSel = box.querySelector("#am-dep-method"), machField = box.querySelector("#am-dep-machine-field");
+      function syncMachine() {
+        var isCard = methSel.value === "Cartão de Crédito" || methSel.value === "Cartão de Débito";
+        if (machField) machField.style.display = isCard ? "" : "none";
+        if (!isCard) { var ms = box.querySelector("#am-dep-machine"); if (ms) ms.value = ""; }
+      }
       sel.addEventListener("change", function () { fields.style.display = sel.value === "sim" ? "grid" : "none"; });
+      methSel.addEventListener("change", syncMachine);
+      if (depView && depView.installments && methSel.value === "Cartão de Crédito") box.querySelector("#am-dep-installments").value = String(depView.installments);
+      if (depView && depView.machineId) { var ms0 = box.querySelector("#am-dep-machine"); if (ms0) ms0.value = depView.machineId; }
+      syncMachine();
     })();
 
     var amClientCombo = NameCombo.wire(box, { id: "am-client", items: clients.map(function (c) { return { id: c.id, label: c.name }; }) });
@@ -2728,6 +2889,9 @@
         priceWrapEl.style.display = mode === "avulso" ? "" : "none";
         sessionBlockEl.style.display = mode === "session" ? "" : "none";
         sellBlockEl.style.display = mode === "sell" ? "" : "none";
+        // sessão de pacote já pago não tem valor a cobrar: sem sinal
+        var depWrapEl = box.querySelector("#am-dep-wrap");
+        if (depWrapEl) depWrapEl.style.display = mode === "session" ? "none" : "";
         if (mode === "avulso") {
           if (amServiceCombo.getValue()) fillFromService(servicesById[amServiceCombo.getValue()]);
         } else {
@@ -3014,7 +3178,7 @@
           DB.update("appointments", a.id, { status: "faltou" });
           DB.log("Agenda", "Marcou falta no agendamento de " + a.date + " " + a.time);
           Modal.close();
-          Toast.show("Falta registrada", "info");
+          Toast.show("Falta registrada" + (apptHasDeposit(a) ? " — o sinal de " + Utils.fmtMoney(a.depositAmount) + " continua lançado no financeiro" : ""), "info", apptHasDeposit(a) ? 7000 : undefined);
           render();
         }, function (fresh) {
           Modal.close();
@@ -3032,6 +3196,7 @@
       box.querySelector("#am-delete").addEventListener("click", function () {
         var delMsg = "Deseja excluir este agendamento?";
         if (isPackageLinked) delMsg += " A sessão do pacote voltará a ficar disponível para ser reagendada.";
+        delMsg += depositKeepNote(DB.get("appointments", a.id));
         Modal.confirm({
           title: "Excluir agendamento", message: delMsg, danger: true,
           onConfirm: function () {
@@ -3188,23 +3353,60 @@
       if (!patch.date || !patch.time) { Toast.show("Informe data e hora", "danger"); return; }
       if (!patch.employeeId) { Toast.show("Selecione um profissional", "danger"); return; }
       if (hasAsst && !patch.assistantId) { Toast.show("Selecione o assistente ou desmarque a opção", "danger"); return; }
-      // Sinal no Agendamento: só mexe nos campos depositPaid/depositAmount/
-      // depositMethod. Agendamento sem sinal que continua sem sinal NÃO recebe
-      // nenhum campo novo (registros antigos ficam intactos).
+      // Sinal no Agendamento (lançamento financeiro vinculado — ver helpers no
+      // topo). Decide AQUI (antes de gravar qualquer coisa) o que fazer com o
+      // lançamento do sinal; só executa depois de o agendamento ser salvo.
+      //   create  → cria a receita do sinal       update → altera a receita existente
+      //   delete  → remove a receita (só se ainda não conciliada nem abatida)
+      // Agendamento sem sinal que continua sem sinal NÃO recebe nenhum campo.
+      var depositOp = null;       // { kind, spec, txn }
       var depositNote = "";
-      var hadDeposit = apptHasDeposit(a);
-      if (box.querySelector("#am-dep-paid").value === "sim") {
-        var depAmount = round2(Utils.moneyMaskToFloat(box.querySelector("#am-dep-amount")));
-        var depMethod = box.querySelector("#am-dep-method").value;
-        if (!(depAmount > 0)) { Toast.show("Informe o valor do sinal recebido", "danger"); return; }
-        if (!depMethod) { Toast.show("Selecione a forma de pagamento do sinal", "danger"); return; }
-        patch.depositPaid = true; patch.depositAmount = depAmount; patch.depositMethod = depMethod;
-        if (!hadDeposit || Number(a.depositAmount) !== depAmount || a.depositMethod !== depMethod) {
-          depositNote = "Registrou sinal de " + Utils.fmtMoney(depAmount) + " (" + depMethod + ")" + (hadDeposit ? " — antes: " + Utils.fmtMoney(a.depositAmount) + " (" + (a.depositMethod || "-") + ")" : "");
+      var depLockedNow = !!(a && a.depositApplied);   // já abatido na conclusão: não mexe
+      var depSaysYes = box.querySelector("#am-dep-paid").value === "sim";
+      if (!depLockedNow && !depReadOnly) {
+        var curTxn = a ? depositTxnOf(a) : null;
+        var hadDep = apptHasDeposit(a);
+        if (depSaysYes) {
+          if (apptMode === "session") { Toast.show("Sessão de pacote já pago não tem sinal", "danger"); return; }
+          var depAmount = round2(Utils.moneyMaskToFloat(box.querySelector("#am-dep-amount")));
+          var depMethod = box.querySelector("#am-dep-method").value;
+          var depDate = box.querySelector("#am-dep-date").value;
+          if (!(depAmount > 0)) { Toast.show("Informe o valor do sinal recebido", "danger"); return; }
+          if (!depMethod) { Toast.show("Selecione a forma de pagamento do sinal", "danger"); return; }
+          if (!depDate) { Toast.show("Informe a data em que o sinal foi recebido", "danger"); return; }
+          if (depDate > Utils.todayISO()) { Toast.show("A data do recebimento do sinal não pode ser futura", "danger"); return; }
+          var depIsCard = depMethod === "Cartão de Crédito" || depMethod === "Cartão de Débito";
+          var depSpec = { amount: depAmount, method: depMethod, date: depDate,
+            installments: depMethod === "Cartão de Crédito" ? depInstCtrl.getInstallments() : null,
+            machineId: depIsCard ? (box.querySelector("#am-dep-machine").value || null) : null };
+          var sameAsTxn = curTxn && Number(curTxn.amount) === depAmount && curTxn.paymentMethod === depMethod && curTxn.date === depDate &&
+            (curTxn.installments || null) === (depSpec.installments || null) && (curTxn.cardMachineId || null) === (depSpec.machineId || null);
+          if (curTxn) {
+            if (!sameAsTxn) {
+              if (curTxn.reconciled) { Toast.show("O lançamento deste sinal já foi conciliado com o extrato e não pode ser alterado aqui", "danger"); return; }
+              depositOp = { kind: "update", spec: depSpec, txn: curTxn };
+              depositNote = "Alterou o sinal para " + Utils.fmtMoney(depAmount) + " (" + depMethod + ") — antes: " + Utils.fmtMoney(curTxn.amount) + " (" + (curTxn.paymentMethod || "-") + ")";
+            }
+          } else if (!hadDep || !a.depositTxnId) {
+            // sem sinal antes, ou sinal antigo sem lançamento (registrado antes da integração)
+            depositOp = { kind: "create", spec: depSpec, txn: null };
+            depositNote = "Registrou sinal de " + Utils.fmtMoney(depAmount) + " (" + depMethod + ") e lançou no financeiro";
+          } else if (Number(a.depositAmount) !== depAmount || a.depositMethod !== depMethod) {
+            // lançamento foi excluído em Lançamentos e a pessoa alterou o sinal: lança de novo
+            depositOp = { kind: "create", spec: depSpec, txn: null };
+            depositNote = "Relançou o sinal de " + Utils.fmtMoney(depAmount) + " (" + depMethod + ") no financeiro";
+          }
+          patch.depositPaid = true; patch.depositAmount = depAmount; patch.depositMethod = depMethod; patch.depositDate = depDate;
+          patch.depositInstallments = depSpec.installments; patch.depositMachineId = depSpec.machineId;
+        } else if (hadDep) {
+          if (curTxn) {
+            if (curTxn.reconciled) { Toast.show("O lançamento deste sinal já foi conciliado com o extrato e não pode ser removido aqui", "danger"); return; }
+            depositOp = { kind: "delete", spec: null, txn: curTxn };
+          }
+          patch.depositPaid = false; patch.depositAmount = null; patch.depositMethod = null; patch.depositDate = null;
+          patch.depositInstallments = null; patch.depositMachineId = null; patch.depositTxnId = null;
+          depositNote = "Removeu o sinal registrado (" + Utils.fmtMoney(a.depositAmount) + (a.depositMethod ? ", " + a.depositMethod : "") + ")" + (curTxn ? " e o lançamento financeiro correspondente" : "");
         }
-      } else if (hadDeposit) {
-        patch.depositPaid = false; patch.depositAmount = null; patch.depositMethod = null;
-        depositNote = "Removeu o sinal registrado (" + Utils.fmtMoney(a.depositAmount) + (a.depositMethod ? ", " + a.depositMethod : "") + ")";
       }
       // Lançamento em data/hora retroativa é permitido para qualquer status
       // (inclusive "agendado") — a pedido do usuário, para registrar
@@ -3278,6 +3480,32 @@
         Toast.show("Pacote vendido — lembre-se de cobrar o valor cheio ao concluir esta sessão", "success");
       }
       else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
+      // Sinal: executa agora (agendamento já salvo e com id) a decisão tomada na
+      // validação — cria/altera/remove o lançamento financeiro do sinal.
+      if (savedAppt && (depositOp || (a && !depLockedNow && !depReadOnly && apptHasDeposit(a) && depSaysYes))) {
+        DB.batch(function () {
+          if (depositOp && depositOp.kind === "create") {
+            var depCreated = DB.insert("transactions", buildDepositTxn(savedAppt, depositOp.spec));
+            DB.update("appointments", savedAppt.id, { depositTxnId: depCreated.id });
+          } else if (depositOp && depositOp.kind === "update") {
+            DB.update("transactions", depositOp.txn.id, {
+              amount: depositOp.spec.amount, date: depositOp.spec.date, paymentMethod: depositOp.spec.method,
+              installments: depositOp.spec.method === "Cartão de Crédito" ? (depositOp.spec.installments || 1) : null,
+              cardMachineId: depositOp.spec.machineId || null
+            });
+            DB.update("appointments", savedAppt.id, { depositTxnId: depositOp.txn.id });
+          } else if (depositOp && depositOp.kind === "delete") {
+            DB.remove("transactions", depositOp.txn.id);
+          }
+          // cliente/profissional/serviço do agendamento mudaram: o lançamento do sinal acompanha
+          var liveTxn = (depositOp && depositOp.kind === "delete") ? null : depositTxnOf(DB.get("appointments", savedAppt.id));
+          if (liveTxn && !liveTxn.reconciled && (liveTxn.clientId !== savedAppt.clientId || liveTxn.employeeId !== savedAppt.employeeId)) {
+            var attrs = buildDepositTxn(savedAppt, { amount: liveTxn.amount, method: liveTxn.paymentMethod, date: liveTxn.date, installments: liveTxn.installments, machineId: liveTxn.cardMachineId });
+            DB.update("transactions", liveTxn.id, { clientId: attrs.clientId, employeeId: attrs.employeeId, description: attrs.description, categoryId: attrs.categoryId });
+          }
+        });
+        savedAppt = DB.get("appointments", savedAppt.id);
+      }
       if (depositNote && savedAppt) {
         var depClient = DB.get("clients", savedAppt.clientId);
         DB.log("Agenda", depositNote + " — agendamento de " + (depClient ? depClient.name : "cliente") + " em " + savedAppt.date + " " + savedAppt.time);
