@@ -44,6 +44,39 @@
   //     conclusão, depositApplied/depositAppliedAmount (trava a edição).
   // Aviso sobre o sinal ao excluir/cancelar/marcar falta: o dinheiro já foi
   // recebido e está lançado como receita — essas ações NÃO mexem nesse lançamento.
+  // 06/11/2026 — "Agendado por": campo discreto e BLOQUEADO no agendamento. O nome de
+  // quem criou é gravado pelo DB.insert (createdById/createdByName) e nenhuma tela
+  // consegue alterá-lo (DB.update ignora esses campos); só o desenvolvedor, direto no
+  // banco de dados. Agendamentos antigos não têm o registro: os que vieram da planilha
+  // de importação são identificados como tal; os demais ficam como "não registrado".
+  function apptCreatorHtml(a) {
+    var txt;
+    if (a && a.createdByName) {
+      txt = 'Agendado por <strong>' + Utils.escapeHtml(a.createdByName) + '</strong>' + (a.createdAt ? ' · ' + Utils.escapeHtml(Utils.fmtDateTime(a.createdAt)) : "");
+    } else if (a && a._importBatch) {
+      txt = 'Agendamento importado da planilha' + (a.createdAt ? ' em ' + Utils.escapeHtml(Utils.fmtDateTime(a.createdAt)) : "") + ' (autor original não registrado)';
+    } else if (a) {
+      txt = 'Autor do agendamento não registrado (anterior a este controle)';
+    } else {
+      var me = null;
+      try { me = CurrentUser.get(); } catch (e) { me = null; }
+      var nm = me ? ((me.firstName || "") + " " + (me.lastName || "")).trim() : "";
+      txt = 'Será registrado como agendado por <strong>' + Utils.escapeHtml(nm || "Administrador") + '</strong> ao salvar';
+    }
+    return '<div id="am-created-by" class="small text-muted" style="margin-top:14px;display:flex;align-items:center;gap:6px;opacity:.85;" title="Campo bloqueado: registrado automaticamente na criação do agendamento e não pode ser alterado pelo sistema.">' +
+      '<i class="fa-solid fa-lock" style="font-size:10px;"></i><span>' + txt + '</span></div>';
+  }
+  // Complemento das linhas do Log de Atividade: cliente, serviço e profissional (antes só
+  // aparecia data e hora, o que tornava impossível achar um agendamento pelo nome do cliente).
+  function apptLogTag(a) {
+    if (!a) return "";
+    var cli = a.clientId ? DB.get("clients", a.clientId) : null;
+    var svc = a.serviceId ? DB.get("services", a.serviceId) : null;
+    var emp = a.employeeId ? DB.get("employees", a.employeeId) : null;
+    var t = [svc && svc.name, cli && cli.name].filter(Boolean).join(", ");
+    if (emp) t += (t ? " " : "") + "(prof.: " + emp.name + ")";
+    return t ? " — " + t : "";
+  }
   function depositKeepNote(a) {
     return apptHasDeposit(a) ? " Este agendamento tem sinal de " + Utils.fmtMoney(a.depositAmount) + " já lançado no financeiro como receita; essa ação NÃO altera nem estorna esse lançamento (se for devolver o sinal ao cliente, faça o estorno em Lançamentos)." : "";
   }
@@ -564,7 +597,7 @@
         var appt = DB.get("appointments", id);
         guardApptTransition(id, ["agendado"], function () {
           DB.update("appointments", id, { status: "cancelado" });
-          if (appt) DB.log("Agenda", "Cancelou o agendamento de " + appt.date + " " + appt.time);
+          if (appt) DB.log("Agenda", "Cancelou o agendamento de " + appt.date + " " + appt.time + apptLogTag(appt), { refId: appt.id });
           Toast.show("Agendamento cancelado" + (apptHasDeposit(appt) ? " — o sinal de " + Utils.fmtMoney(appt.depositAmount) + " continua lançado no financeiro" : ""), "info", apptHasDeposit(appt) ? 7000 : undefined); render();
         }, function (fresh) {
           Toast.show("Este agendamento já foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + "). A tela foi atualizada.", "danger", 6500);
@@ -581,7 +614,7 @@
           onConfirm: function () {
             var appt = DB.get("appointments", id);
             DB.remove("appointments", id);
-            if (appt) DB.log("Agenda", "Excluiu o agendamento de " + appt.date + " " + appt.time);
+            if (appt) DB.log("Agenda", "Excluiu o agendamento de " + appt.date + " " + appt.time + apptLogTag(appt), { refId: appt.id });
             Toast.show("Agendamento excluído", "success"); render();
           }
         });
@@ -2743,7 +2776,8 @@
         '<div class="small text-muted" style="margin:4px 0 10px;">Use quando o cliente fizer mais de um serviço na mesma visita (ex.: alisamento e depois corte) — cada serviço vira um atendimento próprio, com profissional, comissão e assistente próprios, se precisar. Outros detalhes desse serviço extra ficam para editar depois, abrindo aquele atendimento.</div>' +
         '<div id="am-extra-existing"></div>' +
         '<div id="am-extra-services"></div>' +
-      '</div>';
+      '</div>' +
+      apptCreatorHtml(a);
 
     var extraActions = "";
     if (a && a.status === "agendado") {
@@ -3176,7 +3210,7 @@
       box.querySelector("#am-noshow").addEventListener("click", function () {
         guardApptTransition(a.id, ["agendado"], function () {
           DB.update("appointments", a.id, { status: "faltou" });
-          DB.log("Agenda", "Marcou falta no agendamento de " + a.date + " " + a.time);
+          DB.log("Agenda", "Marcou falta no agendamento de " + a.date + " " + a.time + apptLogTag(a), { refId: a.id });
           Modal.close();
           Toast.show("Falta registrada" + (apptHasDeposit(a) ? " — o sinal de " + Utils.fmtMoney(a.depositAmount) + " continua lançado no financeiro" : ""), "info", apptHasDeposit(a) ? 7000 : undefined);
           render();
@@ -3217,7 +3251,7 @@
               });
             }
             DB.remove("appointments", a.id);
-            DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time);
+            DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time + apptLogTag(a), { refId: a.id });
             Toast.show("Agendamento excluído", "success");
             render();
           }
@@ -3427,7 +3461,7 @@
       // risco).
       function finishApptSave() {
       var savedAppt;
-      if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time); Toast.show("Agendamento atualizado", "success"); }
+      if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time + apptLogTag(savedAppt), { refId: a.id }); Toast.show("Agendamento atualizado", "success"); }
       else if (pendingPackageSession) {
         // Sessão de um pacote já vendido: cria o agendamento e vincula ao
         // registro de compra existente do cliente (client.packages),
@@ -3479,7 +3513,7 @@
         DB.log("Agenda", "Vendeu o pacote \"" + pendingPackageSell.pkDef.name + "\" (" + pendingPackageSell.sizeLabel + ") para " + patch.date + " " + patch.time);
         Toast.show("Pacote vendido — lembre-se de cobrar o valor cheio ao concluir esta sessão", "success");
       }
-      else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time); Toast.show("Agendamento criado", "success"); }
+      else { savedAppt = DB.insert("appointments", patch); DB.log("Agenda", "Criou um agendamento para " + patch.date + " " + patch.time + apptLogTag(savedAppt), { refId: savedAppt.id }); Toast.show("Agendamento criado", "success"); }
       // Sinal: executa agora (agendamento já salvo e com id) a decisão tomada na
       // validação — cria/altera/remove o lançamento financeiro do sinal.
       if (savedAppt && (depositOp || (a && !depLockedNow && !depReadOnly && apptHasDeposit(a) && depSaysYes))) {

@@ -672,7 +672,37 @@
     return Promise.resolve(supa.from(table).upsert({ id: out.id, data: out })).then(check);
   }
 
+  // 06/11/2026 — LOG DE ATIVIDADE É IMPERMEÁVEL: nenhuma atividade registrada
+  // pode sumir (é o respaldo do salão no futuro). Antes, o sistema apagava
+  // as entradas "mais antigas" ao passar de 2.000 — mas a lista vem do banco
+  // sem ordem por data, então entradas RECENTES também eram apagadas (foi
+  // assim que sumiram os registros de 04/11 do sinal da Sonia Gonçalves).
+  // Agora nada apaga linha de activityLog: nem a limpeza automática (removida),
+  // nem remove/removeWhere/setTable, nem restaurar backup, nem uma exclusão
+  // que tenha ficado pendente na fila de um aparelho com versão antiga.
+  function isLogTable(table) { return table === "activityLog"; }
+
+  // 06/11/2026 — "Agendado por": quem criou o agendamento fica gravado no próprio
+  // registro (createdById/createdByName) no momento da criação e NÃO pode mais ser
+  // alterado pelas telas (DB.update ignora esses campos). Só o desenvolvedor, direto
+  // no banco de dados (Supabase), consegue corrigir se algum dia for necessário.
+  var APPT_LOCKED_FIELDS = ["createdById", "createdByName"];
+  function actorInfo() {
+    var u = null;
+    try { u = global.CurrentUser && global.CurrentUser.get && global.CurrentUser.get(); } catch (e) { u = null; }
+    if (!u) return { id: null, name: "Administrador" };
+    var nm = ((u.firstName || "") + " " + (u.lastName || "")).trim();
+    return { id: u.id || null, name: nm || "Administrador" };
+  }
+  function stampCreator(table, record) {
+    if (table !== "appointments" || !record || record.createdByName) return;
+    var who = actorInfo();
+    record.createdById = who.id;
+    record.createdByName = who.name;
+  }
+
   function sendDelete(table, id) {
+    if (isLogTable(table)) return Promise.resolve(true); // nunca apaga log no servidor
     return Promise.resolve(supa.from(table).delete().eq("id", id)).then(function (res) {
       if (res && res.error) throw res.error;
       return true;
@@ -1032,11 +1062,15 @@
   var _bootLight = false;
 
   // O Supabase/PostgREST limita cada resposta a 1000 linhas; busca página a página.
-  function fetchAllRows(src) {
+  function fetchAllRows(src, orderCol) {
     return new Promise(function (resolve, reject) {
       var acc = [];
       function fetchPage(offset) {
-        Promise.resolve(supa.from(src).select("data").range(offset, offset + FETCH_PAGE_SIZE - 1)).then(function (res) {
+        var q = supa.from(src).select("data");
+        // Paginação estável (só onde pedido): sem ORDER BY o Postgres pode devolver
+        // linhas em ordem diferente a cada página e pular/repetir registros.
+        if (orderCol && typeof q.order === "function") q = q.order(orderCol, { ascending: true });
+        Promise.resolve(q.range(offset, offset + FETCH_PAGE_SIZE - 1)).then(function (res) {
           if (res.error) { reject(res.error); return; }
           var rows = res.data || [];
           acc = acc.concat(rows);
@@ -1184,7 +1218,7 @@
     var cursorP = t === "settings" ? Promise.resolve(null) : serverMaxUpdated(t).catch(function () { return undefined; });
     return cursorP.then(function (cursor) {
       var src = BOOT_VIEW[t] || t;
-      var p = fetchAllRows(src);
+      var p = fetchAllRows(src, isLogTable(t) ? "id" : null);
       if (BOOT_VIEW[t]) {
         // Se a view leve ainda não existir no banco, cai para a tabela
         // inteira (mais pesado, mas nunca deixa o sistema sem dados).
@@ -1756,6 +1790,7 @@
   // uma vez no cache local.
   function remoteReplaceAll(table, records) {
     if (!supa) return;
+    if (isLogTable(table)) return; // log de atividade nunca é apagado/substituído no servidor
     supa.from(table).delete().neq("id", "__none__").then(function (delRes) {
       if (delRes.error) throw delRes.error;
       if (!records || !records.length) return { error: null };
@@ -1871,6 +1906,7 @@
       if (!record.id) record.id = uid(table.slice(0, 3));
       record.createdAt = record.createdAt || nowISO();
       record.updatedAt = nowISO();
+      stampCreator(table, record);
       db[table].push(record);
       persist(table);
       remoteUpsert(table, record);
@@ -2048,6 +2084,7 @@
         if (!r.id) r.id = uid(table.slice(0, 3));
         r.createdAt = r.createdAt || nowISO();
         r.updatedAt = nowISO();
+        stampCreator(table, r);
       });
       db[table] = db[table].concat(records);
       persist(table);
@@ -2060,6 +2097,12 @@
       var db = load();
       var idx = (db[table] || []).findIndex(function (r) { return r.id === id; });
       if (idx === -1) return null;
+      if (table === "appointments" && patch) {
+        // "Agendado por" é bloqueado: nenhuma tela consegue alterar (ver stampCreator).
+        var cur = db[table][idx];
+        patch = Object.assign({}, patch);
+        APPT_LOCKED_FIELDS.forEach(function (f) { if (f in patch) patch[f] = cur[f]; });
+      }
       db[table][idx] = Object.assign({}, db[table][idx], patch, { updatedAt: nowISO() });
       persist(table);
       remoteUpsert(table, db[table][idx]);
@@ -2068,6 +2111,7 @@
 
     remove: function (table, id) {
       if (writeLocked()) return refuse(false);
+      if (isLogTable(table)) return false; // log de atividade não se apaga
       var db = load();
       var before = db[table].length;
       db[table] = db[table].filter(function (r) { return r.id !== id; });
@@ -2079,6 +2123,7 @@
 
     removeWhere: function (table, predicate) {
       if (writeLocked()) return refuse(undefined);
+      if (isLogTable(table)) return; // log de atividade não se apaga
       var db = load();
       var toRemove = db[table].filter(predicate);
       db[table] = db[table].filter(function (r) { return !predicate(r); });
@@ -2088,6 +2133,7 @@
 
     setTable: function (table, records) {
       if (writeLocked()) return refuse(undefined);
+      if (isLogTable(table)) return; // log de atividade não se substitui
       var db = load();
       var ts = nowISO();
       if (Array.isArray(records)) {
@@ -2241,10 +2287,19 @@
     importJSON: function (jsonStr) {
       if (writeLocked()) return refuse(undefined);
       var parsed = JSON.parse(jsonStr);
+      // Log de atividade nunca é substituído por um backup: junta o que já existe
+      // com o que veio no arquivo (sem apagar nada nem repetir entradas).
+      var logAtual = ((_cache && _cache.activityLog) || []).slice();
       _cache = fillMissingTables(parsed);
+      var logDoBackup = Array.isArray(_cache.activityLog) ? _cache.activityLog : [];
+      var logJuntos = {};
+      logAtual.concat(logDoBackup).forEach(function (l) { if (l && l.id) logJuntos[l.id] = l; });
+      _cache.activityLog = Object.keys(logJuntos).map(function (k) { return logJuntos[k]; })
+        .sort(function (a, b) { return String(a.timestamp || "").localeCompare(String(b.timestamp || "")); });
       persist(TABLES);
       TABLES.forEach(function (t) {
         if (t === "settings") remoteReplaceSettings(_cache.settings);
+        else if (isLogTable(t)) logDoBackup.forEach(function (l) { if (l && l.id) remoteUpsert(t, l); });
         else remoteReplaceAll(t, _cache[t]);
       });
     },
@@ -2271,8 +2326,8 @@
       }
     },
 
-    // Records an entry in the activity log (auditoria). Keeps only the most
-    // recent MAX_LOG_ENTRIES to avoid unbounded growth.
+    // Records an entry in the activity log (auditoria). NUNCA apaga entradas
+    // antigas (06/11/2026): o log é o respaldo do salão — ver isLogTable().
     log: function (action, description, extra) {
       if (_offline) return null; // registro de atividade não é gravado enquanto a trava está ativa
       var db = load();
@@ -2286,13 +2341,6 @@
           : "Administrador"
       }, extra || {});
       db.activityLog.push(entry);
-      var MAX_LOG_ENTRIES = 2000;
-      var overflow = db.activityLog.length - MAX_LOG_ENTRIES;
-      if (overflow > 0) {
-        var removed = db.activityLog.slice(0, overflow);
-        db.activityLog = db.activityLog.slice(overflow);
-        removed.forEach(function (r) { remoteDelete("activityLog", r.id); });
-      }
       persist("activityLog");
       remoteUpsert("activityLog", entry);
       return entry;
