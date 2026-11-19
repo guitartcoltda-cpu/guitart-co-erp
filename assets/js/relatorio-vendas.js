@@ -87,7 +87,9 @@
     // TOTAL (dinheiro recebido), mas não conta como uma venda a mais — a venda é
     // contada uma vez, no lançamento da conclusão. Evita Nº de Vendas inflado e
     // Ticket Médio reduzido por um mesmo atendimento pago em duas parcelas.
-    var salesCount = sales.filter(function (t) { return !t.isDeposit; }).length;
+    // Gorjeta (isTip, 19/11/2026): mesma ideia — é dinheiro recebido, mas não é
+    // uma venda a mais (antes cada gorjeta somava 1 em "Nº de Vendas").
+    var salesCount = sales.filter(function (t) { return !t.isDeposit && !t.isTip; }).length;
     var ticketMedio = salesCount ? total / salesCount : 0;
 
     document.getElementById("rv-summary").innerHTML = [
@@ -97,7 +99,7 @@
       kpi("Serviços x Produtos", Utils.fmtMoney(servicoTotal) + " / " + Utils.fmtMoney(produtoTotal), "fa-scale-balanced", "#1baf7a", "#e2f5ec")
     ].join("");
 
-    document.getElementById("rv-count-sub").textContent = salesCount + " venda(s) no período selecionado" + (salesCount !== sales.length ? " (+ " + (sales.length - salesCount) + " sinal(is) de agendamento nos lançamentos abaixo)" : "");
+    document.getElementById("rv-count-sub").textContent = salesCount + " venda(s) no período selecionado" + (salesCount !== sales.length ? " (+ " + (sales.length - salesCount) + " sinal(is)/gorjeta(s) de agendamento nos lançamentos abaixo)" : "");
 
     // daily trend
     var byDay = {};

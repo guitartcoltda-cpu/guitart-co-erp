@@ -189,8 +189,16 @@
             title: "Excluir lançamento", message: "Tem certeza que deseja excluir este lançamento? Essa ação não pode ser desfeita.", danger: true,
             onConfirm: function () {
               var txn = DB.get("transactions", id);
-              DB.remove("transactions", id);
-              if (txn) DB.log("Lançamento", "Excluiu o lançamento \"" + txn.description + "\" (" + Utils.fmtMoney(txn.amount) + ")");
+              // BUG CORRIGIDO (19/11/2026): excluir um lançamento já conciliado
+              // deixava a linha do extrato marcada como "conciliada" apontando
+              // para um lançamento que não existe mais (sumia de "Extrato sem
+              // correspondência"). Agora a linha volta a ficar pendente.
+              var bankLine = txn && txn.bankLineId ? DB.get("bankLines", txn.bankLineId) : null;
+              DB.batch(function () {
+                DB.remove("transactions", id);
+                if (bankLine && bankLine.matchedTransactionId === id) DB.update("bankLines", bankLine.id, { matched: false, matchedTransactionId: null });
+              });
+              if (txn) DB.log("Lançamento", "Excluiu o lançamento \"" + txn.description + "\" (" + Utils.fmtMoney(txn.amount) + ")" + (bankLine ? " — a linha do extrato voltou a ficar pendente na Conciliação" : ""));
               Toast.show("Lançamento excluído", "success"); render();
             }
           });
@@ -309,8 +317,13 @@
         '<div class="form-field"><label>Categoria</label><select id="m-cat"></select></div>' +
         '<div class="form-field"><label>Centro de Custo</label><select id="m-cc"></select></div>' +
         '<div class="form-field"><label>Forma de Pagamento</label><select id="m-pay">' +
-          ["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Boleto"].map(function (p) {
-            return '<option value="' + p + '"' + (record.paymentMethod === p ? " selected" : "") + '>' + p + '</option>';
+          // BUG CORRIGIDO (19/11/2026): a lista era fixa — um lançamento com outra
+          // forma (ex.: "Outro" da conciliação, "Pacote", "Parceria" ou uma forma
+          // criada em Configurações) abria com "Pix" pré-selecionado e, ao salvar
+          // qualquer outra correção, virava Pix sem ninguém perceber. Agora a
+          // forma atual do lançamento sempre aparece (e fica selecionada).
+          Utils.withCurrentOption(["Pix", "Cartão de Crédito", "Cartão de Débito", "Dinheiro", "Transferência", "Boleto"], record.paymentMethod).map(function (p) {
+            return '<option value="' + Utils.escapeHtml(p) + '"' + (record.paymentMethod === p ? " selected" : "") + '>' + Utils.escapeHtml(p) + '</option>';
           }).join("") + '</select></div>' +
         '<div class="form-field" id="m-installments-field" style="display:' + (record.paymentMethod === "Cartão de Crédito" ? "" : "none") + ';"><label>Parcelas</label><select id="m-installments">' +
           [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (n) { return '<option value="' + n + '"' + ((record.installments || 1) === n ? " selected" : "") + '>' + n + 'x' + (n === 1 ? " (à vista)" : "") + '</option>'; }).join("") + '</select></div>' +

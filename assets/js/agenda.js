@@ -80,6 +80,52 @@
   function depositKeepNote(a) {
     return apptHasDeposit(a) ? " Este agendamento tem sinal de " + Utils.fmtMoney(a.depositAmount) + " já lançado no financeiro como receita; essa ação NÃO altera nem estorna esse lançamento (se for devolver o sinal ao cliente, faça o estorno em Lançamentos)." : "";
   }
+  // ---------------- Atendimento concluído travado (19/11/2026) ----------------
+  // Pedido do João: depois de concluído, o atendimento fica bloqueado para
+  // QUALQUER alteração (editar, mudar status, excluir, lançar insumo) — só
+  // usuário master (Administrador/Desenvolvedor) altera; ver
+  // Utils.apptConcludedLocked. Quando o master altera um atendimento que já
+  // entrou num pagamento de comissão registrado, o sistema pergunta antes se
+  // deseja continuar (Utils.apptCommissionPayments) e a alteração fica
+  // marcada no Log de Atividade.
+  function paidCommissionNote(payments) {
+    if (!payments || !payments.length) return "";
+    return " ATENÇÃO: este atendimento já está incluído em pagamento de comissão registrado (" + Utils.commissionPaymentsText(payments) +
+      "). Alterá-lo agora deixa o fechamento diferente do que já foi pago ao profissional. Deseja continuar mesmo assim?";
+  }
+  function concludedChangeLogTag(a, payments) {
+    if (!a || a.status !== "concluido") return "";
+    return " [atendimento já concluído" + (payments && payments.length ? "; já incluído em pagamento de comissão — alteração confirmada" : "") + "]";
+  }
+  // Para o master: se houver pagamento de comissão envolvido, pergunta POR
+  // CIMA do formulário (sem fechá-lo) antes de seguir; senão segue direto.
+  function confirmPaidCommissionChange(payments, actionText, onContinue) {
+    if (!payments || !payments.length) { onContinue(); return; }
+    Modal.confirmOver({
+      title: "Atendimento com comissão já paga",
+      message: "Este atendimento já está incluído em pagamento de comissão registrado. " + actionText +
+        " agora deixa o fechamento diferente do que já foi pago ao profissional. Deseja continuar com a alteração?",
+      detail: Utils.commissionPaymentsText(payments),
+      confirmLabel: "Sim, continuar com a alteração", danger: true,
+      onConfirm: onContinue
+    });
+  }
+
+  // Ao excluir uma sessão de pacote, libera a vaga (tira o id de
+  // client.packages[].appointmentIds) para poder ser reagendada. Antes só o
+  // "Excluir" do formulário fazia isso — o da lista (Visão Geral) deixava a
+  // sessão presa para sempre (corrigido 19/11/2026). Usa mergeFieldUpdate para
+  // não apagar uma alteração concorrente de client.packages (ver 18/09/2026).
+  function releasePackageSlot(a) {
+    if (!a || !a.packagePurchaseId || !a.clientId || !DB.get("clients", a.clientId)) return;
+    DB.mergeFieldUpdate("clients", a.clientId, "packages", function (packages) {
+      return (packages || []).map(function (pp) {
+        if (pp.id !== a.packagePurchaseId) return pp;
+        return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).filter(function (aid) { return aid !== a.id; }) });
+      });
+    });
+  }
+
   function apptHasDeposit(a) { return !!(a && a.depositPaid && Number(a.depositAmount) > 0); }
   function apptDepositText(a) {
     if (!apptHasDeposit(a)) return "";
@@ -161,19 +207,17 @@
   // usado pelo menu lateral recolhível (ver COLLAPSE_KEY em layout.js). Na
   // Visão Geral o rail some de qualquer forma (não há mini calendário para
   // mostrar ali, já que a lista não é presa a um único dia selecionado).
+  // 19/11/2026: o botão de recolher foi REMOVIDO a pedido do João (a equipe
+  // recolhia sem querer e não sabia voltar) — o mini calendário fica sempre
+  // visível na Visão do Dia. A preferência antiga guardada no navegador é
+  // apagada para ninguém ficar preso no estado "recolhido".
   var RAIL_COLLAPSE_KEY = "salao_erp_agenda_rail_collapsed";
-  var railCollapsed = false;
-  try { railCollapsed = localStorage.getItem(RAIL_COLLAPSE_KEY) === "1"; } catch (e) {}
+  try { localStorage.removeItem(RAIL_COLLAPSE_KEY); } catch (e) {}
 
   function updateRailVisibility() {
     var layout = document.querySelector(".ag-layout");
     if (!layout) return;
-    layout.classList.toggle("ag-rail-hidden", viewMode !== "dia" || railCollapsed);
-    var toggleBtn = document.getElementById("btn-toggle-rail");
-    if (toggleBtn) {
-      toggleBtn.innerHTML = railCollapsed ? '<i class="fa-solid fa-chevron-right"></i>' : '<i class="fa-solid fa-chevron-left"></i>';
-      toggleBtn.title = railCollapsed ? "Mostrar calendário" : "Ocultar calendário";
-    }
+    layout.classList.toggle("ag-rail-hidden", viewMode !== "dia");
   }
 
   document.addEventListener("DOMContentLoaded", function () { DB.ready.then(function () { setTimeout(init, 0); }); });
@@ -261,14 +305,6 @@
     var occBtn = Utils.qs("#btn-new-occurrence");
     if (occBtn) occBtn.addEventListener("click", function () { openOccurrenceModal({ date: selectedDate }); });
 
-    var toggleRailBtn = Utils.qs("#btn-toggle-rail");
-    if (toggleRailBtn) {
-      toggleRailBtn.addEventListener("click", function () {
-        railCollapsed = !railCollapsed;
-        try { localStorage.setItem(RAIL_COLLAPSE_KEY, railCollapsed ? "1" : "0"); } catch (e) {}
-        updateRailVisibility();
-      });
-    }
     updateRailVisibility();
 
     render();
@@ -583,8 +619,12 @@
       '</div>' +
       statusBadgeHtml(a.status) +
       '<div class="flex gap-6">' + actions +
-        '<button class="btn btn-icon btn-ghost" data-edit="' + a.id + '" title="Editar"><i class="fa-solid fa-pen"></i></button>' +
-        '<button class="btn btn-icon btn-ghost" data-del="' + a.id + '" title="Excluir"><i class="fa-solid fa-trash"></i></button>' +
+        // Atendimento concluído travado (19/11/2026, ver Utils.apptConcludedLocked):
+        // quem não é master só consegue ABRIR para ver — sem lápis e sem lixeira.
+        (Utils.apptConcludedLocked(a)
+          ? '<button class="btn btn-icon btn-ghost" data-edit="' + a.id + '" title="Ver (concluído — bloqueado para alterações)"><i class="fa-solid fa-lock"></i></button>'
+          : '<button class="btn btn-icon btn-ghost" data-edit="' + a.id + '" title="Editar"><i class="fa-solid fa-pen"></i></button>' +
+            '<button class="btn btn-icon btn-ghost" data-del="' + a.id + '" title="Excluir"><i class="fa-solid fa-trash"></i></button>') +
       '</div>' +
       '</div>';
   }
@@ -609,12 +649,18 @@
     Utils.qsa("[data-del]", listEl).forEach(function (b) {
       b.addEventListener("click", function () {
         var id = b.getAttribute("data-del");
+        var apptToDel = DB.get("appointments", id);
+        if (Utils.apptConcludedLocked(apptToDel)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
+        var delPaid = apptToDel && apptToDel.status === "concluido" ? Utils.apptCommissionPayments(apptToDel) : [];
         Modal.confirm({
-          title: "Excluir agendamento", message: "Deseja excluir este agendamento?" + depositKeepNote(DB.get("appointments", id)), danger: true,
+          title: delPaid.length ? "Excluir atendimento com comissão já paga" : "Excluir agendamento",
+          message: "Deseja excluir este agendamento?" + depositKeepNote(apptToDel) + paidCommissionNote(delPaid), danger: true,
+          confirmLabel: delPaid.length ? "Sim, continuar e excluir" : undefined,
           onConfirm: function () {
             var appt = DB.get("appointments", id);
+            releasePackageSlot(appt);
             DB.remove("appointments", id);
-            if (appt) DB.log("Agenda", "Excluiu o agendamento de " + appt.date + " " + appt.time + apptLogTag(appt), { refId: appt.id });
+            if (appt) DB.log("Agenda", "Excluiu o agendamento de " + appt.date + " " + appt.time + apptLogTag(appt) + concludedChangeLogTag(appt, delPaid), { refId: appt.id });
             Toast.show("Agendamento excluído", "success"); render();
           }
         });
@@ -1089,8 +1135,14 @@
     // no mesmo dia — o dinheiro já foi todo cobrado na venda, então não há
     // escolha "só este × fechar conta" nem reconciliação a fazer aqui.
     if (appt.packagePurchaseId && appt.packageSessionIndex > 1) { openConcludePackageSessionModal(appt); return; }
+    // BUG CORRIGIDO (19/11/2026): o "Fechar Conta" (vários atendimentos de uma
+    // vez) não sabe tratar pacote — cobrava a sessão de novo (sessão 2+, já paga
+    // na venda) ou só o valor de uma sessão na venda do pacote (sessão 1). Venda
+    // de pacote vai sempre pelo fluxo individual (que cobra o pacote inteiro) e
+    // atendimentos de pacote nunca entram no grupo.
+    if (appt.packagePurchaseId) { openConcludeSingleModal(appt); return; }
     var group = DB.all("appointments").filter(function (x) {
-      return x.status === "agendado" && x.clientId === appt.clientId && x.date === appt.date;
+      return x.status === "agendado" && x.clientId === appt.clientId && x.date === appt.date && !x.packagePurchaseId;
     }).sort(function (a, b) { return a.time.localeCompare(b.time); });
     if (group.length > 1) openConcludeChoiceModal(appt, group);
     else openConcludeSingleModal(appt);
@@ -2490,6 +2542,7 @@
   // atendimento (que já existe desde a conclusão original) — só soma
   // consumo/produto extra a partir de agora.
   function openAddInsumoModal(appt) {
+    if (Utils.apptConcludedLocked(appt)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
     var service = DB.get("services", appt.serviceId);
     var client = DB.get("clients", appt.clientId);
     var employee = DB.get("employees", appt.employeeId);
@@ -2582,6 +2635,10 @@
   function openApptModal(id, presets) {
     presets = presets || {};
     var a = id ? DB.get("appointments", id) : null;
+    // Atendimento concluído (19/11/2026): somente leitura para quem não é
+    // master; o master edita, mas com aviso/confirmação (ver topo do arquivo).
+    var isConcludedAppt = !!(a && a.status === "concluido");
+    var concludedLocked = Utils.apptConcludedLocked(a);
     // Serviços sintéticos de pacote (isPackageService:true — ver
     // packageServiceFor) ficam fora do combo normal de Serviço: reception
     // nunca os seleciona à mão, só através do fluxo dedicado de pacotes
@@ -2709,7 +2766,11 @@
       '<div class="form-field"><label>Hora</label><input type="time" id="am-time" value="' + (a ? a.time : (presets.time || "09:00")) + '"></div>' +
       '<div class="form-field"><label>Duração (min)</label><input type="number" id="am-duration" min="5" step="5" value="' + apptModalInitialDuration + '"></div>' +
       '<div class="form-field full"><div class="small text-muted">Ajuste aqui se o atendimento durar mais (ou menos) do que o padrão do serviço. Isso não move outros agendamentos automaticamente — ajuste a agenda manualmente se precisar.</div></div>' +
-      '<div class="form-field"><label>Status</label><select id="am-status">' +
+      // Status de um atendimento CONCLUÍDO fica travado até para o master
+      // (19/11/2026): voltar para "Agendado"/"Cancelado" aqui não estorna a
+      // receita, a gorjeta nem o consumo já lançados na conclusão — reconcluir
+      // depois lançaria a receita em dobro. Para desfazer, ajuste em Lançamentos.
+      '<div class="form-field"><label>Status</label><select id="am-status"' + (isConcludedAppt ? ' disabled title="Atendimento concluído: o status não pode ser alterado aqui (a receita já foi lançada). Para desfazer, ajuste em Lançamentos."' : '') + '>' +
         '<option value="agendado"' + (a && a.status === "agendado" ? " selected" : "") + '>Agendado</option>' +
         '<option value="concluido"' + (a && a.status === "concluido" ? " selected" : "") + '>Concluído</option>' +
         '<option value="faltou"' + (a && a.status === "faltou" ? " selected" : "") + '>Faltou</option>' +
@@ -2791,7 +2852,7 @@
     }
     var delBtn = a ? '<button class="btn btn-ghost" id="am-delete" type="button" style="color:var(--color-danger);">Excluir</button>' : "";
     var foot = delBtn + extraActions + '<button class="btn btn-secondary" data-close-modal>Fechar</button><button class="btn btn-primary" id="am-save">Salvar Agendamento</button>';
-    var box = Modal.open({ title: a ? "Editar Agendamento" : "Novo Agendamento", wide: true, bodyHtml: body, footHtml: foot });
+    var box = Modal.open({ title: concludedLocked ? "Atendimento Concluído (somente leitura)" : (a ? "Editar Agendamento" : "Novo Agendamento"), wide: true, bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#am-price"), a ? a.price : 0);
     Utils.wireMoneyMask(box.querySelector("#am-dep-amount"), depView ? depView.amount : 0);
     var depInstCtrl = wireInstallmentsField(box, "am-dep", box.querySelector("#am-dep-method"));
@@ -3222,17 +3283,26 @@
       });
     } else if (a && a.status === "concluido") {
       box.querySelector("#am-add-insumo").addEventListener("click", function () {
-        Modal.close();
-        openAddInsumoModal(a);
+        if (Utils.apptConcludedLocked(a)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
+        // Lançar insumo/produto muda o desconto de consumo do profissional —
+        // também é alteração de um atendimento fechado.
+        confirmPaidCommissionChange(Utils.apptCommissionPayments(a), "Lançar insumo/produto neste atendimento", function () {
+          Modal.close();
+          openAddInsumoModal(a);
+        });
       });
     }
     if (a) {
       box.querySelector("#am-delete").addEventListener("click", function () {
+        if (Utils.apptConcludedLocked(a)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
+        var delPaidM = isConcludedAppt ? Utils.apptCommissionPayments(a) : [];
         var delMsg = "Deseja excluir este agendamento?";
         if (isPackageLinked) delMsg += " A sessão do pacote voltará a ficar disponível para ser reagendada.";
         delMsg += depositKeepNote(DB.get("appointments", a.id));
+        delMsg += paidCommissionNote(delPaidM);
         Modal.confirm({
-          title: "Excluir agendamento", message: delMsg, danger: true,
+          title: delPaidM.length ? "Excluir atendimento com comissão já paga" : "Excluir agendamento", message: delMsg, danger: true,
+          confirmLabel: delPaidM.length ? "Sim, continuar e excluir" : undefined,
           onConfirm: function () {
             // Se este agendamento é uma sessão de pacote, libera a vaga
             // (remove o id de client.packages[].appointmentIds) antes de
@@ -3242,16 +3312,9 @@
             // — usa DB.mergeFieldUpdate em vez de DB.get + DB.update, para
             // não apagar uma alteração concorrente de client.packages feita
             // por outra aba.
-            if (isPackageLinked && DB.get("clients", a.clientId)) {
-              DB.mergeFieldUpdate("clients", a.clientId, "packages", function (packages) {
-                return (packages || []).map(function (pp) {
-                  if (pp.id !== a.packagePurchaseId) return pp;
-                  return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).filter(function (aid) { return aid !== a.id; }) });
-                });
-              });
-            }
+            releasePackageSlot(a);
             DB.remove("appointments", a.id);
-            DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time + apptLogTag(a), { refId: a.id });
+            DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time + apptLogTag(a) + concludedChangeLogTag(a, delPaidM), { refId: a.id });
             Toast.show("Agendamento excluído", "success");
             render();
           }
@@ -3260,6 +3323,9 @@
     }
 
     box.querySelector("#am-save").addEventListener("click", function () {
+      // Trava de atendimento concluído (19/11/2026): defesa extra — o botão nem
+      // aparece para quem não é master, mas nada é gravado mesmo se for clicado.
+      if (a && Utils.apptConcludedLocked(DB.get("appointments", a.id) || a)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
       // Valida as linhas de "Outros serviços desta visita" ANTES de
       // gravar qualquer coisa — uma linha com só Serviço ou só
       // Profissional preenchido barra o salvamento (evita criar um
@@ -3384,6 +3450,11 @@
         assistantId: hasAsst ? box.querySelector("#am-assistant").value : null,
         assistantCommissionPercent: assistantPct
       };
+      // BUG CORRIGIDO (19/11/2026): dava para salvar sem cliente ou sem serviço e
+      // o "Concluir" depois travava no meio (podia marcar concluído sem lançar a
+      // receita). Os dois agora são obrigatórios.
+      if (!patch.clientId) { Toast.show("Selecione o cliente", "danger"); return; }
+      if (!patch.serviceId) { Toast.show("Selecione o serviço", "danger"); return; }
       if (!patch.date || !patch.time) { Toast.show("Informe data e hora", "danger"); return; }
       if (!patch.employeeId) { Toast.show("Selecione um profissional", "danger"); return; }
       if (hasAsst && !patch.assistantId) { Toast.show("Selecione o assistente ou desmarque a opção", "danger"); return; }
@@ -3459,9 +3530,13 @@
       // quando este modal abriu (ver o guardApptTransition mais abaixo,
       // só chamado quando `a` existe — um agendamento novo não tem esse
       // risco).
+      // Master alterando um atendimento já concluído: pagamentos de comissão
+      // que já incluem este atendimento — antes OU depois da edição (troca de
+      // data/profissional/assistente também mexe no fechamento já pago).
+      var editPaid = isConcludedAppt ? Utils.apptCommissionPayments([a, Object.assign({}, a, patch)]) : [];
       function finishApptSave() {
       var savedAppt;
-      if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time + apptLogTag(savedAppt), { refId: a.id }); Toast.show("Agendamento atualizado", "success"); }
+      if (a) { DB.update("appointments", a.id, patch); savedAppt = DB.get("appointments", a.id); DB.log("Agenda", "Atualizou o agendamento de " + patch.date + " " + patch.time + apptLogTag(savedAppt) + concludedChangeLogTag(a, editPaid), { refId: a.id }); Toast.show("Agendamento atualizado", "success"); }
       else if (pendingPackageSession) {
         // Sessão de um pacote já vendido: cria o agendamento e vincula ao
         // registro de compra existente do cliente (client.packages),
@@ -3616,13 +3691,45 @@
       }
       }
       if (a) {
-        guardApptTransition(a.id, [a.status], finishApptSave, function (fresh) {
-          Toast.show("Este agendamento foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + ") enquanto você editava. Feche e abra novamente para ver os dados mais recentes antes de salvar.", "danger", 7500);
-          render();
+        confirmPaidCommissionChange(editPaid, "Alterar este atendimento", function () {
+          // Se outra pessoa concluir este atendimento enquanto o formulário está
+          // aberto, o status muda e o guard abaixo já recusa a gravação.
+          guardApptTransition(a.id, [a.status], finishApptSave, function (fresh) {
+            Toast.show("Este agendamento foi alterado por outra pessoa (status atual: " + apptStatusLabel(fresh.status) + ") enquanto você editava. Feche e abra novamente para ver os dados mais recentes antes de salvar.", "danger", 7500);
+            render();
+          });
         });
       } else {
         finishApptSave();
       }
     });
+
+    // ---------------- Atendimento concluído: aparência travada (19/11/2026) ----------------
+    // Aplicado por último, depois de todo o preenchimento/ligação acima (os
+    // campos precisam receber os valores do atendimento antes de serem
+    // travados). Quem não é master só VÊ: todos os campos ficam desabilitados
+    // e somem Salvar, Excluir, Lançar Insumo, Adicionar serviço, Criar cliente
+    // e o "Solicitar alteração" de comissão. O master vê o aviso de que o
+    // atendimento já está fechado (e se já entrou em pagamento de comissão).
+    if (isConcludedAppt) {
+      var lockBody = box.querySelector(".modal-body");
+      var lockPaid = Utils.apptCommissionPayments(a);
+      var lockBanner = document.createElement("div");
+      lockBanner.id = "am-concluded-lock";
+      lockBanner.className = "small";
+      lockBanner.style.cssText = "margin-bottom:14px;padding:10px 12px;border-radius:var(--radius-md);display:flex;gap:8px;align-items:flex-start;" +
+        (concludedLocked ? "background:var(--gray-50);border:1px solid var(--border-color);" : "background:var(--color-warning-bg);color:var(--color-warning);");
+      var lockText = concludedLocked
+        ? "Atendimento concluído — bloqueado para alterações. Somente usuário master (Administrador) pode alterar. Se algo precisar ser corrigido, peça a um Administrador."
+        : "Atendimento já concluído: os demais usuários não conseguem alterá-lo. Você pode alterar por ser usuário master — qualquer alteração fica registrada no Log de Atividade." +
+          (lockPaid.length ? " Este atendimento já está incluído em pagamento de comissão (" + Utils.commissionPaymentsText(lockPaid) + "): ao salvar, o sistema vai pedir confirmação." : "");
+      lockBanner.innerHTML = '<i class="fa-solid fa-lock" style="margin-top:2px;"></i><span>' + Utils.escapeHtml(lockText) + '</span>';
+      lockBody.insertBefore(lockBanner, lockBody.firstChild);
+      if (concludedLocked) {
+        Array.prototype.forEach.call(lockBody.querySelectorAll("input, select, textarea, button"), function (el) { el.disabled = true; });
+        Array.prototype.forEach.call(lockBody.querySelectorAll(".commission-request-row, #am-add-service, #am-new-client"), function (el) { el.style.display = "none"; });
+        ["#am-save", "#am-delete", "#am-add-insumo"].forEach(function (sel) { var el = box.querySelector(sel); if (el) el.remove(); });
+      }
+    }
   }
 })();

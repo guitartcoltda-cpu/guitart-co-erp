@@ -228,6 +228,14 @@
   }
 
   function matchPair(bankId, txnId) {
+    // Nunca concilia o que já está conciliado (19/11/2026) — evita uma mesma
+    // linha do extrato apontar para dois lançamentos (duas pessoas ao mesmo tempo).
+    var bNow = DB.get("bankLines", bankId), tNow = DB.get("transactions", txnId);
+    if (!bNow || !tNow || bNow.matched || tNow.reconciled) {
+      Toast.show("Este lançamento ou esta linha do extrato já está conciliado — a tela foi atualizada.", "danger", 5000);
+      render();
+      return;
+    }
     DB.update("bankLines", bankId, { matched: true, matchedTransactionId: txnId });
     DB.update("transactions", txnId, { reconciled: true, bankLineId: bankId });
     DB.log("Conciliação", "Conciliou manualmente um lançamento com uma linha do extrato bancário");

@@ -283,7 +283,9 @@
           c ? c.name : "", s ? s.name : "", isParc ? "Sim" : "Não",
           isParc ? 0 : a.price,
           round2(a.commissionPercent != null ? a.commissionPercent : (e.commissionRate || 0)),
-          isParc ? 0 : split.mainCommission,
+          // "Comissão Bruta" = pote antes do repasse ao assistente (19/11/2026 —
+          // antes saía o valor líquido, igual à coluna "Comissão Líquida").
+          isParc ? 0 : split.pool,
           assistantName, apptAsstDeduct, apptConsumo,
           isParc ? 0 : round2(split.mainCommission)
         ]);
@@ -505,7 +507,13 @@
       if (!t.isTip || !t.employeeId || t.date < Utils.TIP_COMMISSION_START || t.date < range.start || t.date > range.end) return;
       tipsByEmployee[t.employeeId] = true;
     });
-    var employees = employeesAll.filter(function (e) { return e.commissionRate > 0 || assistantIds[e.id] || tipsByEmployee[e.id]; });
+    // BUG CORRIGIDO (19/11/2026): quem tem taxa padrão 0% sumia da lista mesmo
+    // com atendimento concluído com comissão específica (ex.: 20% combinado no
+    // próprio agendamento) — o valor nunca aparecia para pagar.
+    var employees = employeesAll.filter(function (e) {
+      if (e.commissionRate > 0 || assistantIds[e.id] || tipsByEmployee[e.id]) return true;
+      return (apptsByMainId[e.id] || []).some(function (a) { return Number(a.commissionPercent) > 0; });
+    });
 
     return employees.map(function (e) {
       var asMain = apptsByMainId[e.id] || [];
@@ -905,7 +913,9 @@
       var asstLinesHtml = apptsAsst.map(function (a) {
         var mainEmp = employeesById[a.employeeId];
         var split = Utils.apptCommissionSplit(a, mainEmp);
-        return lineHtml(a, split.assistantCommission, mainEmp ? "assistindo " + mainEmp.name : "assistente");
+        // Parceria não gera comissão nem para o assistente (ver computeRows) —
+        // a linha aparece com R$ 0,00 para bater com o subtotal (19/11/2026).
+        return lineHtml(a, Utils.isParceriaAppt(a) ? 0 : split.assistantCommission, mainEmp ? "assistindo " + mainEmp.name : "assistente");
       }).join("");
       asstSectionHtml = '<h4 style="font-size:14px;margin-top:18px;margin-bottom:8px;">Atendimentos como Assistente</h4>' +
         '<table class="data-table"><thead><tr><th>Data/Hora</th><th>Cliente</th><th>Serviço</th><th class="text-right">Valor Cobrado</th><th class="text-right">Comissão</th></tr></thead>' +

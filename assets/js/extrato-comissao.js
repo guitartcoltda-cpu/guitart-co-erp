@@ -40,7 +40,16 @@
 
   function init() {
     var restricted = findRestrictedEmployee();
-    var employees = DB.all("employees").filter(function (e) { return e.commissionRate > 0 && e.status === "ativo"; })
+    // Inclui também quem tem taxa padrão 0% mas já ganhou comissão como
+    // assistente ou com % específica no atendimento (19/11/2026) — mesma regra
+    // da tela Comissionamento.
+    var earnedIds = {};
+    DB.all("appointments").forEach(function (a) {
+      if (a.status !== "concluido") return;
+      if (a.assistantId) earnedIds[a.assistantId] = true;
+      if (a.employeeId && Number(a.commissionPercent) > 0) earnedIds[a.employeeId] = true;
+    });
+    var employees = DB.all("employees").filter(function (e) { return (e.commissionRate > 0 || earnedIds[e.id]) && e.status === "ativo"; })
       .sort(function (a, b) { return a.name.localeCompare(b.name); });
     var empSel = Utils.qs("#ec-employee");
     var empWrap = empSel.closest(".form-field") || empSel.parentElement;
@@ -531,7 +540,8 @@
             var s = data.services.find(function (x) { return x.id === a.serviceId; });
             var c = data.clients.find(function (x) { return x.id === a.clientId; });
             var mainEmp = data.employeesAll.find(function (x) { return x.id === a.employeeId; });
-            var commission = Utils.apptCommissionSplit(a, mainEmp).assistantCommission;
+            // Parceria não gera comissão para o assistente — R$ 0,00, como no subtotal (19/11/2026).
+            var commission = Utils.isParceriaAppt(a) ? 0 : Utils.apptCommissionSplit(a, mainEmp).assistantCommission;
             return '<tr><td>' + Utils.fmtDate(a.date) + ' · ' + a.time + '</td><td>' + Utils.escapeHtml(c ? c.name : "-") + '</td>' +
               '<td>' + Utils.escapeHtml(s ? s.name : "-") + '</td><td>' + Utils.escapeHtml(mainEmp ? mainEmp.name : "-") + '</td>' +
               '<td class="text-right text-num font-bold">' + Utils.fmtMoney(commission) + '</td></tr>';

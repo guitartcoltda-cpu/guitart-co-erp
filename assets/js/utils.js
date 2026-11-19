@@ -494,6 +494,71 @@
       return !!(pm && pm.isParceria);
     },
 
+    // Lista de opções de um <select> de edição que SEMPRE inclui o valor atual
+    // do registro (19/11/2026) — sem isso, um valor fora da lista fixa fazia o
+    // navegador selecionar a 1ª opção e o "Salvar" gravava essa no lugar.
+    withCurrentOption: function (options, current) {
+      var list = (options || []).slice();
+      if (current && list.indexOf(current) === -1) list.unshift(current);
+      return list;
+    },
+
+    // ATENDIMENTO CONCLUÍDO TRAVADO (19/11/2026, pedido do João): depois de
+    // concluído, um atendimento só pode ser alterado por usuário "master" —
+    // perfil Administrador ou Desenvolvedor (mesmo critério da Gestão de
+    // Ponto, ver canManage em ponto-gestao.js). Motivo: alterações em
+    // atendimentos já fechados estavam confundindo o fechamento de comissão.
+    MASTER_ROLES: ["Administrador", "Desenvolvedor"],
+    isMasterUser: function () {
+      var u = global.CurrentUser && global.CurrentUser.get ? global.CurrentUser.get() : null;
+      return !!(u && Utils.MASTER_ROLES.indexOf(u.role) !== -1);
+    },
+    // Verdadeiro quando o atendimento está concluído e quem está logado NÃO é
+    // master — nesse caso nada nele pode ser alterado (editar, excluir,
+    // lançar insumo, aprovar alteração).
+    apptConcludedLocked: function (appt) {
+      return !!(appt && appt.status === "concluido" && !Utils.isMasterUser());
+    },
+    CONCLUDED_LOCK_MSG: "Atendimento concluído: bloqueado para alterações. Somente usuário master (Administrador) pode alterar.",
+    // Pagamentos de comissão já registrados (Comissionamento → Registrar
+    // pagamento: lançamento de despesa na categoria "Comissões", com o
+    // funcionário e o período de referência) que JÁ INCLUEM este atendimento —
+    // mesmo critério do Comissionamento: o atendimento entra pela data dele
+    // (appt.date) e o pagamento cobre o período relatedRangeStart..End (ou,
+    // nos pagamentos antigos sem intervalo, o mês relatedMonth). Vale para o
+    // profissional principal e para o assistente. Aceita um atendimento ou
+    // uma lista de "versões" dele (ex.: antes e depois de uma edição, para
+    // pegar também a troca de data/profissional) — sem repetir pagamentos.
+    apptCommissionPayments: function (appts) {
+      var list = (Array.isArray(appts) ? appts : [appts]).filter(function (a) { return a && a.date; });
+      if (!list.length || !global.DB || !DB.all) return [];
+      var cat = DB.findOne ? DB.findOne("categories", function (c) { return c.name === "Comissões"; }) : null;
+      if (!cat) return [];
+      var seen = {};
+      return DB.all("transactions").filter(function (t) {
+        if (seen[t.id] || t.type !== "despesa" || t.categoryId !== cat.id || !t.employeeId) return false;
+        var hit = list.some(function (a) {
+          if (t.employeeId !== a.employeeId && t.employeeId !== a.assistantId) return false;
+          if (t.relatedRangeStart && t.relatedRangeEnd) return a.date >= t.relatedRangeStart && a.date <= t.relatedRangeEnd;
+          return !!t.relatedMonth && t.relatedMonth === a.date.slice(0, 7);
+        });
+        if (hit) seen[t.id] = true;
+        return hit;
+      }).sort(function (x, y) { return (x.date || "").localeCompare(y.date || ""); });
+    },
+    // Texto curto para o pop-up de confirmação: "Fulano — R$ 350,00 pago em
+    // 10/11/2026 (ref. 01/11 a 07/11)".
+    commissionPaymentsText: function (payments) {
+      var emps = global.DB && DB.all ? DB.all("employees") : [];
+      return (payments || []).map(function (t) {
+        var e = emps.find(function (x) { return x.id === t.employeeId; });
+        var ref = t.relatedRangeStart && t.relatedRangeEnd
+          ? Utils.fmtDate(t.relatedRangeStart) + " a " + Utils.fmtDate(t.relatedRangeEnd)
+          : (t.relatedMonth || "");
+        return (e ? e.name : "Profissional") + " — " + Utils.fmtMoney(t.amount) + " pago em " + Utils.fmtDate(t.date) + (ref ? " (ref. " + ref + ")" : "");
+      }).join("; ");
+    },
+
     // Gorjetas (regra do João, 23/10/2026): o cliente paga TUDO ao salão e a
     // gorjeta é repassada 100% ao profissional (sem % do salão) dentro da
     // comissão devida. Reconhece o lançamento pela marca isTip (gravada pela
@@ -819,6 +884,43 @@
         Modal.close();
         if (opts.onConfirm) opts.onConfirm();
       });
+    },
+    // Confirmação POR CIMA do modal que já está aberto (19/11/2026) — o
+    // Modal.confirm acima substitui o modal atual, o que faria a pessoa
+    // perder o formulário que estava editando se clicasse em "Cancelar".
+    // Este abre uma segunda camada; "Cancelar"/Esc fecham só ela e o
+    // formulário de baixo continua intacto. `opts.message` é texto puro
+    // (escapado); `opts.detail` (opcional) vira uma segunda linha em destaque.
+    confirmOver: function (opts) {
+      var prev = document.getElementById("stacked-confirm-overlay");
+      if (prev) prev.remove();
+      var overlay = document.createElement("div");
+      overlay.className = "modal-overlay open";
+      overlay.id = "stacked-confirm-overlay";
+      overlay.style.zIndex = "300";
+      overlay.innerHTML =
+        '<div class="modal-box" role="alertdialog" aria-modal="true">' +
+          '<div class="modal-head"><h3>' + Utils.escapeHtml(opts.title || "Confirmar ação") + '</h3></div>' +
+          '<div class="modal-body"><p>' + Utils.escapeHtml(opts.message || "Tem certeza?") + '</p>' +
+            (opts.detail ? '<p class="small" style="margin-top:10px;padding:10px;border-radius:var(--radius-md);background:var(--color-warning-bg,#fdf2df);">' + Utils.escapeHtml(opts.detail) + '</p>' : '') +
+          '</div>' +
+          '<div class="modal-foot">' +
+            '<button type="button" class="btn btn-secondary" data-stacked-cancel>Cancelar</button>' +
+            '<button type="button" class="btn ' + (opts.danger ? "btn-danger" : "btn-primary") + '" data-stacked-ok>' + Utils.escapeHtml(opts.confirmLabel || "Confirmar") + '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(overlay);
+      function close() { overlay.remove(); global.removeEventListener("keydown", onKey, true); }
+      // Captura o Esc antes do handler do Modal de baixo (que fecharia o formulário).
+      function onKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); close(); } }
+      global.addEventListener("keydown", onKey, true);
+      overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
+      overlay.querySelector("[data-stacked-cancel]").addEventListener("click", close);
+      overlay.querySelector("[data-stacked-ok]").addEventListener("click", function () {
+        close();
+        if (opts.onConfirm) opts.onConfirm();
+      });
+      return overlay;
     }
   };
 

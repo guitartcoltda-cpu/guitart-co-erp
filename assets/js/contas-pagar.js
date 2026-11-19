@@ -445,8 +445,10 @@
         costCenters.map(function (c) { return '<option value="' + c.id + '"' + (c.id === t.costCenterId ? " selected" : "") + '>' + Utils.escapeHtml(c.name) + '</option>'; }).join("") +
       '</select></div>' +
       (paga ? '<div class="form-field"><label>Forma de Pagamento</label><select id="cp-edit-pay">' +
-        ["Pix", "Transferência", "Boleto", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"].map(function (p) {
-          return '<option' + (t.paymentMethod === p ? " selected" : "") + '>' + p + '</option>';
+        // BUG CORRIGIDO (19/11/2026): mesma correção de financeiro.js — mantém a
+        // forma de pagamento atual em vez de trocá-la por "Pix" ao salvar.
+        Utils.withCurrentOption(["Pix", "Transferência", "Boleto", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"], t.paymentMethod).map(function (p) {
+          return '<option value="' + Utils.escapeHtml(p) + '"' + (t.paymentMethod === p ? " selected" : "") + '>' + Utils.escapeHtml(p) + '</option>';
         }).join("") + '</select></div>' : "") +
       '</div>';
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="cp-edit-save">Salvar Alterações</button>';

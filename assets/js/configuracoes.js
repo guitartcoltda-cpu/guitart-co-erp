@@ -858,13 +858,30 @@
         // servidor antes de aplicar (evita aprovar a mesma solicitação duas
         // vezes se outra pessoa aprovar quase ao mesmo tempo) — por isso
         // virou assíncrono; ver comentário em approvals.js.
-        Approvals.approve(id, handler).then(function (result) {
-          if (!result.ok && result.reason === "period_locked") { /* aviso já mostrado: mês fechado por folha publicada */ }
-          else if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
-          else { Toast.show("Solicitação aprovada", "success"); }
-          renderApprovals();
-          if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
-        });
+        function doApprove() {
+          Approvals.approve(id, handler).then(function (result) {
+            if (!result.ok && (result.reason === "period_locked" || result.reason === "concluded_locked")) { /* aviso já mostrado (mês fechado por folha publicada / atendimento concluído só para master) */ }
+            else if (!result.ok) { Toast.show("Esta solicitação já tinha sido decidida por outra pessoa — a lista foi atualizada.", "danger", 4500); }
+            else { Toast.show("Solicitação aprovada", "success"); }
+            renderApprovals();
+            if (window.AppLayout) Approvals.renderBadge(document.getElementById("approvals-badge-slot"));
+          });
+        }
+        // ATENDIMENTO CONCLUÍDO TRAVADO (19/11/2026): se a solicitação altera um
+        // atendimento concluído que já entrou em pagamento de comissão, pergunta
+        // antes (quem não é master é barrado dentro de Approvals.approve).
+        var paid = Approvals.concludedApptLockedFor && !Approvals.concludedApptLockedFor(a) && Approvals.paidCommissionFor ? Approvals.paidCommissionFor(a) : [];
+        if (paid.length) {
+          Modal.confirmOver({
+            title: "Atendimento com comissão já paga",
+            message: "Esta solicitação altera um atendimento já concluído e incluído em pagamento de comissão registrado. Aprovar agora deixa o fechamento diferente do que já foi pago ao profissional. Deseja continuar com a alteração?",
+            detail: Utils.commissionPaymentsText(paid),
+            confirmLabel: "Sim, continuar e aprovar", danger: true,
+            onConfirm: doApprove
+          });
+        } else {
+          doApprove();
+        }
       });
     });
     Utils.qsa("[data-reject]", tbl).forEach(function (b) {

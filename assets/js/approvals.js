@@ -59,6 +59,24 @@
     return rec;
   }
 
+  // Tipos de solicitação que gravam direto num atendimento (payload.appointmentId).
+  var APPT_CHANGE_TYPES = { comissao_agendamento: true, parceria_split: true };
+  function apptOf(approval) {
+    return approval && APPT_CHANGE_TYPES[approval.type] && approval.payload && approval.payload.appointmentId
+      ? DB.get("appointments", approval.payload.appointmentId) : null;
+  }
+  function concludedApptLockedFor(approval) {
+    var appt = apptOf(approval);
+    return !!(appt && global.Utils && global.Utils.apptConcludedLocked && global.Utils.apptConcludedLocked(appt));
+  }
+  // Pagamentos de comissão que já incluem o atendimento alterado por esta
+  // solicitação (vazio quando não altera atendimento, ou ele não está concluído).
+  function paidCommissionFor(approval) {
+    var appt = apptOf(approval);
+    if (!appt || appt.status !== "concluido" || !global.Utils || !global.Utils.apptCommissionPayments) return [];
+    return global.Utils.apptCommissionPayments(appt);
+  }
+
   function listPending() {
     return DB.find("approvals", function (a) { return a.status === "pendente"; })
       .sort(function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); });
@@ -91,6 +109,13 @@
     // por folha publicada (o aviso já é mostrado por PontoAjustes.isLocked).
     if (a.type === "ajuste_ponto" && global.PontoAjustes && global.PontoAjustes.isLocked && global.PontoAjustes.isLocked(a.payload)) {
       return Promise.resolve({ ok: false, reason: "period_locked" });
+    }
+    // ATENDIMENTO CONCLUÍDO TRAVADO (19/11/2026): uma solicitação que altera
+    // um atendimento já concluído (comissão ou divisão de Parceria) só pode
+    // ser aprovada por usuário master — "Pode aprovar solicitações" não basta.
+    if (concludedApptLockedFor(a)) {
+      if (global.Toast) global.Toast.show("Esta solicitação altera um atendimento já concluído: somente usuário master (Administrador) pode aprovar.", "danger", 6000);
+      return Promise.resolve({ ok: false, reason: "concluded_locked" });
     }
     return DB.fetchFresh("approvals", id).then(function (fresh) {
       if (fresh && fresh.status !== "pendente") {
@@ -159,6 +184,8 @@
     countPending: countPending,
     approve: approve,
     reject: reject,
-    renderBadge: renderBadge
+    renderBadge: renderBadge,
+    concludedApptLockedFor: concludedApptLockedFor,
+    paidCommissionFor: paidCommissionFor
   };
 })(window);

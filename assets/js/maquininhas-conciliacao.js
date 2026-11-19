@@ -299,6 +299,10 @@
         });
       });
       DB.log("Maquininhas", "Revisou e confirmou " + checked.length + " conciliação(ões) automática(s) entre slip da maquininha e extrato bancário");
+      // BUG CORRIGIDO (19/11/2026): uma linha clicada ANTES da conciliação
+      // automática continuava "selecionada" depois dela — o próximo clique do
+      // outro lado conciliava essa linha uma segunda vez (com outro par).
+      selectedSlipId = null; selectedBankId = null;
       Modal.close();
       Toast.show(checked.length + " conciliação(ões) confirmada(s)", "success");
       render();
@@ -311,6 +315,15 @@
   }
 
   function matchPair(slipId, bankId, source) {
+    // Nunca concilia uma linha que já está conciliada (19/11/2026) — protege
+    // contra seleção antiga e contra outra pessoa ter conciliado ao mesmo tempo.
+    var slipNow = DB.get("bankLines", slipId), bankNow = DB.get("bankLines", bankId);
+    if (!slipNow || !bankNow || slipNow.matched || bankNow.matched) {
+      selectedSlipId = null; selectedBankId = null;
+      Toast.show("Uma dessas linhas já está conciliada — a tela foi atualizada.", "danger", 5000);
+      render();
+      return;
+    }
     DB.update("bankLines", slipId, { matched: true, matchedLineId: bankId });
     DB.update("bankLines", bankId, { matched: true, matchedLineId: slipId });
     var msg = source === "sugestao"

@@ -285,7 +285,8 @@
 
     // Top services in the selected period
     var servRevenue = {};
-    byType(range, "receita").filter(function (t) { return !t.productId; }).forEach(function (t) {
+    // Gorjeta (isTip) não é receita do serviço — fica fora do ranking (19/11/2026).
+    byType(range, "receita").filter(function (t) { return !t.productId && !t.isTip; }).forEach(function (t) {
       var appt = appointments.find(function (a) { return a.id === t.appointmentId; });
       if (!appt) return;
       servRevenue[appt.serviceId] = (servRevenue[appt.serviceId] || 0) + t.amount;

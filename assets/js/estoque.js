@@ -723,7 +723,12 @@
       // qty (em "unidades de embalagem") é o que efetivamente move o
       // estoque e entra no cálculo financeiro; qtyRaw é o que a pessoa
       // digitou (natural, g/ml quando aplicável) — só para exibição/log.
-      var qty = hasPkg ? round2(qtyRaw / p.packageSize) : qtyRaw;
+      // BUG CORRIGIDO (19/11/2026): arredondava para 2 casas de "embalagem" —
+      // num frasco de 1.000 ml, uma saída de 4 ml virava 0 (o estoque não
+      // mudava) e 15 ml virava 20 ml. Agora usa 3 casas, como o Consumo de
+      // Insumos (consumo.js), o que dá precisão de 1 ml/g por litro/kg.
+      var round3 = function (n) { return Math.round(n * 1000) / 1000; };
+      var qty = hasPkg ? round3(qtyRaw / p.packageSize) : qtyRaw;
       if (type === "saida" && qty > p.currentStock) {
         Toast.show("Quantidade maior que o estoque disponível", "danger"); return;
       }
@@ -737,7 +742,7 @@
       // recente do servidor, não do valor "congelado" de quando o modal
       // abriu.
       DB.mergeFieldUpdate("products", p.id, "currentStock", function (current) {
-        return round2((current == null ? 0 : current) + delta);
+        return round3((current == null ? 0 : current) + delta);
       });
       var mvPatch = { productId: p.id, type: type, quantity: qty, reason: reason, date: date, notes: box.querySelector("#mm-notes").value.trim() };
       if (hasPkg) { mvPatch.displayQuantity = qtyRaw; mvPatch.displayUnit = p.packageUnit; }
