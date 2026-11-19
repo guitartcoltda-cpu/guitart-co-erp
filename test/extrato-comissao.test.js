@@ -112,7 +112,8 @@ const tables = {
     // antes de a tela ter um período personalizado. Deve contar sempre que
     // o período em exibição contiver o mês inteiro, e nunca num corte mais
     // estreito (ver "Já Recebido" nos cenários abaixo).
-    { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, amount: 30, status: "pago", date: today }
+    // 19/11/2026: pagamento antigo fecha o período dele — t1 cobre 01-04 (b1/b2, R$ 30 exatos).
+    { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, relatedRangeStart: currentMonthKey + "-01", relatedRangeEnd: currentMonthKey + "-04", amount: 30, status: "pago", date: today }
   ]
 };
 
@@ -204,9 +205,10 @@ function setCustomRange(start, end) {
   setCustomRange(d05, d10);
   await flush();
 
-  check("B: Comissão do Período = 95 (60 comissão + 45 esporádico - 10 consumo)", kpiValue("Comissão do Período") === money(95), kpiValue("Comissão do Período"));
+  // 19/11/2026: esporádicos antigos sem data (b1/b2) valem no dia 1º do mês — fora do corte 05-10.
+  check("B: Comissão do Período = 65 (60 comissão + 15 esporádico do dia 10 - 10 consumo)", kpiValue("Comissão do Período") === money(65), kpiValue("Comissão do Período"));
   check("B: Já Recebido = 0 (pagamento do mês inteiro não vaza para o corte)", kpiValue("Já Recebido") === money(0), kpiValue("Já Recebido"));
-  check("B: Saldo em Aberto = 95", kpiValue("Saldo em Aberto") === money(95), kpiValue("Saldo em Aberto"));
+  check("B: Saldo em Aberto = 65", kpiValue("Saldo em Aberto") === money(65), kpiValue("Saldo em Aberto"));
   check("B: Atendimentos no Período = 2 (dias 05 e 10, exclui dia 20)", kpiValue("Atendimentos no Período") === "2", kpiValue("Atendimentos no Período"));
   var payoutB = payoutItem("Corte do Período");
   check("B: Corte do Período = fim do intervalo (dia 10)", payoutB && payoutB.value === Utils.fmtDate(d10), payoutB && payoutB.value);
@@ -218,7 +220,7 @@ function setCustomRange(start, end) {
   // ---- C. Personalizado: 11 a 20 (exclui atendimentos dos dias 05 e 10, e o consumo do dia 10) ----
   setCustomRange(currentMonthKey + "-11", d20);
   await flush();
-  check("C: Comissão do Período = 60 (30 comissão + 30 esporádico fallback - 0 consumo)", kpiValue("Comissão do Período") === money(60), kpiValue("Comissão do Período"));
+  check("C: Comissão do Período = 30 (só a comissão do dia 20; b1/b2 valem no dia 1º)", kpiValue("Comissão do Período") === money(30), kpiValue("Comissão do Período"));
   check("C: Atendimentos no Período = 1 (só o dia 20)", kpiValue("Atendimentos no Período") === "1", kpiValue("Atendimentos no Período"));
 
   // ---- D. Personalizado: período inteiro no MÊS ANTERIOR — verifica que o
@@ -273,7 +275,7 @@ function setCustomRange(start, end) {
 
   setCustomRange(d05, d10);
   await flush();
-  check("F3: Já Recebido = 0 no corte 05-10 (pagamento que cruza a virada do mês não vaza para um corte mais estreito)", kpiValue("Já Recebido") === money(0), kpiValue("Já Recebido"));
+  check("F3: Já Recebido = 0 no corte 05-10 (nenhum item desse corte foi pago)", kpiValue("Já Recebido") === money(0), kpiValue("Já Recebido"));
 
   // ---- G. Gorjetas (regra de 23/10/2026): o cliente paga tudo ao salão e a
   // gorjeta é repassada 100% ao profissional, DENTRO da comissão devida.

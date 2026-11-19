@@ -110,8 +110,9 @@ const tables = {
   costCenters: [{ id: "cc-rh", key: "rh" }],
   commissionBonuses: [
     // b1/b2 simulam lançamentos ANTIGOS, de antes da apuração passar a usar
-    // a data exata (só têm `month`, sem `date`) — devem continuar entrando
-    // pela aproximação por mês tocado (fallback em bonusesFor/sporadicDiscountTotal).
+    // a data exata (só têm `month`, sem `date`). REGRA NOVA (19/11/2026): valem
+    // no dia 1º do mês de competência — antes entravam em QUALQUER corte que
+    // tocasse o mês (apareciam de novo a cada semana e podiam ser pagos 2x).
     { id: "b1", employeeId: "emp1", month: currentMonthKey, kind: "fixo", description: "Bônus meta", amount: 50, refValue: null, refPercent: null },
     { id: "b2", employeeId: "emp1", month: currentMonthKey, kind: "desconto", description: "Desconto material", amount: -20, refValue: null, refPercent: null },
     // b3 é um lançamento NOVO, com data própria (dia 10) — deve entrar só em
@@ -132,7 +133,12 @@ const tables = {
     // próprio — simula um pagamento feito antes de a tela ter um período
     // personalizado). Deve contar sempre que o período em exibição contiver
     // o mês inteiro (ex.: o mês inteiro), e nunca num corte mais estreito.
-    { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, amount: 30, status: "pago", date: today },
+    // 19/11/2026: um pagamento antigo FECHA o período dele (decisão do João:
+    // "fechou, pagou, pronto"). t1 agora cobre os dias 01-04 (b1/b2, R$ 30 —
+    // valor exato), para os demais cenários continuarem exercitando cortes
+    // com itens em aberto. Um pagamento antigo do MÊS inteiro fecharia o mês
+    // todo — coberto no teste comissao-fechamento.test.js.
+    { id: "t1", type: "despesa", categoryId: "cat-comissao", employeeId: "emp1", relatedMonth: currentMonthKey, relatedRangeStart: currentMonthKey + "-01", relatedRangeEnd: currentMonthKey + "-04", amount: 30, status: "pago", date: today },
     // Pagamento do Bruno para um corte SEMANAL que cruza a virada do mês
     // (começa no último dia do mês anterior, termina já no mês corrente),
     // com relatedMonth gravado como o mês corrente — reproduz o caso real
@@ -274,10 +280,11 @@ function setCustomRange(start, end) {
     // Comissão = 20+40=60; b1/b2 (sem data, fallback por mês tocado) somam 30;
     // b3 (data=dia 10) está DENTRO do corte 05-10, então também entra = +15;
     // consumo do dia 10 entra = 10. Devido = 60+30+15-10 = 95
-    check("B: Devido = 95 (b1/b2 pelo fallback de mês + b3 pela data exata, dentro do corte; consumo do dia 10 desconta)", moneyIn(cellText(row, 6), 95), cellText(row, 6));
+    // 19/11/2026: b1/b2 (dia 1º) ficam fora do corte 05-10. Devido = 60+15-10 = 65
+    check("B: Devido = 65 (b3 pela data exata, dentro do corte; b1/b2 valem no dia 1º; consumo do dia 10 desconta)", moneyIn(cellText(row, 6), 65), cellText(row, 6));
     // Pago = 0 — o pagamento t1 (implícito = mês inteiro) não está contido no corte 05-10
     check("B: Pago = 0 (pagamento do mês inteiro não vaza para o corte semanal)", moneyIn(cellText(row, 7), 0), cellText(row, 7));
-    check("B: Saldo = 95", moneyIn(cellText(row, 8), 95), cellText(row, 8));
+    check("B: Saldo = 65", moneyIn(cellText(row, 8), 65), cellText(row, 8));
   })();
 
   // ---- C. Personalizado: 11 a 20 (exclui os atendimentos dos dias 05 e 10, e o consumo do dia 10) ----
@@ -293,9 +300,10 @@ function setCustomRange(start, end) {
     // b3 (data=dia 10) fica FORA do corte 11-20 e é corretamente excluído (ao
     // contrário de b1/b2, que continuam entrando por não terem data própria);
     // consumo do dia 10 também não entra = 0. Devido = 30+30+0-0 = 60
-    check("C: Devido = 60 (b3, com data no dia 10, corretamente excluído deste corte; b1/b2 sem data continuam pelo fallback; consumo do dia 10 excluído)", moneyIn(cellText(row, 6), 60), cellText(row, 6));
+    // 19/11/2026: só o atendimento do dia 20 (b1/b2 valem no dia 1º). Devido = 30
+    check("C: Devido = 30 (b3 e b1/b2 fora deste corte; consumo do dia 10 excluído)", moneyIn(cellText(row, 6), 30), cellText(row, 6));
     check("C: Pago = 0", moneyIn(cellText(row, 7), 0), cellText(row, 7));
-    check("C: Saldo = 60", moneyIn(cellText(row, 8), 60), cellText(row, 8));
+    check("C: Saldo = 30", moneyIn(cellText(row, 8), 30), cellText(row, 8));
   })();
 
   // ---- D. Volta para o corte 05-10 e registra pagamento em lote ----
@@ -315,11 +323,12 @@ function setCustomRange(start, end) {
   var newTxn = tables.transactions[tables.transactions.length - 1];
   check("D: novo lançamento tem relatedRangeStart/End = 05/10", newTxn && newTxn.relatedRangeStart === d05 && newTxn.relatedRangeEnd === d10, newTxn);
   check("D: novo lançamento tem relatedMonth = mês corrente (mês em que o corte termina)", newTxn && newTxn.relatedMonth === currentMonthKey, newTxn && newTxn.relatedMonth);
-  check("D: valor pago = 95 (saldo do corte 05-10 antes do pagamento)", newTxn && Math.abs(newTxn.amount - 95) < 0.01, newTxn && newTxn.amount);
+  check("D: valor pago = 65 (saldo do corte 05-10 antes do pagamento)", newTxn && Math.abs(newTxn.amount - 65) < 0.01, newTxn && newTxn.amount);
+  check("D: pagamento grava os itens quitados (fechamento definitivo)", newTxn && Array.isArray(newTxn.commissionItems) && newTxn.commissionItems.length > 0, newTxn && newTxn.commissionItems);
 
   (function () {
     var row = anaRow();
-    check("D: após pagar, Pago = 95 e Saldo = 0 no corte 05-10", row && moneyIn(cellText(row, 7), 95) && moneyIn(cellText(row, 8), 0), row && [cellText(row, 7), cellText(row, 8)]);
+    check("D: após pagar, Pago = 65 e Saldo = 0 no corte 05-10", row && moneyIn(cellText(row, 7), 65) && moneyIn(cellText(row, 8), 0), row && [cellText(row, 7), cellText(row, 8)]);
   })();
 
   // ---- E. Vendo o mês inteiro de novo — o pagamento do corte semanal deve somar ao pago do mês inteiro (contido nele) ----
@@ -328,9 +337,11 @@ function setCustomRange(start, end) {
 
   (function () {
     var row = anaRow();
-    // Pago = 30 (t1) + 95 (pagamento do corte semanal, contido no mês inteiro) = 125 = Devido inteiro do mês -> Saldo 0
-    check("E: ver o mês inteiro soma pagamento avulso + pagamento do corte semanal, ambos contidos nele (Pago=125)", row && moneyIn(cellText(row, 7), 125), row && cellText(row, 7));
-    check("E: Saldo do mês fecha em 0", row && moneyIn(cellText(row, 8), 0), row && cellText(row, 8));
+    // 19/11/2026: Pago = 30 (t1) + 65 (corte semanal) = 95; o atendimento do dia
+    // 20 (R$ 30) ainda NÃO foi pago — antes o teste dava "Saldo 0" porque o
+    // pagamento semanal tinha cobrado b1/b2 de novo (pagamento em duplicidade).
+    check("E: ver o mês inteiro soma pagamento avulso + pagamento do corte semanal (Pago=95)", row && moneyIn(cellText(row, 7), 95), row && cellText(row, 7));
+    check("E: Saldo do mês = 30 (só o dia 20, ainda não pago)", row && moneyIn(cellText(row, 8), 30), row && cellText(row, 8));
   })();
 
   // ---- F. Volta ao corte personalizado 11-20 — o pagamento do corte 05-10 NÃO deve vazar para cá ----
@@ -340,7 +351,7 @@ function setCustomRange(start, end) {
   (function () {
     var row = anaRow();
     check("F: corte 11-20 continua com Pago=0 (pagamento de outra semana não vaza)", row && moneyIn(cellText(row, 7), 0), row && cellText(row, 7));
-    check("F: corte 11-20 continua com Saldo=60", row && moneyIn(cellText(row, 8), 60), row && cellText(row, 8));
+    check("F: corte 11-20 continua com Saldo=30", row && moneyIn(cellText(row, 8), 30), row && cellText(row, 8));
   })();
 
   // ---- G. Rótulo de período no cabeçalho do gráfico reflete o corte personalizado ----
@@ -359,14 +370,13 @@ function setCustomRange(start, end) {
     check("H1: corte de um único dia (d10) existe", !!row);
     if (!row) return;
     check("H1: Receita = 200 (só o atendimento do dia 10)", moneyIn(cellText(row, 3), 200), cellText(row, 3));
-    // Comissão = 40; b1/b2 sem data somam 30 (fallback, mês inteiro tocado); b3 com data=d10 também entra = +15; consumo do dia 10 = 10
-    // Devido = 40+30+15-10 = 75
-    check("H1: Devido = 75 (b3 entra por bater exatamente com o dia do corte)", moneyIn(cellText(row, 6), 75), cellText(row, 6));
+    // Comissão = 40; b3 com data=d10 entra = +15; consumo do dia 10 = 10; b1/b2 valem no dia 1º (19/11/2026)
+    // Devido = 40+15-10 = 45
+    check("H1: Devido = 45 (b3 entra por bater exatamente com o dia do corte)", moneyIn(cellText(row, 6), 45), cellText(row, 6));
   })();
 
   // Corte de um único dia sem nenhum atendimento/consumo/b3 (d09) — só os
-  // esporádicos SEM data (b1/b2) ainda aparecem, pelo fallback de mês
-  // tocado; b3 (data=d10) fica corretamente de fora.
+  // esporádicos SEM data (b1/b2) também ficam de fora (valem no dia 1º).
   setCustomRange(currentMonthKey + "-09", currentMonthKey + "-09");
   await flush();
   (function () {
@@ -374,9 +384,8 @@ function setCustomRange(start, end) {
     check("H2: corte de um único dia (d09, sem nada datado) existe", !!row);
     if (!row) return;
     check("H2: Receita = 0 (nenhum atendimento no dia 09)", moneyIn(cellText(row, 3), 0), cellText(row, 3));
-    // Comissão = 0; b1/b2 sem data ainda somam 30 (fallback); b3 (data=d10) corretamente excluído; consumo = 0
-    // Devido = 0+30-0 = 30
-    check("H2: Devido = 30 (só o fallback de b1/b2 sem data; b3, com data no dia 10, corretamente excluído do dia 09)", moneyIn(cellText(row, 6), 30), cellText(row, 6));
+    // 19/11/2026: b1/b2 valem só no dia 1º — o dia 09 não tem nada. Devido = 0
+    check("H2: Devido = 0 (nada datado no dia 09; b1/b2 valem no dia 1º; b3 no dia 10)", moneyIn(cellText(row, 6), 0), cellText(row, 6));
   })();
 
   // ---- I. Modal "Ver detalhes" — coluna "Produtos" mostra o desconto de
@@ -504,7 +513,7 @@ function setCustomRange(start, end) {
   await flush();
   (function () {
     var row = anaRow();
-    check("K4: corte 11-20 soma só a gorjeta do dia 20 (60 + 10 = 70)", row && moneyIn(cellText(row, 6), 70), row && cellText(row, 6));
+    check("K4: corte 11-20 soma só a gorjeta do dia 20 (30 + 10 = 40)", row && moneyIn(cellText(row, 6), 40), row && cellText(row, 6));
   })();
   // K4b: mesmo com ajuste líquido NEGATIVO (caso real do Francisco: desconto grande + gorjeta) a nota de gorjeta aparece.
   tables.commissionBonuses.push({ id: "bNeg", employeeId: "emp1", month: currentMonthKey, kind: "desconto", description: "Desconto grande", amount: -500, refValue: null, refPercent: null });

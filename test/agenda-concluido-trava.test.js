@@ -48,6 +48,7 @@ function boot(user, mutate) {
     insert: (t, rec) => { const r = Object.assign({ id: "n" + (++seq) }, rec); T(t).push(r); return r; },
     update: (t, id, p) => { updates.push([t, id, p]); return Object.assign(T(t).find(x => x.id === id) || {}, p); },
     remove: (t, id) => { removes.push([t, id]); store[t] = T(t).filter(x => x.id !== id); return true; },
+    removeWhere: (t, fn) => { store[t] = T(t).filter(x => !fn(x)); },
     mergeRecordUpdate: (t, id, fn) => { const r = T(t).find(x => x.id === id); return Object.assign(r, fn(r)); },
     mergeFieldUpdate: (t, id, f, fn) => { merges.push([t, id, f]); const r = T(t).find(x => x.id === id); if (r) r[f] = fn(r[f]); }, batch: fn => fn(), fetchFresh: (t, id) => Promise.resolve(T(t).find(x => x.id === id) || null),
     hasRemote: () => true, uid: p => p + (++seq), nowISO: () => new Date().toISOString(),
@@ -59,7 +60,7 @@ function boot(user, mutate) {
   w.Layout = { init() {}, render() {} };
   const errors = [];
   w.addEventListener("error", e => errors.push(e.message));
-  ["utils.js", "name-combo.js", "approvals.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
+  ["utils.js", "name-combo.js", "approvals.js", "consumo.js"].forEach(f => w.eval(fs.readFileSync(path.join(root, "assets", "js", f), "utf8")));
   const toasts = [];
   w.Toast.show = (m, k) => toasts.push((k || "") + ":" + m);
   try { w.eval(fs.readFileSync(path.join(root, "assets", "js", "agenda.js"), "utf8")); } catch (e) { errors.push("load: " + e.message); }
@@ -113,7 +114,7 @@ const paidWeek = s => s.transactions.push({ id: "pay1", type: "despesa", categor
     openAppt(t.d, "aC");
     const box = t.d.querySelector("#active-modal-overlay");
     ok(!!box.querySelector("#am-save") && !box.querySelector("#am-date").disabled, "2b: master edita");
-    ok(/usuário master/.test(box.querySelector("#am-concluded-lock").textContent) && !/pagamento de comissão \(/.test(box.querySelector("#am-concluded-lock").textContent), "2c: aviso de master, sem menção a comissão paga");
+    ok(/usuário master/.test(box.querySelector("#am-concluded-lock").textContent) && !/fechada e paga/.test(box.querySelector("#am-concluded-lock").textContent), "2c: aviso de master, sem menção a comissão paga");
     box.querySelector("#am-time").value = "10:30";
     box.querySelector("#am-save").click();
     await wait(30);
@@ -130,7 +131,7 @@ const paidWeek = s => s.transactions.push({ id: "pay1", type: "despesa", categor
     geral(t.d);
     openAppt(t.d, "aC");
     const box = t.d.querySelector("#active-modal-overlay");
-    ok(/pagamento de comissão \(Francisco Prof — R\$/.test(box.querySelector("#am-concluded-lock").textContent), "3a: aviso cita o pagamento de comissão");
+    ok(/fechada e paga \(Francisco Prof — R\$/.test(box.querySelector("#am-concluded-lock").textContent), "3a: aviso cita o pagamento de comissão");
     box.querySelector("#am-price").value = "R$ 80,00";
     box.querySelector("#am-save").click();
     await wait(30);
@@ -163,7 +164,7 @@ const paidWeek = s => s.transactions.push({ id: "pay1", type: "despesa", categor
     geral(t.d);
     t.d.querySelector('[data-del="aC"]').click();
     const conf = t.d.querySelector("#active-modal-overlay");
-    ok(/ATENÇÃO: este atendimento já está incluído em pagamento de comissão/.test(conf.textContent) && /Deseja continuar mesmo assim\?/.test(conf.textContent), "4a: excluir pela lista avisa da comissão paga (Desenvolvedor = master)");
+    ok(/ATENÇÃO: a comissão deste atendimento já foi fechada e paga/.test(conf.textContent) && /Deseja continuar mesmo assim\?/.test(conf.textContent), "4a: excluir pela lista avisa da comissão paga (Desenvolvedor = master)");
     closeModal(t.d);
     ok(!t.removes.length, "4b: cancelado não exclui");
     openAppt(t.d, "aC");
@@ -186,7 +187,9 @@ const paidWeek = s => s.transactions.push({ id: "pay1", type: "despesa", categor
     t.store.transactions.push({ id: "p_other", type: "despesa", categoryId: "catCom", employeeId: "e1", amount: 99, date: TODAY, relatedMonth: MONTH, relatedRangeStart: "2000-01-01", relatedRangeEnd: "2000-01-07" });
     t.store.transactions.push({ id: "p_cat", type: "despesa", categoryId: "catServ", employeeId: "e1", amount: 99, date: TODAY, relatedMonth: MONTH });
     ok(U.apptCommissionPayments(a).length === 1, "5b: pagamento de outro período ou outra categoria não conta");
-    ok(U.apptCommissionPayments([a, Object.assign({}, a, { date: "2000-01-03" })]).length === 2, "5c: trocar a data para um período já pago também é detectado");
+    // 19/11/2026: a ligação agora é item a item (livro-razão) — um pagamento de
+    // outro período não "pega" o atendimento só por mudar a data dele.
+    ok(U.apptCommissionPayments([a, Object.assign({}, a, { date: "2000-01-03" })]).length === 1, "5c: ligação é pelo item quitado, não pela data");
     t.w.CurrentUser = { get: () => RECEP };
     ok(U.apptConcludedLocked(a) && !U.apptConcludedLocked(t.store.appointments[1]), "5d: trava só o concluído");
     t.w.CurrentUser = { get: () => ({ role: "Gerente" }) };
@@ -232,6 +235,76 @@ const paidWeek = s => s.transactions.push({ id: "pay1", type: "despesa", categor
     t.d.querySelector('[data-del="aP"]').click();
     t.d.querySelector("#modal-confirm-btn").click();
     ok(t.removes.some(r => r[1] === "aP") && t.store.clients[0].packages[0].appointmentIds.length === 0, "7c: excluir pela lista libera a sessão do pacote");
+  }
+
+  // ---------- 8. 19/11 (decisões do João): excluir concluído apaga tudo junto ----------
+  {
+    const t = boot(ADMIN, s => {
+      s.products = [{ id: "pr1", name: "Shampoo", currentStock: 5, type: "revenda" }, { id: "pr2", name: "Tinta", currentStock: 2, packageSize: 0, type: "uso_interno" }];
+      s.transactions.push(
+        { id: "rev", type: "receita", amount: 100, appointmentId: "aC", date: TODAY, reconciled: true, bankLineId: "bl1" },
+        { id: "tip", type: "receita", amount: 15, appointmentId: "aC", isTip: true, employeeId: "e1", date: TODAY },
+        { id: "prod", type: "receita", amount: 40, appointmentId: "aC", productId: "pr1", saleQty: 2, date: TODAY },
+        { id: "outro", type: "receita", amount: 99, appointmentId: "aA", date: TODAY }
+      );
+      s.bankLines = [{ id: "bl1", matched: true, matchedTransactionId: "rev" }];
+      s.productConsumptions = [{ id: "cons1", appointmentId: "aC", employeeId: "e1", productId: "pr2", quantity: 1, unit: "un", employeeShare: 5, date: TODAY }];
+      s.stockMovements = [{ id: "sm1", relatedConsumptionId: "cons1" }];
+      s.clients[0].creditBalance = 10;
+      s.clients[0].creditHistory = [{ date: TODAY, delta: 10, note: "Pagamento a maior", appointmentId: "aC" }];
+    });
+    await wait(80);
+    geral(t.d);
+    t.d.querySelector('[data-del="aC"]').click();
+    const msg = t.d.querySelector("#active-modal-overlay").textContent;
+    ok(/Será apagado junto: 3 lançamento/.test(msg) && /consumo/.test(msg) && /crédito/.test(msg), "8a: confirmação lista o que sai junto", msg.slice(0, 300));
+    t.d.querySelector("#modal-confirm-btn").click();
+    const ids = t.store.transactions.map(x => x.id);
+    ok(!ids.includes("rev") && !ids.includes("tip") && !ids.includes("prod") && ids.includes("outro"), "8b: receita, gorjeta e venda de produto apagadas; lançamento de outro atendimento intacto", ids);
+    ok(t.store.bankLines[0].matched === false && t.store.bankLines[0].matchedTransactionId === null, "8c: linha do extrato conciliada volta a pendente");
+    ok(t.store.products.find(p => p.id === "pr1").currentStock === 7, "8d: estoque do produto vendido devolvido (+2)", t.store.products.find(p => p.id === "pr1").currentStock);
+    ok(t.store.productConsumptions.length === 0 && t.store.products.find(p => p.id === "pr2").currentStock === 3, "8e: consumo apagado e estoque do insumo devolvido");
+    ok(t.store.clients[0].creditBalance === 0 && t.store.clients[0].creditHistory.length === 2, "8f: crédito do cliente estornado (com registro)", t.store.clients[0]);
+    ok(!t.store.appointments.some(a => a.id === "aC"), "8g: atendimento excluído");
+  }
+
+  // ---------- 9. Venda de pacote: sai junto; bloqueia se já há outras sessões ----------
+  {
+    const t = boot(ADMIN, s => {
+      s.clients[0].packages = [{ id: "pkA", packageName: "Hidratação", sessionsTotal: 4, appointmentIds: ["v1", "v2"] }, { id: "pkB", packageName: "Botox", sessionsTotal: 4, appointmentIds: ["w1"] }];
+      s.appointments.push(
+        { id: "v1", clientId: "c1", serviceId: "s1", employeeId: "e1", price: 50, date: TODAY, time: "16:00", status: "agendado", packagePurchaseId: "pkA", packageSessionIndex: 1 },
+        { id: "v2", clientId: "c1", serviceId: "s1", employeeId: "e1", price: 50, date: TODAY, time: "17:00", status: "agendado", packagePurchaseId: "pkA", packageSessionIndex: 2 },
+        { id: "w1", clientId: "c1", serviceId: "s1", employeeId: "e1", price: 50, date: TODAY, time: "18:00", status: "agendado", packagePurchaseId: "pkB", packageSessionIndex: 1 }
+      );
+    });
+    await wait(80);
+    geral(t.d);
+    t.d.querySelector('[data-del="v1"]').click();
+    ok(!t.d.querySelector("#modal-confirm-btn") && t.toasts.some(m => /Exclua primeiro as outras sessões/.test(m)), "9a: venda de pacote com outra sessão agendada é bloqueada");
+    t.d.querySelector('[data-del="w1"]').click();
+    t.d.querySelector("#modal-confirm-btn").click();
+    ok(!t.store.clients[0].packages.some(p => p.id === "pkB") && t.store.clients[0].packages.some(p => p.id === "pkA"), "9b: excluir a venda do pacote remove o pacote (o outro fica)");
+  }
+
+  // ---------- 10. Cortesia R$ 0,00 e taxa congelada na conclusão ----------
+  {
+    const t = boot(ADMIN, s => { s.categories.push({ id: "catServ2", name: "x" }); s.services[0].categoryId = "catServ"; });
+    await wait(80);
+    geral(t.d);
+    t.d.querySelector('[data-conclude="aA"]').click();
+    await wait(20);
+    const box = t.d.querySelector("#active-modal-overlay");
+    ok(!!box && !!box.querySelector("#cc-amount"), "10a: modal de conclusão abriu");
+    box.querySelector("#cc-amount").value = "0,00";
+    box.querySelector("#cc-save").click();
+    await wait(60);
+    const a = t.store.appointments.find(x => x.id === "aA");
+    ok(a.status === "concluido" && a.price === 0, "10b: cortesia concluída com valor 0", a);
+    ok(!t.store.transactions.some(x => x.appointmentId === "aA" && x.type === "receita"), "10c: cortesia não gera receita de R$ 0,00");
+    ok(a.commissionPercent === 40 && a.parceriaAtClose === false, "10d: taxa (40%) e 'não é Parceria' gravadas na conclusão", a);
+    const split = t.w.Utils.apptCommissionSplit(a, { commissionRate: 99 });
+    ok(split.mainCommission === 0, "10e: cortesia não gera comissão, mesmo se a taxa do funcionário mudar depois");
   }
 
   console.log("\n" + passed + " passaram, " + failed + " falharam");
