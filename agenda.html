@@ -135,13 +135,10 @@
   .ag-main-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .ag-main-nav .ag-nav-controls { display: flex; align-items: center; gap: 6px; }
   .ag-main-nav #week-label { font-size: 14px; font-weight: 700; min-width: 190px; text-align: center; }
-  /* Botão de ocultar/mostrar o mini-calendário — a pedido do cliente
-     (10/09/2026), ganhou cor de destaque (dourado, mesmo tom do botão de
-     recolher o menu lateral) para não se confundir com os botões cinza de
-     navegação ao lado (que têm um ícone "<" muito parecido, de "dia
-     anterior") nem com as setas "<"/">" do próprio mini-calendário. */
-  #btn-toggle-rail { margin-right: 10px; border: 1px solid var(--color-accent); background: var(--color-accent-light); color: var(--color-accent); }
-  #btn-toggle-rail:hover { background: var(--color-accent); color: #1a1a1a; }
+  /* 19/11/2026: o botão de ocultar/mostrar o mini-calendário (#btn-toggle-rail)
+     foi REMOVIDO a pedido do João — a equipe recolhia sem querer e não sabia
+     voltar (no celular a agenda ficava espremida/sumia). O mini-calendário
+     agora fica sempre visível na Visão do Dia. */
 
   /* Barra de filtros no topo (perto de "Registrar Ocorrência"/"Novo
      Agendamento") — reaproveita o componente .filters-bar já usado em
@@ -176,6 +173,15 @@
     .ag-layout { grid-template-columns: 1fr; }
     .ag-rail { position: static; order: 2; }
     .ag-main { order: 1; }
+    /* BUG CORRIGIDO (19/11/2026): no celular/tablet, a regra
+       ".ag-layout.ag-rail-hidden" (mais específica que a de cima) voltava a
+       grade para "0 1fr" — e, como .ag-main tem order:1 aqui, ela caía na
+       coluna de largura ZERO: a agenda inteira ficava espremida num filete à
+       esquerda ("some tudo da tela"). Acontecia com o calendário recolhido e
+       também na Visão Geral (que esconde o calendário). Em coluna única basta
+       tirar o calendário do fluxo. */
+    .ag-layout.ag-rail-hidden { grid-template-columns: 1fr; gap: 16px; }
+    .ag-layout.ag-rail-hidden .ag-rail { display: none; }
   }
   @media (max-width: 900px) {
     .mini-cal { max-width: 100%; }
@@ -247,7 +253,6 @@
             <div id="ag-day-nav-main">
               <div class="ag-main-nav">
                 <div class="ag-nav-controls">
-                  <button class="btn btn-icon" id="btn-toggle-rail" title="Ocultar calendário"><i class="fa-solid fa-chevron-left"></i></button>
                   <button class="btn btn-icon btn-secondary" id="btn-prev-month" title="Semana anterior"><i class="fa-solid fa-angles-left"></i></button>
                   <button class="btn btn-icon btn-secondary" id="btn-prev-week" title="Dia anterior"><i class="fa-solid fa-chevron-left"></i></button>
                   <button class="btn btn-secondary" id="btn-today"><i class="fa-solid fa-calendar-day"></i> Hoje</button>
