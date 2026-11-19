@@ -736,7 +736,7 @@
           '<td class="text-right com-col-ajustes">' + adjustHtml + '</td>' +
           '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + '</td>' +
           '<td class="text-right"><div class="text-num text-success">' + Utils.fmtMoney(r.pago) + '</div>' +
-            (r.pagoSemItem > 0.01 ? '<div class="small text-danger" title="Valor pago que não corresponde a nenhum item em aberto — ver Auditoria no topo">' + Utils.fmtMoney(r.pagoSemItem) + ' sem item</div>' : '') + '</td>' +
+            '</td>' +
           '<td class="text-right"><div class="text-num font-bold ' + (r.saldo > 0.01 ? "text-danger" : "") + '">' + Utils.fmtMoney(Math.max(0, r.saldo)) + '</div>' + status + '</td>' +
           '<td class="com-col-actions"><div class="flex gap-6 justify-end">' +
             '<button class="btn btn-icon btn-ghost" data-details="' + r.employee.id + '" title="Ver detalhes"><i class="fa-solid fa-circle-info"></i></button>' +
@@ -772,62 +772,15 @@
     updateBulkBar();
   }
 
-  // AUDITORIA (19/11/2026): pagamentos de comissão com valor que não
-  // corresponde a nenhum item em aberto — pagamento em duplicidade (dois
-  // pagamentos para o mesmo período/atendimento), pago acima do devido, ou
-  // lançamento de comissão sem período. Vale para TODO o histórico, não só
-  // o período em exibição, para nenhum caso passar despercebido.
-  var AUDIT_REASON = {
-    acima_do_devido: "pago acima do que havia em aberto no período (possível duplicidade)",
-    sem_atendimentos: "nenhum item em aberto no período quando foi pago (possível duplicidade)",
-    item_excluido_ou_repetido: "inclui atendimento/item que foi excluído depois ou já estava pago",
-    sem_periodo: "lançamento de comissão sem período de referência (feito fora do Comissionamento?)"
-  };
+  // AUDITORIA (19/11/2026) — OCULTA a pedido do João (19/11/2026): as caixas
+  // "possível pagamento em duplicidade" e "fechamentos antigos pagos abaixo do valor
+  // calculado hoje" confundiam a equipe (a conferência paralela da Luiza bate com o
+  // sistema e esses pagamentos já eram considerados pagos). Nada foi apagado e o cálculo
+  // continua o mesmo: Utils.commissionLedger() ainda produz `excess` e `shortfalls`;
+  // só deixou de ser exibido. Para reexibir, é só voltar a montar o HTML a partir deles.
   function renderAudit() {
-    var anchor = document.getElementById("com-summary");
-    if (!anchor) return;
     var el = document.getElementById("com-audit");
-    if (!el) {
-      el = document.createElement("div");
-      el.id = "com-audit";
-      anchor.parentNode.insertBefore(el, anchor.nextSibling);
-    }
-    var L = Utils.commissionLedger();
-    var byDateDesc = function (a, b) { return (b.txn.date || "").localeCompare(a.txn.date || ""); };
-    var list = L.excess.slice().sort(byDateDesc);
-    var shorts = (L.shortfalls || []).slice().sort(byDateDesc);
-    if (!list.length && !shorts.length) { el.innerHTML = ""; return; }
-    var emps = {}; DB.all("employees").forEach(function (e) { emps[e.id] = e; });
-    function refOf(t) { var cov = Utils.commissionPaymentCoverage(t); return cov ? Utils.fmtDate(cov.start) + " a " + Utils.fmtDate(cov.end) : "-"; }
-    var html = "";
-    if (list.length) {
-      var total = round2(list.reduce(function (s, x) { return s + x.amount; }, 0));
-      html += '<div class="card mb-16" style="border-left:4px solid var(--color-danger);">' +
-        '<div class="card-header"><div><h3><i class="fa-solid fa-triangle-exclamation" style="color:var(--color-danger);margin-right:8px;"></i>Auditoria — possível pagamento em duplicidade</h3>' +
-        '<div class="card-header-sub">' + list.length + ' pagamento(s) com ' + Utils.fmtMoney(total) + ' que não correspondem a nenhum atendimento/item em aberto quando foram registrados. Confira com o profissional.</div></div></div>' +
-        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Pago em</th><th>Profissional</th><th>Referência</th><th class="text-right">Valor do pagamento</th><th class="text-right">Sem item correspondente</th><th>Motivo</th></tr></thead><tbody>' +
-        list.map(function (x) {
-          var t = x.txn, e = emps[t.employeeId];
-          return '<tr><td>' + Utils.fmtDate(t.date) + '</td><td>' + Utils.escapeHtml(e ? e.name : "-") + '</td><td>' + refOf(t) + '</td>' +
-            '<td class="text-right text-num">' + Utils.fmtMoney(t.amount) + '</td>' +
-            '<td class="text-right text-num font-bold text-danger">' + Utils.fmtMoney(x.amount) + '</td>' +
-            '<td class="small">' + Utils.escapeHtml(AUDIT_REASON[x.reason] || x.reason) + '</td></tr>';
-        }).join("") + '</tbody></table></div></div>';
-    }
-    if (shorts.length) {
-      var totalS = round2(shorts.reduce(function (s, x) { return s + x.amount; }, 0));
-      html += '<div class="card mb-16" style="border-left:4px solid var(--color-warning);">' +
-        '<div class="card-header"><div><h3><i class="fa-solid fa-scale-unbalanced" style="color:var(--color-warning);margin-right:8px;"></i>Auditoria — fechamentos antigos pagos abaixo do valor calculado hoje</h3>' +
-        '<div class="card-header-sub">Esses períodos estão FECHADOS (não voltam a cobrar). A diferença de ' + Utils.fmtMoney(totalS) + ' é só para conferência: pode ser um pagamento parcial (se faltar pagar algo ao profissional, lance pelo Comissionamento Esporádico) ou a taxa de comissão do funcionário mudou depois do pagamento.</div></div></div>' +
-        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Pago em</th><th>Profissional</th><th>Referência</th><th class="text-right">Valor pago</th><th class="text-right">Diferença</th></tr></thead><tbody>' +
-        shorts.map(function (x) {
-          var t = x.txn, e = emps[t.employeeId];
-          return '<tr><td>' + Utils.fmtDate(t.date) + '</td><td>' + Utils.escapeHtml(e ? e.name : "-") + '</td><td>' + refOf(t) + '</td>' +
-            '<td class="text-right text-num">' + Utils.fmtMoney(t.amount) + '</td>' +
-            '<td class="text-right text-num font-bold" style="color:var(--color-warning);">' + Utils.fmtMoney(x.amount) + '</td></tr>';
-        }).join("") + '</tbody></table></div></div>';
-    }
-    el.innerHTML = html;
+    if (el) el.innerHTML = "";
   }
 
   function updateSelectAllState(rows) {

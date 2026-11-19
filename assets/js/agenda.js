@@ -91,7 +91,7 @@
   function paidCommissionNote(payments) {
     if (!payments || !payments.length) return "";
     return " ATENÇÃO: a comissão deste atendimento já foi fechada e paga (" + Utils.commissionPaymentsText(payments) +
-      "). O valor pago não muda; o pagamento passa a aparecer na Auditoria do Comissionamento como valor sem atendimento. Deseja continuar mesmo assim?";
+      "). O valor pago não muda. Deseja continuar mesmo assim?";
   }
   function concludedChangeLogTag(a, payments) {
     if (!a || a.status !== "concluido") return "";
