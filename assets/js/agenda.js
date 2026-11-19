@@ -90,8 +90,8 @@
   // marcada no Log de Atividade.
   function paidCommissionNote(payments) {
     if (!payments || !payments.length) return "";
-    return " ATENÇÃO: este atendimento já está incluído em pagamento de comissão registrado (" + Utils.commissionPaymentsText(payments) +
-      "). Alterá-lo agora deixa o fechamento diferente do que já foi pago ao profissional. Deseja continuar mesmo assim?";
+    return " ATENÇÃO: a comissão deste atendimento já foi fechada e paga (" + Utils.commissionPaymentsText(payments) +
+      "). O valor pago não muda; o pagamento passa a aparecer na Auditoria do Comissionamento como valor sem atendimento. Deseja continuar mesmo assim?";
   }
   function concludedChangeLogTag(a, payments) {
     if (!a || a.status !== "concluido") return "";
@@ -103,8 +103,8 @@
     if (!payments || !payments.length) { onContinue(); return; }
     Modal.confirmOver({
       title: "Atendimento com comissão já paga",
-      message: "Este atendimento já está incluído em pagamento de comissão registrado. " + actionText +
-        " agora deixa o fechamento diferente do que já foi pago ao profissional. Deseja continuar com a alteração?",
+      message: "A comissão deste atendimento já foi fechada e paga ao profissional. " + actionText +
+        " não muda a comissão já paga (o fechamento continua valendo como foi pago). Deseja continuar com a alteração?",
       detail: Utils.commissionPaymentsText(payments),
       confirmLabel: "Sim, continuar com a alteração", danger: true,
       onConfirm: onContinue
@@ -124,6 +124,119 @@
         return Object.assign({}, pp, { appointmentIds: (pp.appointmentIds || []).filter(function (aid) { return aid !== a.id; }) });
       });
     });
+  }
+
+  // ---------------- Excluir atendimento (19/11/2026) ----------------
+  // Um único fluxo para o "Excluir" da lista e do formulário.
+  //  - Atendimento CONCLUÍDO (só master — ver trava): decisão do João, "apagar
+  //    tudo junto" — saem também os lançamentos ligados a ele (receita, sinal,
+  //    gorjetas, produto vendido, despesa de Parceria, complemento), o consumo
+  //    de insumos (estoque devolvido), a venda de produto (estoque devolvido) e
+  //    o crédito/pendência do cliente gerado na conclusão (estornado). Linha do
+  //    extrato que estava conciliada volta a ficar pendente.
+  //  - Venda de pacote (sessão 1): a compra do pacote sai junto (antes as
+  //    sessões ficavam liberadas sem cobrança). Se outras sessões já foram
+  //    agendadas, a exclusão é bloqueada até excluí-las.
+  //  - Demais agendamentos: como sempre (sinal recebido continua lançado).
+  function linkedRecordsOf(a) {
+    var client = a.clientId ? DB.get("clients", a.clientId) : null;
+    var concluded = a.status === "concluido";
+    var purchase = (a.packagePurchaseId && a.packageSessionIndex === 1 && client)
+      ? (client.packages || []).find(function (pp) { return pp.id === a.packagePurchaseId; }) : null;
+    return {
+      client: client, concluded: concluded, purchase: purchase,
+      otherSessions: purchase ? (purchase.appointmentIds || []).filter(function (x) { return x !== a.id; }) : [],
+      txns: concluded ? DB.all("transactions").filter(function (t) { return t.appointmentId === a.id; }) : [],
+      cons: concluded ? DB.all("productConsumptions").filter(function (c) { return c.appointmentId === a.id; }) : [],
+      credits: concluded && client ? (client.creditHistory || []).filter(function (h) { return h.appointmentId === a.id && !h.reversalOf; }) : []
+    };
+  }
+  function txnKindLabel(t) {
+    if (t.isDeposit) return "sinal";
+    if (t.isTip) return "gorjeta";
+    if (t.productId) return "venda de produto";
+    if (t.type === "despesa") return "despesa (Parceria)";
+    return "receita";
+  }
+  function deleteSummaryText(L) {
+    var parts = [];
+    if (L.txns.length) parts.push(L.txns.length + " lançamento(s) financeiro(s): " + L.txns.map(function (t) { return txnKindLabel(t) + " " + Utils.fmtMoney(t.amount) + (t.reconciled ? " (conciliado)" : ""); }).join(", "));
+    if (L.cons.length) parts.push(L.cons.length + " consumo(s) de insumo (o estoque volta)");
+    if (L.credits.length) parts.push("crédito/pendência do cliente gerado na conclusão (estornado)");
+    if (L.purchase) parts.push("a venda do pacote \"" + L.purchase.packageName + "\"");
+    return parts.length ? " Será apagado junto: " + parts.join("; ") + "." : "";
+  }
+  function confirmDeleteAppointment(id) {
+    var a = DB.get("appointments", id);
+    if (!a) return;
+    if (Utils.apptConcludedLocked(a)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
+    var L = linkedRecordsOf(a);
+    if (L.otherSessions.length) {
+      Toast.show("Este é o agendamento da VENDA do pacote \"" + L.purchase.packageName + "\" e já existem " + L.otherSessions.length + " outra(s) sessão(ões) agendada(s) dele. Exclua primeiro as outras sessões.", "danger", 8000);
+      return;
+    }
+    var paid = L.concluded ? Utils.apptCommissionPayments(a) : [];
+    var msg = "Deseja excluir este " + (L.concluded ? "atendimento concluído" : "agendamento") + "?";
+    if (a.packagePurchaseId && !L.purchase) msg += " A sessão do pacote voltará a ficar disponível para ser reagendada.";
+    if (!L.concluded) msg += depositKeepNote(a);
+    msg += deleteSummaryText(L);
+    msg += paidCommissionNote(paid);
+    Modal.confirm({
+      title: paid.length ? "Excluir atendimento com comissão já paga" : (L.concluded ? "Excluir atendimento concluído" : "Excluir agendamento"),
+      message: msg, danger: true,
+      confirmLabel: paid.length ? "Sim, continuar e excluir" : (L.concluded ? "Excluir tudo" : undefined),
+      onConfirm: function () { deleteAppointmentCascade(a, L, paid); }
+    });
+  }
+  function deleteAppointmentCascade(a, L, paid) {
+    var stockNotes = [];
+    DB.batch(function () {
+      L.txns.forEach(function (t) {
+        if (t.bankLineId) {
+          var bl = DB.get("bankLines", t.bankLineId);
+          if (bl && bl.matchedTransactionId === t.id) DB.update("bankLines", bl.id, { matched: false, matchedTransactionId: null });
+        }
+        if (t.productId) {
+          var prod = DB.get("products", t.productId);
+          var qty = Number(t.saleQty) || 0;
+          if (prod && qty > 0) {
+            DB.mergeFieldUpdate("products", prod.id, "currentStock", function (current) { return round2((Number(current) || 0) + qty); });
+            DB.insert("stockMovements", { productId: prod.id, type: "entrada", reason: "estorno", quantity: qty, date: Utils.todayISO(), notes: "Estorno — atendimento excluído (" + a.date + " " + a.time + ")" });
+          } else if (prod) {
+            stockNotes.push(prod.name);
+          }
+        }
+        DB.remove("transactions", t.id);
+      });
+      L.cons.forEach(function (c) { if (window.Consumo) Consumo.remove(c.id); else DB.remove("productConsumptions", c.id); });
+      if (L.credits.length && L.client) {
+        DB.mergeRecordUpdate("clients", L.client.id, function (fresh) {
+          var hist = (fresh.creditHistory || []).slice();
+          var delta = 0;
+          L.credits.forEach(function (h) {
+            delta += -Number(h.delta || 0);
+            hist.push({ date: Utils.todayISO(), delta: round2(-Number(h.delta || 0)), note: "Estorno — atendimento excluído (" + (h.note || "") + ")", appointmentId: a.id, reversalOf: true });
+          });
+          return { creditHistory: hist, creditBalance: round2((fresh.creditBalance || 0) + delta) };
+        });
+      }
+      if (L.purchase) {
+        DB.mergeFieldUpdate("clients", a.clientId, "packages", function (packages) {
+          return (packages || []).filter(function (pp) { return pp.id !== L.purchase.id; });
+        });
+      } else {
+        releasePackageSlot(a);
+      }
+      DB.remove("appointments", a.id);
+    });
+    DB.log("Agenda", "Excluiu o " + (L.concluded ? "atendimento concluído" : "agendamento") + " de " + a.date + " " + a.time + apptLogTag(a) +
+      (L.txns.length ? " — apagou junto " + L.txns.length + " lançamento(s) (" + Utils.fmtMoney(L.txns.reduce(function (s, t) { return s + (Number(t.amount) || 0); }, 0)) + ")" : "") +
+      (L.cons.length ? ", " + L.cons.length + " consumo(s)" : "") + (L.credits.length ? ", estornou crédito do cliente" : "") +
+      (L.purchase ? ", removeu a venda do pacote \"" + L.purchase.packageName + "\"" : "") + concludedChangeLogTag(a, paid), { refId: a.id });
+    Toast.show(L.concluded ? "Atendimento e lançamentos ligados a ele excluídos" : "Agendamento excluído", "success");
+    if (stockNotes.length) Toast.show("Estoque de " + stockNotes.join(", ") + " não foi devolvido automaticamente (venda antiga, sem quantidade registrada) — ajuste em Estoque.", "info", 9000);
+    Modal.close();
+    render();
   }
 
   function apptHasDeposit(a) { return !!(a && a.depositPaid && Number(a.depositAmount) > 0); }
@@ -647,24 +760,7 @@
     });
     Utils.qsa("[data-edit]", listEl).forEach(function (b) { b.addEventListener("click", function () { openApptModal(b.getAttribute("data-edit")); }); });
     Utils.qsa("[data-del]", listEl).forEach(function (b) {
-      b.addEventListener("click", function () {
-        var id = b.getAttribute("data-del");
-        var apptToDel = DB.get("appointments", id);
-        if (Utils.apptConcludedLocked(apptToDel)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
-        var delPaid = apptToDel && apptToDel.status === "concluido" ? Utils.apptCommissionPayments(apptToDel) : [];
-        Modal.confirm({
-          title: delPaid.length ? "Excluir atendimento com comissão já paga" : "Excluir agendamento",
-          message: "Deseja excluir este agendamento?" + depositKeepNote(apptToDel) + paidCommissionNote(delPaid), danger: true,
-          confirmLabel: delPaid.length ? "Sim, continuar e excluir" : undefined,
-          onConfirm: function () {
-            var appt = DB.get("appointments", id);
-            releasePackageSlot(appt);
-            DB.remove("appointments", id);
-            if (appt) DB.log("Agenda", "Excluiu o agendamento de " + appt.date + " " + appt.time + apptLogTag(appt) + concludedChangeLogTag(appt, delPaid), { refId: appt.id });
-            Toast.show("Agendamento excluído", "success"); render();
-          }
-        });
-      });
+      b.addEventListener("click", function () { confirmDeleteAppointment(b.getAttribute("data-del")); });
     });
   }
 
@@ -1183,6 +1279,29 @@
   // não é Administrador só pode solicitar a alteração, que precisa ser
   // aprovada em Configurações → Aprovações antes de valer.
   var canEditParceriaSplit = !window.Approvals || Approvals.isAdmin();
+
+  // CORTESIA (19/11/2026, decisão do João): "Valor cobrado" R$ 0,00 digitado
+  // vale como ZERO — sem receita e sem comissão (comissão = % do valor), mas o
+  // consumo de insumos lançado continua descontando do profissional. Antes o
+  // zero caía no valor padrão do serviço (a cortesia virava receita e
+  // comissão). Só o campo totalmente vazio usa o valor padrão.
+  function chargedAmountFrom(input, fallback) {
+    if (input && /\d/.test(input.value || "")) return Utils.moneyMaskToFloat(input);
+    return fallback;
+  }
+  // COMISSÃO CONGELADA NA CONCLUSÃO (19/11/2026, decisão do João: "cada
+  // atendimento tem sua cobrança"): grava no atendimento a % de comissão do
+  // profissional e se foi Parceria NAQUELE momento — mudar depois a taxa do
+  // funcionário ou o cadastro da forma de pagamento não muda mais o passado.
+  function freezeCommissionFields(appt, patch, methods) {
+    var hasOwn = patch.commissionPercent != null || (appt.commissionPercent != null && appt.commissionPercent !== "");
+    if (!hasOwn) {
+      var emp = DB.get("employees", appt.employeeId);
+      patch.commissionPercent = emp ? (Number(emp.commissionRate) || 0) : 0;
+    }
+    patch.parceriaAtClose = isParceriaMethod(patch.paymentMethod || appt.paymentMethod, methods);
+    return patch;
+  }
 
   function isParceriaMethod(methodName, methods) {
     var pm = (methods || paymentMethods()).find(function (p) { return p.name === methodName; });
@@ -1823,7 +1942,7 @@
           // valor desta sessão foi cobrado inteiro na venda do pacote (1ª
           // sessão) — não no #ps-pay acima, que é só para produto levado pelo
           // cliente (venda avulsa à parte, sem relação com esta sessão).
-          DB.update("appointments", appt.id, { status: "concluido", paymentMethod: "Pacote" });
+          DB.update("appointments", appt.id, freezeCommissionFields(appt, { status: "concluido", paymentMethod: "Pacote" }));
           registerTip({ amount: tipEmp, employeeId: appt.employeeId, employeeLabel: employee ? employee.name : "Profissional", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
           registerTip({ amount: tipAsst, employeeId: appt.assistantId, employeeLabel: assistant ? assistant.name : "Assistente", appt: appt, service: service, client: client, payMethod: payMethod, costCenter: costCenter });
 
@@ -1856,7 +1975,7 @@
                 type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
                 categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
                 paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
-                productId: productId, appointmentId: appt.id, reconciled: false
+                productId: productId, saleQty: qtd, appointmentId: appt.id, reconciled: false
               });
             }
           });
@@ -2039,7 +2158,7 @@
       if (isPkgPay && !chosenPurchase) { Toast.show("Selecione qual pacote esta sessão vai consumir", "danger"); return; }
       var packageDilutedValue = chosenPurchase ? round2((chosenPurchase.totalPrice || 0) / (chosenPurchase.sessionsTotal || 1)) : null;
       var packageSessionIndexForLog = chosenPurchase ? (chosenPurchase.appointmentIds || []).length + 1 : null;
-      var amount = isPkgPay ? packageDilutedValue : (Utils.moneyMaskToFloat(box.querySelector("#cc-amount")) || (isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price));
+      var amount = isPkgPay ? packageDilutedValue : chargedAmountFrom(box.querySelector("#cc-amount"), (isPackageSale && packagePurchase ? packagePurchase.totalPrice : appt.price));
       // Sinal já recebido: não combina com Parceria/Pacote (nada a cobrar do
       // cliente) — o dinheiro do sinal ficaria sem destino — e não pode ser maior
       // que o valor cobrado (sobraria dinheiro recebido sem atendimento).
@@ -2086,6 +2205,7 @@
           apptPatch.price = amount;
         }
         if (isParceria && canEditParceriaSplit) apptPatch.commissionPercent = splitPct;
+        freezeCommissionFields(appt, apptPatch, methods);
         DB.update("appointments", appt.id, apptPatch);
 
         if (isPkgPay) {
@@ -2141,9 +2261,9 @@
               employeeId: appt.employeeId, clientId: appt.clientId, appointmentId: appt.id, reconciled: false
             });
           }
-          // Sinal cobrindo o valor inteiro: não há restante a lançar (a receita já
-          // está no lançamento do sinal) — não cria lançamento de R$ 0,00.
-          if (!(depApplied > 0 && mainRevenue <= 0.004)) {
+          // Sinal cobrindo o valor inteiro, ou cortesia (R$ 0,00): não há nada a
+          // lançar agora — nunca cria lançamento de R$ 0,00.
+          if (mainRevenue > 0.004) {
             var mainTxn = {
               type: "receita", description: service.name + " - " + client.name + (depApplied > 0 ? " (restante — sinal de " + Utils.fmtMoney(depApplied) + " já recebido)" : ""), amount: mainRevenue,
               date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
@@ -2192,7 +2312,7 @@
               type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
               categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
               paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy, employeeId: appt.employeeId, clientId: appt.clientId,
-              productId: productId, appointmentId: appt.id, reconciled: false
+              productId: productId, saleQty: qtd, appointmentId: appt.id, reconciled: false
             });
           }
         });
@@ -2379,7 +2499,7 @@
       if (groupDepTotal > 0 && isParceria) { Toast.show("Há atendimentos com sinal já recebido neste Fechar Conta: não pode ser fechado como Parceria. Escolha uma forma de pagamento normal ou corrija o sinal.", "danger", 7000); return; }
       for (var gi = 0; gi < lines.length; gi++) {
         var gl = lines[gi];
-        var glAmount = Utils.moneyMaskToFloat(box.querySelector("#" + gl.rowPrefix + "-amount")) || gl.appt.price;
+        var glAmount = chargedAmountFrom(box.querySelector("#" + gl.rowPrefix + "-amount"), gl.appt.price);
         if (gl.dep.amount > 0 && glAmount + 0.004 < gl.dep.amount) {
           Toast.show("O valor cobrado de " + (gl.service ? gl.service.name : "um atendimento") + " (" + Utils.fmtMoney(glAmount) + ") é menor que o sinal já recebido (" + Utils.fmtMoney(gl.dep.amount) + "). Ajuste o valor cobrado ou corrija o sinal.", "danger", 7000);
           return;
@@ -2398,7 +2518,7 @@
       DB.batch(function () {
         lines.forEach(function (l) {
           var appt = l.appt, service = l.service;
-          var amount = Utils.moneyMaskToFloat(box.querySelector("#" + l.rowPrefix + "-amount")) || appt.price;
+          var amount = chargedAmountFrom(box.querySelector("#" + l.rowPrefix + "-amount"), appt.price);
           totalAmount += isParceria ? 0 : amount;
           var category = service ? DB.findOne("categories", function (c) { return c.id === service.categoryId; }) : null;
           var costCenter = DB.findOne("costCenters", function (c) { return c.key === "operacional"; });
@@ -2415,6 +2535,7 @@
             splitPct = resolvedParceriaSplitPercent(box, l.rowPrefix + "-parceria-pct", appt, l.employee);
             if (canEditParceriaSplit) apptPatch.commissionPercent = splitPct;
           }
+          freezeCommissionFields(appt, apptPatch, methods);
           DB.update("appointments", appt.id, apptPatch);
 
           if (isParceria) {
@@ -2435,8 +2556,8 @@
               lineRevenue = round2(lineRevenue - take);
               pendingShortfall = round2(pendingShortfall - take);
             }
-            // Sinal cobrindo a linha inteira: nada a lançar agora (receita já no lançamento do sinal).
-            if (!(lineDep > 0 && lineCharge <= 0.004)) {
+            // Sinal cobrindo a linha inteira, ou cortesia (R$ 0,00): nada a lançar agora.
+            if (lineRevenue > 0.004) {
               var lineTxn = {
                 type: "receita", description: (service ? service.name : "Atendimento") + " - " + client.name + (lineDep > 0 ? " (restante — sinal de " + Utils.fmtMoney(lineDep) + " já recebido)" : ""), amount: lineRevenue,
                 date: appt.date, categoryId: category ? category.id : null, costCenterId: costCenter ? costCenter.id : null,
@@ -2486,7 +2607,7 @@
                 type: "receita", description: "Produto - " + product.name + " (" + client.name + ")", amount: saleAmount, date: appt.date,
                 categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
                 paymentMethod: payMethod, status: "pago", installments: installments, cardMachineId: cardMachineId, feePaidBy: feePaidBy, employeeId: appt.employeeId, clientId: appt.clientId,
-                productId: productId, appointmentId: appt.id, reconciled: false
+                productId: productId, saleQty: qtd, appointmentId: appt.id, reconciled: false
               });
             }
           });
@@ -2605,7 +2726,7 @@
               type: "receita", description: "Produto - " + product.name + " (" + (client ? client.name : "cliente") + ")", amount: saleAmount, date: appt.date,
               categoryId: revendaCat ? revendaCat.id : null, costCenterId: comercialCc ? comercialCc.id : null,
               paymentMethod: payMethod, status: "pago", employeeId: appt.employeeId, clientId: appt.clientId,
-              productId: productId, appointmentId: appt.id, reconciled: false
+              productId: productId, saleQty: qtd, appointmentId: appt.id, reconciled: false
             });
           }
         });
@@ -3293,33 +3414,7 @@
       });
     }
     if (a) {
-      box.querySelector("#am-delete").addEventListener("click", function () {
-        if (Utils.apptConcludedLocked(a)) { Toast.show(Utils.CONCLUDED_LOCK_MSG, "danger", 5000); return; }
-        var delPaidM = isConcludedAppt ? Utils.apptCommissionPayments(a) : [];
-        var delMsg = "Deseja excluir este agendamento?";
-        if (isPackageLinked) delMsg += " A sessão do pacote voltará a ficar disponível para ser reagendada.";
-        delMsg += depositKeepNote(DB.get("appointments", a.id));
-        delMsg += paidCommissionNote(delPaidM);
-        Modal.confirm({
-          title: delPaidM.length ? "Excluir atendimento com comissão já paga" : "Excluir agendamento", message: delMsg, danger: true,
-          confirmLabel: delPaidM.length ? "Sim, continuar e excluir" : undefined,
-          onConfirm: function () {
-            // Se este agendamento é uma sessão de pacote, libera a vaga
-            // (remove o id de client.packages[].appointmentIds) antes de
-            // excluir — a sessão volta a contar como "disponível" (ver
-            // openApptModal → refreshPackageSessionOptions).
-            // BUG CORRIGIDO (18/09/2026): mesmo padrão do outro ponto acima
-            // — usa DB.mergeFieldUpdate em vez de DB.get + DB.update, para
-            // não apagar uma alteração concorrente de client.packages feita
-            // por outra aba.
-            releasePackageSlot(a);
-            DB.remove("appointments", a.id);
-            DB.log("Agenda", "Excluiu o agendamento de " + a.date + " " + a.time + apptLogTag(a) + concludedChangeLogTag(a, delPaidM), { refId: a.id });
-            Toast.show("Agendamento excluído", "success");
-            render();
-          }
-        });
-      });
+      box.querySelector("#am-delete").addEventListener("click", function () { confirmDeleteAppointment(a.id); });
     }
 
     box.querySelector("#am-save").addEventListener("click", function () {
@@ -3722,7 +3817,7 @@
       var lockText = concludedLocked
         ? "Atendimento concluído — bloqueado para alterações. Somente usuário master (Administrador) pode alterar. Se algo precisar ser corrigido, peça a um Administrador."
         : "Atendimento já concluído: os demais usuários não conseguem alterá-lo. Você pode alterar por ser usuário master — qualquer alteração fica registrada no Log de Atividade." +
-          (lockPaid.length ? " Este atendimento já está incluído em pagamento de comissão (" + Utils.commissionPaymentsText(lockPaid) + "): ao salvar, o sistema vai pedir confirmação." : "");
+          (lockPaid.length ? " A comissão deste atendimento já foi fechada e paga (" + Utils.commissionPaymentsText(lockPaid) + ") — alterações aqui não mudam o valor pago; ao salvar, o sistema vai pedir confirmação." : "");
       lockBanner.innerHTML = '<i class="fa-solid fa-lock" style="margin-top:2px;"></i><span>' + Utils.escapeHtml(lockText) + '</span>';
       lockBody.insertBefore(lockBanner, lockBody.firstChild);
       if (concludedLocked) {

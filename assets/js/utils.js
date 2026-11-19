@@ -488,6 +488,11 @@
     // um profissional). Parceria nunca gera comissão nem receita — ver
     // parceriaCostTotal em computeRows()/computeForEmployeeCurrent().
     isParceriaAppt: function (appt) {
+      // 19/11/2026: a conclusão passa a gravar se foi Parceria NAQUELE momento
+      // (appt.parceriaAtClose) — mudar ou apagar a forma de pagamento depois
+      // não muda mais o que já foi fechado. Atendimentos antigos (sem o campo)
+      // continuam consultando o cadastro da forma de pagamento.
+      if (appt && typeof appt.parceriaAtClose === "boolean") return appt.parceriaAtClose;
       if (!appt || !appt.paymentMethod) return false;
       if (!window.DB || !DB.getPaymentMethods) return false;
       var pm = DB.getPaymentMethods().find(function (p) { return p.name === appt.paymentMethod; });
@@ -520,31 +525,211 @@
       return !!(appt && appt.status === "concluido" && !Utils.isMasterUser());
     },
     CONCLUDED_LOCK_MSG: "Atendimento concluído: bloqueado para alterações. Somente usuário master (Administrador) pode alterar.",
-    // Pagamentos de comissão já registrados (Comissionamento → Registrar
-    // pagamento: lançamento de despesa na categoria "Comissões", com o
-    // funcionário e o período de referência) que JÁ INCLUEM este atendimento —
-    // mesmo critério do Comissionamento: o atendimento entra pela data dele
-    // (appt.date) e o pagamento cobre o período relatedRangeStart..End (ou,
-    // nos pagamentos antigos sem intervalo, o mês relatedMonth). Vale para o
-    // profissional principal e para o assistente. Aceita um atendimento ou
-    // uma lista de "versões" dele (ex.: antes e depois de uma edição, para
-    // pegar também a troca de data/profissional) — sem repetir pagamentos.
-    apptCommissionPayments: function (appts) {
-      var list = (Array.isArray(appts) ? appts : [appts]).filter(function (a) { return a && a.date; });
-      if (!list.length || !global.DB || !DB.all) return [];
-      var cat = DB.findOne ? DB.findOne("categories", function (c) { return c.name === "Comissões"; }) : null;
-      if (!cat) return [];
-      var seen = {};
-      return DB.all("transactions").filter(function (t) {
-        if (seen[t.id] || t.type !== "despesa" || t.categoryId !== cat.id || !t.employeeId) return false;
-        var hit = list.some(function (a) {
-          if (t.employeeId !== a.employeeId && t.employeeId !== a.assistantId) return false;
-          if (t.relatedRangeStart && t.relatedRangeEnd) return a.date >= t.relatedRangeStart && a.date <= t.relatedRangeEnd;
-          return !!t.relatedMonth && t.relatedMonth === a.date.slice(0, 7);
+    // ================= LIVRO-RAZÃO DE COMISSÃO (19/11/2026) =================
+    // Pedido do João: "fechou a comissão, pagou os profissionais, pronto" — um
+    // item que já entrou num pagamento aparece como PAGO em qualquer filtro e
+    // nunca mais entra num cálculo novo. Antes, "Pago" era somado por PERÍODO
+    // (o intervalo do pagamento tinha de caber no filtro), então trocar o filtro
+    // (semana que cruza o mês, intervalo parcial) fazia atendimentos já pagos
+    // voltarem a aparecer "A Pagar" — e podiam ser pagos de novo.
+    //
+    // Agora cada comissão é um ITEM com chave própria:
+    //   am:<atendimento>  comissão do profissional principal (+)
+    //   par:<atendimento> desconto de Parceria do profissional principal (−)
+    //   as:<atendimento>  comissão do assistente (+)
+    //   tip:<lançamento>  gorjeta repassada (+)
+    //   bon:<lançamento>  comissionamento esporádico (+ ou −)
+    //   con:<consumo>     parte do profissional no consumo de insumos (−)
+    // e cada pagamento QUITA itens:
+    //   - pagamentos novos gravam a lista exata (t.commissionItems = [{key, amount}]);
+    //     o valor quitado vira o valor definitivo do item (não é recalculado);
+    //   - pagamentos antigos (sem lista) FECHAM todos os itens do profissional
+    //     dentro do período deles (relatedRangeStart..End, ou o mês relatedMonth)
+    //     que ainda não estavam fechados. Se o valor pago passou do valor dos
+    //     itens, a sobra vira "pago sem item" (sinal de pagamento em
+    //     duplicidade); se ficou abaixo, a diferença é listada para conferência
+    //     — nos dois casos na Auditoria do Comissionamento.
+    commissionCategoryId: function () {
+      var c = global.DB && DB.findOne ? DB.findOne("categories", function (x) { return x.name === "Comissões"; }) : null;
+      return c ? c.id : null;
+    },
+    isCommissionPayment: function (t, catId) {
+      return !!(t && t.type === "despesa" && t.employeeId && t.categoryId && t.categoryId === (catId || Utils.commissionCategoryId()));
+    },
+    // Todos os itens de comissão (de todos os profissionais, de todas as datas).
+    commissionItems: function () {
+      var round2 = function (n) { return Math.round(n * 100) / 100; };
+      var items = [];
+      if (!global.DB || !DB.all) return items;
+      var emps = {};
+      DB.all("employees").forEach(function (e) { emps[e.id] = e; });
+      function push(key, kind, emp, date, amount, ref) {
+        amount = round2(Number(amount) || 0);
+        if (!emp || !date || Math.abs(amount) < 0.005) return;
+        items.push({ key: key, kind: kind, employeeId: emp, date: date, amount: amount, ref: ref });
+      }
+      DB.all("appointments").forEach(function (a) {
+        if (a.status !== "concluido" || !a.date) return;
+        var split = Utils.apptCommissionSplit(a, emps[a.employeeId]);
+        if (Utils.isParceriaAppt(a)) { push("par:" + a.id, "par", a.employeeId, a.date, -split.mainCommission, a); return; }
+        push("am:" + a.id, "am", a.employeeId, a.date, split.mainCommission, a);
+        if (a.assistantId) push("as:" + a.id, "as", a.assistantId, a.date, split.assistantCommission, a);
+      });
+      DB.all("transactions").forEach(function (t) {
+        if (t.isTip && t.employeeId && t.date >= Utils.TIP_COMMISSION_START) push("tip:" + t.id, "tip", t.employeeId, t.date, t.amount, t);
+      });
+      DB.all("commissionBonuses").forEach(function (b) {
+        push("bon:" + b.id, "bon", b.employeeId, b.date || (b.month ? b.month + "-01" : null), b.amount, b);
+      });
+      DB.all("productConsumptions").forEach(function (c) {
+        push("con:" + c.id, "con", c.employeeId, c.date, -(Number(c.employeeShare) || 0), c);
+      });
+      return items;
+    },
+    // Período coberto por um pagamento antigo (sem lista de itens).
+    commissionPaymentCoverage: function (t) {
+      if (t.relatedRangeStart && t.relatedRangeEnd) return { start: t.relatedRangeStart, end: t.relatedRangeEnd };
+      if (t.relatedMonth) {
+        var p = t.relatedMonth.split("-").map(Number);
+        var last = new Date(p[0], p[1], 0).getDate();
+        return { start: t.relatedMonth + "-01", end: t.relatedMonth + "-" + String(last).padStart(2, "0") };
+      }
+      return null;
+    },
+    // Data em que um valor "pago sem item" aparece (fim do período do pagamento).
+    commissionPaymentAnchor: function (t) {
+      var cov = Utils.commissionPaymentCoverage(t);
+      return cov ? cov.end : t.date;
+    },
+    // O livro-razão é recalculado no máximo uma vez por "rodada" da tela (cache
+    // até o próximo ciclo do navegador). Para nunca usar um cálculo velho
+    // depois de uma gravação feita na MESMA rodada (ex.: lançar um bônus e
+    // redesenhar a tela no mesmo clique), qualquer escrita pelo DB limpa o cache.
+    _patchDbForLedger: function () {
+      if (!global.DB || DB.__ledgerPatched) return;
+      ["insert", "insertMany", "update", "remove", "removeWhere", "setTable", "mergeFieldUpdate", "mergeRecordUpdate", "importJSON"].forEach(function (m) {
+        if (typeof DB[m] !== "function") return;
+        var orig = DB[m];
+        DB[m] = function () { Utils._ledgerCache = null; return orig.apply(DB, arguments); };
+      });
+      DB.__ledgerPatched = true;
+    },
+    commissionLedger: function () {
+      Utils._patchDbForLedger();
+      if (Utils._ledgerCache) return Utils._ledgerCache;
+      var round2 = function (n) { return Math.round(n * 100) / 100; };
+      var items = Utils.commissionItems();
+      var byKey = {}, byEmp = {};
+      items.forEach(function (it) {
+        byKey[it.key] = it;
+        (byEmp[it.employeeId] || (byEmp[it.employeeId] = [])).push(it);
+      });
+      Object.keys(byEmp).forEach(function (k) { byEmp[k].sort(function (x, y) { return x.date.localeCompare(y.date) || x.key.localeCompare(y.key); }); });
+      var catId = Utils.commissionCategoryId();
+      var pays = global.DB && DB.all ? DB.all("transactions").filter(function (t) { return Utils.isCommissionPayment(t, catId); }) : [];
+      pays.sort(function (x, y) { return (x.date || "").localeCompare(y.date || "") || (x.createdAt || "").localeCompare(y.createdAt || "") || String(x.id).localeCompare(String(y.id)); });
+      var settled = {};   // key -> { paid, full, explicit, txnIds }
+      var excess = [];    // { txn, amount, reason }
+      var shortfalls = []; // { txn, amount, items } — pagamento antigo abaixo do valor calculado hoje
+      var paymentItems = {}; // txnId -> [{ key, amount }]
+      function settle(key, amount, full, explicit, txnId) {
+        var s0 = settled[key] || (settled[key] = { paid: 0, full: false, explicit: false, txnIds: [] });
+        s0.paid = round2(s0.paid + amount);
+        if (full) s0.full = true;
+        if (explicit) s0.explicit = true;
+        if (s0.txnIds.indexOf(txnId) === -1) s0.txnIds.push(txnId);
+        (paymentItems[txnId] || (paymentItems[txnId] = [])).push({ key: key, amount: round2(amount) });
+      }
+      // 1) pagamentos antigos (sem lista de itens), em ordem de data.
+      //    Decisão do João: "fechou a comissão, pagou, pronto" — um pagamento
+      //    antigo FECHA todos os itens do profissional dentro do período dele
+      //    (que ainda não estavam fechados), mesmo que o valor pago não bata
+      //    com o valor calculado hoje (ex.: taxa do funcionário mudou depois,
+      //    ou foi pagamento parcial). Nada fechado volta a ficar "A Pagar".
+      //    A diferença fica registrada para conferência na Auditoria:
+      //      pago a mais  → excess    (possível duplicidade)
+      //      pago a menos → shortfalls (pagamento parcial ou taxa alterada)
+      pays.filter(function (t) { return !Array.isArray(t.commissionItems); }).forEach(function (t) {
+        var cov = Utils.commissionPaymentCoverage(t);
+        var cands = cov ? (byEmp[t.employeeId] || []).filter(function (it) {
+          return it.date >= cov.start && it.date <= cov.end && !(settled[it.key] && settled[it.key].full);
+        }) : [];
+        var covered = 0;
+        cands.forEach(function (it) {
+          var rest = round2(it.amount - (settled[it.key] ? settled[it.key].paid : 0));
+          covered = round2(covered + rest);
+          settle(it.key, rest, true, false, t.id);
         });
-        if (hit) seen[t.id] = true;
-        return hit;
-      }).sort(function (x, y) { return (x.date || "").localeCompare(y.date || ""); });
+        var diff = round2((Number(t.amount) || 0) - covered);
+        if (diff > 0.01) excess.push({ txn: t, amount: diff, reason: !cov ? "sem_periodo" : (cands.length ? "acima_do_devido" : "sem_atendimentos") });
+        else if (diff < -0.01) shortfalls.push({ txn: t, amount: round2(-diff), items: cands.length });
+      });
+      // 2) pagamentos novos (lista exata de itens)
+      pays.filter(function (t) { return Array.isArray(t.commissionItems); }).forEach(function (t) {
+        var orphan = 0;
+        t.commissionItems.forEach(function (ci) {
+          var it = byKey[ci.key];
+          if (!it || it.employeeId !== t.employeeId) { orphan = round2(orphan + (Number(ci.amount) || 0)); return; }
+          if (settled[ci.key] && settled[ci.key].full && settled[ci.key].explicit) { orphan = round2(orphan + (Number(ci.amount) || 0)); return; }
+          settle(ci.key, Number(ci.amount) || 0, true, true, t.id);
+        });
+        var listed = round2(t.commissionItems.reduce(function (s, ci) { return s + (Number(ci.amount) || 0); }, 0));
+        var extra = round2((Number(t.amount) || 0) - listed);
+        if (orphan > 0.01) excess.push({ txn: t, amount: orphan, reason: "item_excluido_ou_repetido" });
+        if (extra > 0.01) excess.push({ txn: t, amount: extra, reason: "acima_do_devido" });
+      });
+      // Valor efetivo de cada item: quitado por pagamento novo = valor do
+      // fechamento (definitivo); demais = valor calculado agora.
+      items.forEach(function (it) {
+        var st = settled[it.key];
+        it.paid = st ? st.paid : 0;
+        it.closed = !!(st && st.full);
+        it.value = st && st.full && st.explicit ? st.paid : it.amount;
+        it.open = it.closed ? 0 : round2(it.value - it.paid);
+        it.txnIds = st ? st.txnIds.slice() : [];
+      });
+      var res = { items: items, byKey: byKey, byEmp: byEmp, settled: settled, excess: excess, shortfalls: shortfalls, payments: pays, paymentItems: paymentItems };
+      Utils._ledgerCache = res;
+      setTimeout(function () { Utils._ledgerCache = null; }, 0);
+      return res;
+    },
+    invalidateCommissionLedger: function () { Utils._ledgerCache = null; },
+    // Resumo de um profissional num período: devido (valor efetivo dos itens
+    // com data no período), pago (quitado desses itens + "pago sem item" com
+    // fim de período dentro do intervalo), itens em aberto (para pagar).
+    commissionSummary: function (employeeId, range, ledger) {
+      var round2 = function (n) { return Math.round(n * 100) / 100; };
+      var L = ledger || Utils.commissionLedger();
+      var its = (L.byEmp[employeeId] || []).filter(function (it) { return it.date >= range.start && it.date <= range.end; });
+      var devido = 0, pago = 0, adjust = 0;
+      its.forEach(function (it) { devido += it.value; pago += it.closed ? it.value : it.paid; adjust += it.value - it.amount; });
+      var extras = L.excess.filter(function (x) {
+        var d = Utils.commissionPaymentAnchor(x.txn);
+        return x.txn.employeeId === employeeId && d >= range.start && d <= range.end;
+      });
+      var excessTotal = round2(extras.reduce(function (s, x) { return s + x.amount; }, 0));
+      var open = its.filter(function (it) { return !it.closed && Math.abs(it.open) >= 0.005; });
+      return {
+        items: its, openItems: open, devido: round2(devido), closedAdjustment: round2(adjust),
+        pagoItens: round2(pago), pagoSemItem: excessTotal, excess: extras, pago: round2(pago + excessTotal),
+        aPagar: round2(open.reduce(function (s, it) { return s + it.open; }, 0))
+      };
+    },
+    // Pagamentos que quitam um atendimento (como principal, Parceria ou
+    // assistente) — usado pela trava da Agenda e pelas Aprovações para avisar
+    // antes de mexer num atendimento cuja comissão já foi paga.
+    apptCommissionPayments: function (appts) {
+      var list = (Array.isArray(appts) ? appts : [appts]).filter(function (a) { return a && a.id; });
+      if (!list.length || !global.DB || !DB.all) return [];
+      var L = Utils.commissionLedger();
+      var ids = {};
+      list.forEach(function (a) {
+        ["am:", "par:", "as:"].forEach(function (p) {
+          var st = L.settled[p + a.id];
+          if (st) st.txnIds.forEach(function (id) { ids[id] = true; });
+        });
+      });
+      return L.payments.filter(function (t) { return ids[t.id]; });
     },
     // Texto curto para o pop-up de confirmação: "Fulano — R$ 350,00 pago em
     // 10/11/2026 (ref. 01/11 a 07/11)".

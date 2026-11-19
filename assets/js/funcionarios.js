@@ -502,6 +502,22 @@
         workSchedule: sched.schedule,
         photoDataUrl: photoDataUrl
       };
+      // COMISSÃO CONGELADA (19/11/2026, decisão do João): mudar a taxa de
+      // comissão vale só daqui para frente. Os atendimentos JÁ CONCLUÍDOS deste
+      // profissional que ainda seguiam a taxa do cadastro (sem % própria)
+      // recebem a taxa antiga gravada neles antes da troca — assim meses já
+      // fechados/pagos não são recalculados. (Atendimentos concluídos a partir
+      // de hoje já gravam a taxa na própria conclusão — ver agenda.js.)
+      if (e && Number(e.commissionRate || 0) !== Number(patch.commissionRate || 0)) {
+        var oldRate = Number(e.commissionRate) || 0;
+        var toFreeze = DB.all("appointments").filter(function (a) {
+          return a.employeeId === e.id && a.status === "concluido" && (a.commissionPercent == null || a.commissionPercent === "");
+        });
+        if (toFreeze.length) {
+          DB.batch(function () { toFreeze.forEach(function (a) { DB.update("appointments", a.id, { commissionPercent: oldRate }); }); });
+          DB.log("Funcionário", "Taxa de comissão de " + name + " alterada de " + oldRate + "% para " + patch.commissionRate + "% — " + toFreeze.length + " atendimento(s) já concluído(s) mantiveram a taxa antiga (" + oldRate + "%)");
+        }
+      }
       var savedEmp;
       if (e) { DB.update("employees", e.id, patch); savedEmp = DB.get("employees", e.id); DB.log("Funcionário", "Atualizou o funcionário " + name); Toast.show("Funcionário atualizado", "success"); }
       else { savedEmp = DB.insert("employees", patch); DB.log("Funcionário", "Cadastrou o funcionário " + name); Toast.show("Funcionário cadastrado", "success"); }

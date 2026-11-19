@@ -174,12 +174,13 @@
   // Mesmo filtro de comissionamento esporádico usado em comissoes.js
   // (bonusesFor): por data exata quando o lançamento tem uma (novos),
   // por mês de competência tocado pelo intervalo quando não tem (antigos).
+  // 19/11/2026: lançamento antigo sem data própria vale no dia 1º do mês de
+  // competência (mesmo critério de comissoes.js e do livro-razão).
   function bonusesFor(employeeId, range) {
-    var touched = touchedMonths(range);
     return DB.all("commissionBonuses").filter(function (b) {
       if (b.employeeId !== employeeId) return false;
-      if (b.date) return b.date >= range.start && b.date <= range.end;
-      return !!touched[b.month];
+      var d = b.date || (b.month ? b.month + "-01" : "");
+      return d >= range.start && d <= range.end;
     });
   }
 
@@ -273,16 +274,13 @@
     // exibição, para não vazar o pagamento de outra semana do mesmo mês.
     // Pagamentos antigos (só relatedMonth, sem intervalo próprio) usam o
     // mês inteiro como intervalo implícito nesse segundo caso.
-    var wholeMonth = isWholeMonthPrefix(range);
-    var wholeMonthKey = range.start.slice(0, 7);
-    var pago = sum(DB.all("transactions").filter(function (t) {
-      if (t.type !== "despesa" || t.employeeId !== employeeId || t.categoryId !== commissionCatId()) return false;
-      return wholeMonth
-        ? (t.relatedMonth === wholeMonthKey)
-        : (t.relatedRangeStart
-          ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
-          : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && lastDayOfMonth(t.relatedMonth) <= range.end));
-    }).map(function (t) { return t.amount; }));
+    // FECHAMENTO DEFINITIVO (19/11/2026): "Já Recebido" vem do livro-razão de
+    // comissão (Utils.commissionSummary) — item a item, igual ao
+    // Comissionamento: o que entrou num pagamento aparece recebido em qualquer
+    // filtro; "Saldo em Aberto" = itens que ainda não entraram em pagamento.
+    var sm = Utils.commissionSummary(employeeId, range);
+    devido = round2(devido + sm.closedAdjustment);
+    var pago = sm.pago;
     var byService = {};
     appointments.forEach(function (a) {
       if (Utils.isParceriaAppt(a)) return; // Parceria não entra no gráfico de comissão por serviço
@@ -297,7 +295,7 @@
       assistantDeductionTotal: assistantDeductionTotal, assistantDeductionItems: assistantDeductionItems,
       parceriaCostTotal: parceriaCostTotal, parceriaCostItems: parceriaCostItems,
       bonuses: bonuses, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
-      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService, tipsReceived: tipsReceived, tipItems: tips.items
+      devido: devido, pago: pago, saldo: sm.aPagar, byService: byService, tipsReceived: tipsReceived, tipItems: tips.items
     };
   }
 
@@ -336,15 +334,15 @@
     });
     assistantCommissionTotal = round2(assistantCommissionTotal);
     var baseComissao = round2(mainCommissionTotal + assistantCommissionTotal);
-    var bonuses = DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && b.month === monthKey; });
+    var bonuses = DB.all("commissionBonuses").filter(function (b) { return b.employeeId === employeeId && (b.date ? b.date.slice(0, 7) === monthKey : b.month === monthKey); });
     var bonusTotal = round2(sum(bonuses.map(function (b) { return b.amount; })));
     var consumo = (window.Consumo ? Consumo.deductionFor(employeeId, monthKey) : { total: 0, items: [] });
     // Gorjetas do mês (23/10/2026) — mesma regra do cálculo do período.
     var monthTipTotal = Utils.tipsForRange(employeeId, { start: monthKey + "-01", end: lastDayOfMonth(monthKey) }).total;
     var devido = round2(baseComissao + bonusTotal + monthTipTotal - consumo.total - parceriaCostTotal);
-    var pago = sum(DB.all("transactions").filter(function (t) {
-      return t.type === "despesa" && t.employeeId === employeeId && t.categoryId === commissionCatId() && t.relatedMonth === monthKey;
-    }).map(function (t) { return t.amount; }));
+    var smMonth = Utils.commissionSummary(employeeId, { start: monthKey + "-01", end: lastDayOfMonth(monthKey) });
+    devido = round2(devido + smMonth.closedAdjustment);
+    var pago = smMonth.pago;
     var byService = {};
     appointments.forEach(function (a) {
       if (Utils.isParceriaAppt(a)) return;
@@ -357,7 +355,7 @@
       serviceRevenue: serviceRevenue, baseComissao: baseComissao, mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
       parceriaCostTotal: parceriaCostTotal,
       bonuses: bonuses, bonusTotal: bonusTotal, consumoTotal: consumo.total, consumoItems: consumo.items,
-      devido: devido, pago: pago, saldo: round2(devido - pago), byService: byService
+      devido: devido, pago: pago, saldo: smMonth.aPagar, byService: byService
     };
   }
 
@@ -370,9 +368,9 @@
       kpi("Comissão do Período", Utils.fmtMoney(data.devido), "fa-sack-dollar", "#0eb8d9", "#dbf7fc",
         "Quanto você ganhou de comissão pelos atendimentos concluídos dentro do período De/Até escolhido acima — não importa se esse valor já caiu no seu pagamento ou não."),
       kpi("Já Recebido", Utils.fmtMoney(data.pago), "fa-circle-check", "#1baf7a", "#e2f5ec",
-        "Quanto já foi de fato pago a você, dentro do período escolhido. Como o pagamento é semanal, esse valor pode não bater com \"Comissão do Período\": uma semana paga que começou no mês anterior conta aqui mesmo sem estar no período em exibição, e uma semana já trabalhada mas ainda não paga fica de fora até o próximo pagamento."),
+        "Quanto da comissão deste período já entrou num pagamento fechado. Cada atendimento pago aparece como recebido em qualquer período que você escolher."),
       kpi("Saldo em Aberto", Utils.fmtMoney(Math.max(0, data.saldo)), "fa-hourglass-half", "#b7791f", "#fdf2df",
-        "\"Comissão do Período\" menos \"Já Recebido\". Pode variar um pouco por causa do efeito explicado nesses dois cartões (semana de pagamento atravessando a virada do mês) — isso não é um erro."),
+        "O que ainda falta receber: itens deste período que ainda não entraram em nenhum pagamento."),
       kpi("Atendimentos no Período", String(data.appointments.length), "fa-scissors", "#4a3aa7", "#ece8f8")
     ];
     if (data.consumoTotal > 0) {

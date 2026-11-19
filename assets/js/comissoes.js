@@ -441,13 +441,17 @@
   // gravados antes dessa mudança, não têm `date` (só `month`); para esses,
   // mantém a aproximação anterior por mês tocado (ver touchedMonths) como
   // fallback, sem precisar migrar o histórico.
+  // 19/11/2026: lançamento antigo sem data própria passa a valer no dia 1º do
+  // mês de competência (antes entrava em QUALQUER intervalo que tocasse o mês —
+  // aparecia de novo em cada semana daquele mês). Mesmo critério do
+  // livro-razão de comissão (Utils.commissionItems).
+  function bonusDate(b) { return b.date || (b.month ? b.month + "-01" : ""); }
   function bonusesFor(employeeId) {
     var range = currentRange();
-    var touched = touchedMonths(range);
     return DB.all("commissionBonuses").filter(function (b) {
       if (b.employeeId !== employeeId) return false;
-      if (b.date) return b.date >= range.start && b.date <= range.end;
-      return !!touched[b.month];
+      var d = bonusDate(b);
+      return d >= range.start && d <= range.end;
     });
   }
 
@@ -471,34 +475,14 @@
       if (a.assistantId) (apptsByAssistantId[a.assistantId] || (apptsByAssistantId[a.assistantId] = [])).push(a);
     });
     var allTransactions = DB.all("transactions");
-    var catId = commissionCatId();
-    var txnsByEmployeeId = {};
-    // "Pago" soma todo pagamento de comissão que pertence ao período em
-    // exibição. Quando o período visto é "o mês" (De = dia 1, Até = fim do
-    // mês ou hoje, se o mês ainda está em andamento), o critério é o mesmo
-    // de sempre: o mês de competência gravado no pagamento (relatedMonth)
-    // bate com o mês em exibição — isso é o que garante que um corte
-    // semanal cujos dias cruzam a virada do mês (ex.: pago 29/08 a 04/09,
-    // mas registrado como competência de setembro) continue contando
-    // inteiro em setembro, mesmo sem estar contido dia-a-dia no mês. Quando
-    // o período visto é um corte personalizado mais estreito (não é um mês
-    // inteiro), o critério passa a ser o intervalo do próprio pagamento
-    // estar CONTIDO no período em exibição — assim ver só uma semana
-    // mostra apenas o que foi pago exatamente para ela, sem vazar o
-    // pagamento de outra semana do mesmo mês. Pagamentos antigos, de antes
-    // de o corte ter um intervalo próprio (só têm relatedMonth), usam o mês
-    // inteiro como intervalo implícito nesse segundo caso.
-    var wholeMonth = isWholeMonthPrefix(range);
-    var wholeMonthKey = range.start.slice(0, 7);
-    allTransactions.forEach(function (t) {
-      if (t.type !== "despesa" || t.categoryId !== catId || !t.employeeId) return;
-      var matches = wholeMonth
-        ? (t.relatedMonth === wholeMonthKey)
-        : (t.relatedRangeStart
-          ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
-          : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && monthLastDay(t.relatedMonth) <= range.end));
-      if (matches) (txnsByEmployeeId[t.employeeId] || (txnsByEmployeeId[t.employeeId] = [])).push(t);
-    });
+    // FECHAMENTO DEFINITIVO (19/11/2026): "Pago" agora vem do livro-razão de
+    // comissão (Utils.commissionLedger) — item a item, não mais por período.
+    // Um atendimento/gorjeta/consumo/esporádico que já entrou num pagamento
+    // aparece pago em QUALQUER filtro e nunca volta a ser cobrado (ver o
+    // comentário completo em utils.js). O critério antigo (o intervalo do
+    // pagamento caber no filtro) fazia semanas que cruzam o mês e filtros
+    // parciais mostrarem como "A Pagar" o que já tinha sido pago.
+    var ledger = Utils.commissionLedger();
     var assistantIds = apptsByAssistantId;
     // Gorjetas do período (23/10/2026): repassadas 100% ao profissional,
     // dentro do "devido". Quem recebeu gorjeta aparece mesmo sem comissão.
@@ -512,7 +496,10 @@
     // próprio agendamento) — o valor nunca aparecia para pagar.
     var employees = employeesAll.filter(function (e) {
       if (e.commissionRate > 0 || assistantIds[e.id] || tipsByEmployee[e.id]) return true;
-      return (apptsByMainId[e.id] || []).some(function (a) { return Number(a.commissionPercent) > 0; });
+      if ((apptsByMainId[e.id] || []).some(function (a) { return Number(a.commissionPercent) > 0; })) return true;
+      // qualquer item ou pagamento no período (ex.: esporádico, consumo, pagamento sem item)
+      var sm = Utils.commissionSummary(e.id, range, ledger);
+      return sm.items.length > 0 || sm.excess.length > 0;
     });
 
     return employees.map(function (e) {
@@ -578,16 +565,24 @@
       var consumo = window.Consumo ? Consumo.deductionForRange(e.id, range) : { total: 0, items: [] };
       var tips = Utils.tipsForRange(e.id, range);
       var tipTotal = tips.total;
-      var devido = round2(baseComissao + bonusTotal + tipTotal - consumo.total - parceriaCostTotal);
-      var pagoTxns = txnsByEmployeeId[e.id] || [];
-      var pago = sumBy(pagoTxns, "amount");
+      var sm = Utils.commissionSummary(e.id, range, ledger);
+      // Devido = soma dos itens do período, com o valor do fechamento para o
+      // que já foi pago (closedAdjustment ≠ 0 só quando um item já pago foi
+      // alterado depois — o valor pago continua valendo, não é recalculado).
+      var devido = round2(baseComissao + bonusTotal + tipTotal - consumo.total - parceriaCostTotal + sm.closedAdjustment);
+      var pago = sm.pago;
       return {
         employee: e, serviceRevenue: serviceRevenue, atendimentos: asMain.length,
         mainCommissionTotal: mainCommissionTotal, assistantCommissionTotal: assistantCommissionTotal,
         assistantDeductionTotal: assistantDeductionTotal,
         parceriaCostTotal: parceriaCostTotal, parceriaCostItems: parceriaCostItems,
         baseComissao: baseComissao, bonusTotal: bonusTotal, tipTotal: tipTotal, tipItems: tips.items, consumoTotal: consumo.total, consumoItems: consumo.items,
-        devido: devido, pago: pago, saldo: round2(devido - pago)
+        // Saldo = o que AINDA falta pagar (itens em aberto). Valor "pago sem
+        // item" (pagamento a mais / em duplicidade) entra em "Pago" e aparece
+        // na auditoria, mas não vira crédito automático.
+        devido: devido, pago: pago, saldo: sm.aPagar,
+        closedAdjustment: sm.closedAdjustment, pagoSemItem: sm.pagoSemItem, excess: sm.excess,
+        openItems: sm.openItems, aPagar: sm.aPagar, ledgerDevido: sm.devido
       };
     }).sort(function (a, b) { return b.devido - a.devido; });
   }
@@ -600,24 +595,19 @@
     return _commCatId;
   }
 
-  // Mesmo critério usado dentro de computeRows() para somar "Pago" (ver
-  // comentário ali), mas devolvendo os lançamentos individuais em vez de só
-  // o total — usado pelo relatório em Excel (generateCommissionExcel), onde
-  // cada pagamento de comissão do profissional vira uma linha própria, para
-  // conferência manual.
+  // Pagamentos de comissão do profissional ligados ao período em exibição:
+  // os que quitaram algum item com data no período, mais os que ficaram com
+  // valor "sem item" ancorado no período (ver Utils.commissionSummary). Usado
+  // pelo relatório em Excel, uma linha por pagamento, para conferência.
   function paymentsFor(employeeId) {
     var range = currentRange();
-    var wholeMonth = isWholeMonthPrefix(range);
-    var wholeMonthKey = range.start.slice(0, 7);
-    var catId = commissionCatId();
-    return DB.all("transactions").filter(function (t) {
-      if (t.type !== "despesa" || t.categoryId !== catId || t.employeeId !== employeeId) return false;
-      return wholeMonth
-        ? (t.relatedMonth === wholeMonthKey)
-        : (t.relatedRangeStart
-          ? (t.relatedRangeStart >= range.start && t.relatedRangeEnd <= range.end)
-          : (t.relatedMonth && (t.relatedMonth + "-01") >= range.start && monthLastDay(t.relatedMonth) <= range.end));
-    }).sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+    var L = Utils.commissionLedger();
+    var sm = Utils.commissionSummary(employeeId, range, L);
+    var ids = {};
+    sm.items.forEach(function (it) { (it.txnIds || []).forEach(function (id) { ids[id] = true; }); });
+    sm.excess.forEach(function (x) { ids[x.txn.id] = true; });
+    return L.payments.filter(function (t) { return ids[t.id]; })
+      .sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
   }
 
   function commStatusLabel(r) {
@@ -632,9 +622,13 @@
   function render(precomputedRows) {
     var rows = precomputedRows || computeRows();
     var totalDevido = rows.reduce(function (s, r) { return s + r.devido; }, 0);
-    var totalPago = rows.reduce(function (s, r) { return s + r.pago; }, 0);
+    // KPI "Comissão Paga" = o que foi pago DOS ITENS do período (Devido − Paga =
+    // Saldo). Valor pago a mais/em duplicidade fica na Auditoria e na linha do
+    // profissional ("sem item"), não infla o cartão.
+    var totalPago = rows.reduce(function (s, r) { return s + r.pago - (r.pagoSemItem || 0); }, 0);
     var totalAberto = rows.reduce(function (s, r) { return s + Math.max(0, r.saldo); }, 0);
 
+    renderAudit();
     var chartSub = document.getElementById("com-chart-sub");
     if (chartSub) chartSub.textContent = "Período: " + periodLabel();
     var rankingSub = document.getElementById("com-ranking-sub");
@@ -644,9 +638,9 @@
       kpi("Comissão Devida", Utils.fmtMoney(totalDevido), "fa-calculator", "#0eb8d9", "#dbf7fc",
         "Soma do que todos os profissionais ganharam de comissão pelos atendimentos concluídos dentro do período selecionado — não importa se já foi pago ou não."),
       kpi("Comissão Paga", Utils.fmtMoney(totalPago), "fa-circle-check", "#1baf7a", "#e2f5ec",
-        "Soma do que já foi de fato pago aos profissionais, dentro do período selecionado. Como o pagamento é semanal, pode não bater com \"Comissão Devida\": uma semana paga que começou no mês anterior conta aqui mesmo sem estar no período em exibição, e uma semana já trabalhada mas ainda não paga fica de fora até o próximo pagamento."),
+        "Quanto da comissão deste período já foi fechada e paga. Cada atendimento, gorjeta, consumo ou esporádico que entrou num pagamento aparece como pago em qualquer filtro — não depende mais do período usado ao pagar."),
       kpi("Saldo em Aberto", Utils.fmtMoney(totalAberto), "fa-hourglass-half", "#b7791f", "#fdf2df",
-        "\"Comissão Devida\" menos \"Comissão Paga\", somado profissional por profissional. Pode variar um pouco pelo mesmo motivo explicado nesses dois cartões (semana de pagamento atravessando a virada do mês) — isso não é um erro."),
+        "O que ainda falta pagar: só os itens deste período que ainda não entraram em nenhum fechamento."),
       kpi("Profissionais Comissionados", String(rows.length), "fa-users", "#4a3aa7", "#ece8f8"),
       kpi("Descontos de Comissionamento Esporádico", Utils.fmtMoney(sporadicDiscountTotal()), "fa-scissors", "#c23b3b", "#fbe6e6")
     ].join("");
@@ -741,7 +735,8 @@
           '<td class="text-right"><div class="text-num">' + Utils.fmtMoney(r.baseComissao) + '</div><div class="small text-muted">' + r.employee.commissionRate + '%</div>' + asstHintHtml + '</td>' +
           '<td class="text-right com-col-ajustes">' + adjustHtml + '</td>' +
           '<td class="text-right text-num font-bold">' + Utils.fmtMoney(r.devido) + '</td>' +
-          '<td class="text-right text-num text-success">' + Utils.fmtMoney(r.pago) + '</td>' +
+          '<td class="text-right"><div class="text-num text-success">' + Utils.fmtMoney(r.pago) + '</div>' +
+            (r.pagoSemItem > 0.01 ? '<div class="small text-danger" title="Valor pago que não corresponde a nenhum item em aberto — ver Auditoria no topo">' + Utils.fmtMoney(r.pagoSemItem) + ' sem item</div>' : '') + '</td>' +
           '<td class="text-right"><div class="text-num font-bold ' + (r.saldo > 0.01 ? "text-danger" : "") + '">' + Utils.fmtMoney(Math.max(0, r.saldo)) + '</div>' + status + '</td>' +
           '<td class="com-col-actions"><div class="flex gap-6 justify-end">' +
             '<button class="btn btn-icon btn-ghost" data-details="' + r.employee.id + '" title="Ver detalhes"><i class="fa-solid fa-circle-info"></i></button>' +
@@ -775,6 +770,64 @@
       updateSelectAllState(rows);
     }
     updateBulkBar();
+  }
+
+  // AUDITORIA (19/11/2026): pagamentos de comissão com valor que não
+  // corresponde a nenhum item em aberto — pagamento em duplicidade (dois
+  // pagamentos para o mesmo período/atendimento), pago acima do devido, ou
+  // lançamento de comissão sem período. Vale para TODO o histórico, não só
+  // o período em exibição, para nenhum caso passar despercebido.
+  var AUDIT_REASON = {
+    acima_do_devido: "pago acima do que havia em aberto no período (possível duplicidade)",
+    sem_atendimentos: "nenhum item em aberto no período quando foi pago (possível duplicidade)",
+    item_excluido_ou_repetido: "inclui atendimento/item que foi excluído depois ou já estava pago",
+    sem_periodo: "lançamento de comissão sem período de referência (feito fora do Comissionamento?)"
+  };
+  function renderAudit() {
+    var anchor = document.getElementById("com-summary");
+    if (!anchor) return;
+    var el = document.getElementById("com-audit");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "com-audit";
+      anchor.parentNode.insertBefore(el, anchor.nextSibling);
+    }
+    var L = Utils.commissionLedger();
+    var byDateDesc = function (a, b) { return (b.txn.date || "").localeCompare(a.txn.date || ""); };
+    var list = L.excess.slice().sort(byDateDesc);
+    var shorts = (L.shortfalls || []).slice().sort(byDateDesc);
+    if (!list.length && !shorts.length) { el.innerHTML = ""; return; }
+    var emps = {}; DB.all("employees").forEach(function (e) { emps[e.id] = e; });
+    function refOf(t) { var cov = Utils.commissionPaymentCoverage(t); return cov ? Utils.fmtDate(cov.start) + " a " + Utils.fmtDate(cov.end) : "-"; }
+    var html = "";
+    if (list.length) {
+      var total = round2(list.reduce(function (s, x) { return s + x.amount; }, 0));
+      html += '<div class="card mb-16" style="border-left:4px solid var(--color-danger);">' +
+        '<div class="card-header"><div><h3><i class="fa-solid fa-triangle-exclamation" style="color:var(--color-danger);margin-right:8px;"></i>Auditoria — possível pagamento em duplicidade</h3>' +
+        '<div class="card-header-sub">' + list.length + ' pagamento(s) com ' + Utils.fmtMoney(total) + ' que não correspondem a nenhum atendimento/item em aberto quando foram registrados. Confira com o profissional.</div></div></div>' +
+        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Pago em</th><th>Profissional</th><th>Referência</th><th class="text-right">Valor do pagamento</th><th class="text-right">Sem item correspondente</th><th>Motivo</th></tr></thead><tbody>' +
+        list.map(function (x) {
+          var t = x.txn, e = emps[t.employeeId];
+          return '<tr><td>' + Utils.fmtDate(t.date) + '</td><td>' + Utils.escapeHtml(e ? e.name : "-") + '</td><td>' + refOf(t) + '</td>' +
+            '<td class="text-right text-num">' + Utils.fmtMoney(t.amount) + '</td>' +
+            '<td class="text-right text-num font-bold text-danger">' + Utils.fmtMoney(x.amount) + '</td>' +
+            '<td class="small">' + Utils.escapeHtml(AUDIT_REASON[x.reason] || x.reason) + '</td></tr>';
+        }).join("") + '</tbody></table></div></div>';
+    }
+    if (shorts.length) {
+      var totalS = round2(shorts.reduce(function (s, x) { return s + x.amount; }, 0));
+      html += '<div class="card mb-16" style="border-left:4px solid var(--color-warning);">' +
+        '<div class="card-header"><div><h3><i class="fa-solid fa-scale-unbalanced" style="color:var(--color-warning);margin-right:8px;"></i>Auditoria — fechamentos antigos pagos abaixo do valor calculado hoje</h3>' +
+        '<div class="card-header-sub">Esses períodos estão FECHADOS (não voltam a cobrar). A diferença de ' + Utils.fmtMoney(totalS) + ' é só para conferência: pode ser um pagamento parcial (se faltar pagar algo ao profissional, lance pelo Comissionamento Esporádico) ou a taxa de comissão do funcionário mudou depois do pagamento.</div></div></div>' +
+        '<div class="table-wrap"><table class="data-table"><thead><tr><th>Pago em</th><th>Profissional</th><th>Referência</th><th class="text-right">Valor pago</th><th class="text-right">Diferença</th></tr></thead><tbody>' +
+        shorts.map(function (x) {
+          var t = x.txn, e = emps[t.employeeId];
+          return '<tr><td>' + Utils.fmtDate(t.date) + '</td><td>' + Utils.escapeHtml(e ? e.name : "-") + '</td><td>' + refOf(t) + '</td>' +
+            '<td class="text-right text-num">' + Utils.fmtMoney(t.amount) + '</td>' +
+            '<td class="text-right text-num font-bold" style="color:var(--color-warning);">' + Utils.fmtMoney(x.amount) + '</td></tr>';
+        }).join("") + '</tbody></table></div></div>';
+    }
+    el.innerHTML = html;
   }
 
   function updateSelectAllState(rows) {
@@ -812,14 +865,17 @@
           amount: round2(row.saldo), date: today, categoryId: commissionCatId(),
           costCenterId: ccRh ? ccRh.id : null,
           paymentMethod: "Transferência", status: "pago", employeeId: row.employee.id,
-          relatedMonth: refMonth, relatedRangeStart: range.start, relatedRangeEnd: range.end, reconciled: false
+          relatedMonth: refMonth, relatedRangeStart: range.start, relatedRangeEnd: range.end, reconciled: false,
+          // Fechamento definitivo: os itens quitados por este pagamento.
+          commissionItems: closingItemsOf(row)
         };
         DB.insert("transactions", txn);
         total += row.saldo;
         count++;
       });
     });
-    DB.log("Comissão", "Registrou pagamento em lote de comissão para " + count + " profissional(is) — " + Utils.fmtMoney(total) + " (ref. " + periodLabel() + ")");
+    Utils.invalidateCommissionLedger();
+    DB.log("Comissão", "Registrou pagamento em lote de comissão para " + count + " profissional(is) — " + Utils.fmtMoney(total) + " (ref. " + periodLabel() + ") — fechamento definitivo dos itens do período");
     Toast.show(count + " pagamento(s) de comissão registrado(s)", "success");
     selectedIds = {};
     render();
@@ -1277,38 +1333,61 @@
     });
   }
 
+  // Itens em aberto do profissional no período, no formato gravado no
+  // pagamento (commissionItems) — o valor de cada um vira definitivo.
+  function closingItemsOf(row) {
+    return (row.openItems || []).map(function (it) { return { key: it.key, amount: round2(it.open) }; });
+  }
+
+  // FECHAMENTO DEFINITIVO (19/11/2026, pedido do João: "fechou a comissão,
+  // pagou os profissionais, pronto"): o pagamento quita exatamente os itens em
+  // aberto do período (atendimentos, gorjetas, consumo, esporádicos) — o valor
+  // não é mais digitado (era o que permitia pagamentos parciais/repetidos) e
+  // esses itens nunca mais entram em outro cálculo, em nenhum filtro.
   function registerPayment(employeeId) {
     var rows = computeRows();
     var row = rows.find(function (r) { return r.employee.id === employeeId; });
     if (!row) return;
+    if (row.saldo <= 0.01) { Toast.show("Nada em aberto para este profissional no período — tudo já foi pago.", "info"); return; }
+    var itemsCount = (row.openItems || []).length;
     var body = '<div class="form-grid">' +
       '<div class="form-field full"><label>Profissional</label><input type="text" value="' + Utils.escapeHtml(row.employee.name) + '" disabled></div>' +
       '<div class="form-field"><label>Período de Referência</label><input type="text" value="' + Utils.escapeHtml(periodLabel()) + '" disabled></div>' +
-      '<div class="form-field"><label>Valor a Pagar (R$)</label><input type="text" id="pay-amount"></div>' +
+      '<div class="form-field"><label>Valor a Pagar (R$)</label><input type="text" id="pay-amount" disabled></div>' +
       '<div class="form-field"><label>Data do Pagamento</label><input type="date" id="pay-date" value="' + Utils.todayISO() + '"></div>' +
       '<div class="form-field"><label>Forma de Pagamento</label><select id="pay-method"><option>Transferência</option><option>Pix</option><option>Dinheiro</option></select></div>' +
+      '<div class="form-field full"><div class="small" style="padding:10px 12px;border-radius:var(--radius-md);background:var(--gray-50);border:1px solid var(--border-color);">' +
+        '<i class="fa-solid fa-lock"></i> Fechamento definitivo: este pagamento quita ' + itemsCount + (itemsCount === 1 ? ' item em aberto' : ' itens em aberto') + ' do período (atendimentos, gorjetas, consumo e esporádicos). ' +
+        'Depois de confirmado, eles aparecem como pagos em qualquer filtro e não entram em nenhum cálculo novo. Ajustes posteriores (bônus/desconto) entram pelo Comissionamento Esporádico.' +
+      '</div></div>' +
       '</div>' +
       Utils.attachmentFieldHtml("pay", "Comprovante de Pagamento (opcional)");
     var foot = '<button class="btn btn-secondary" data-close-modal>Cancelar</button><button class="btn btn-primary" id="pay-save">Confirmar Pagamento</button>';
-    var box = Modal.open({ title: "Registrar Pagamento de Comissão", bodyHtml: body, footHtml: foot });
+    var box = Modal.open({ title: "Fechar e Pagar Comissão", bodyHtml: body, footHtml: foot });
     Utils.wireMoneyMask(box.querySelector("#pay-amount"), row.saldo);
     var payAttachment = Utils.wireAttachmentField(box, "pay");
     box.querySelector("#pay-save").addEventListener("click", function () {
-      var amount = Utils.moneyMaskToFloat(box.querySelector("#pay-amount"));
-      if (!amount || amount <= 0) { Toast.show("Informe um valor válido", "danger"); return; }
+      // Recalcula na hora de gravar: se outra pessoa pagou este profissional
+      // enquanto o modal estava aberto, não paga de novo.
+      Utils.invalidateCommissionLedger();
+      var fresh = computeRows().find(function (r) { return r.employee.id === employeeId; });
+      if (!fresh || fresh.saldo <= 0.01) { Modal.close(); Toast.show("Este período já foi pago (por outra pessoa?) — nada foi lançado.", "danger", 6000); render(); return; }
+      if (Math.abs(fresh.saldo - row.saldo) > 0.01) { Modal.close(); Toast.show("O valor em aberto mudou enquanto a tela estava aberta (" + Utils.fmtMoney(fresh.saldo) + "). Confira e registre de novo.", "danger", 7000); render(); return; }
       var range = currentRange();
       var txn = {
         type: "despesa", description: "Comissão - " + row.employee.name + " (ref. " + periodLabel() + ")",
-        amount: round2(amount), date: box.querySelector("#pay-date").value, categoryId: commissionCatId(),
+        amount: round2(fresh.saldo), date: box.querySelector("#pay-date").value, categoryId: commissionCatId(),
         costCenterId: DB.findOne("costCenters", function (c) { return c.key === "rh"; }) ? DB.findOne("costCenters", function (c) { return c.key === "rh"; }).id : null,
         paymentMethod: box.querySelector("#pay-method").value, status: "pago", employeeId: row.employee.id,
         relatedMonth: referenceMonthKey(), relatedRangeStart: range.start, relatedRangeEnd: range.end, reconciled: false,
-        attachment: payAttachment.get()
+        attachment: payAttachment.get(),
+        commissionItems: closingItemsOf(fresh)
       };
       DB.insert("transactions", txn);
-      DB.log("Comissão", "Registrou pagamento de comissão de " + row.employee.name + " — " + Utils.fmtMoney(amount) + " (ref. " + periodLabel() + ")");
+      Utils.invalidateCommissionLedger();
+      DB.log("Comissão", "Fechou e pagou a comissão de " + row.employee.name + " — " + Utils.fmtMoney(txn.amount) + " (ref. " + periodLabel() + ", " + txn.commissionItems.length + " item(ns) quitados)");
       Modal.close();
-      Toast.show("Pagamento de comissão registrado", "success");
+      Toast.show("Comissão fechada e paga", "success");
       render();
     });
   }
@@ -1319,12 +1398,11 @@
   // (esse é recorrente/operacional, não "esporádico"). Ver openBonusModal.
   function sporadicDiscountTotal() {
     var range = currentRange();
-    var touched = touchedMonths(range);
     var total = DB.all("commissionBonuses")
       .filter(function (b) {
         if (b.amount >= 0) return false;
-        if (b.date) return b.date >= range.start && b.date <= range.end;
-        return !!touched[b.month];
+        var d = bonusDate(b);
+        return d >= range.start && d <= range.end;
       })
       .reduce(function (s, b) { return s + b.amount; }, 0);
     return round2(Math.abs(total));

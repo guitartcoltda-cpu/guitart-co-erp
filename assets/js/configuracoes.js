@@ -1209,6 +1209,16 @@
       // de DB.savePaymentMethods(listaInteiraRecalculadaDoCache) para
       // DB.mergeSettingsField, que busca a lista mais recente do servidor.
       if (p) {
+        // 19/11/2026: renomear ou mudar a marca "Parceria" de uma forma de
+        // pagamento não pode mudar atendimentos JÁ CONCLUÍDOS com ela (seriam
+        // recalculados como comissão normal ↔ Parceria). Grava neles o que valia
+        // até agora (parceriaAtClose — ver Utils.isParceriaAppt).
+        if (p.name !== name || !!p.isParceria !== isParceria) {
+          var frozen = DB.all("appointments").filter(function (a) {
+            return a.status === "concluido" && a.paymentMethod === p.name && typeof a.parceriaAtClose !== "boolean";
+          });
+          if (frozen.length) DB.batch(function () { frozen.forEach(function (a) { DB.update("appointments", a.id, { parceriaAtClose: !!p.isParceria }); }); });
+        }
         DB.mergeSettingsField("paymentMethods", function (current) {
           return (current || []).map(function (x) { return x.id === p.id ? Object.assign({}, x, { name: name, isParceria: isParceria }) : x; });
         });
