@@ -121,8 +121,8 @@ const commPays = () => tables.transactions.filter(t => t.categoryId === "catc" &
   const dup = L.excess.filter(x => x.txn.employeeId === "bru");
   ok(dup.length === 1 && dup[0].txn.id === "old2" && dup[0].amount === 30, "5a: o 2º pagamento do Bruno aparece como duplicidade (R$ 30 sem item)", dup.map(x => [x.txn.id, x.amount]));
   const audit = document.getElementById("com-audit");
-  ok(audit && /possível pagamento em duplicidade/.test(audit.textContent) && /Bruno/.test(audit.textContent), "5b: painel de auditoria aparece na tela");
-  ok(has(cell(row("Bruno"), 8), 0) && /sem item/.test(cell(row("Bruno"), 7)), "5c: Bruno sem nada a pagar e 'sem item' sinalizado em Pago", [cell(row("Bruno"), 7), cell(row("Bruno"), 8)]);
+  ok(!audit || audit.textContent.trim() === "", "5b: painel de auditoria NÃO aparece na tela (oculto a pedido do João em 19/11/2026; o cálculo continua)");
+  ok(has(cell(row("Bruno"), 8), 0) && !/sem item/.test(cell(row("Bruno"), 7)), "5c: Bruno sem nada a pagar e sem aviso 'sem item' em Pago", [cell(row("Bruno"), 7), cell(row("Bruno"), 8)]);
 
   // 6) Modal aberto + outra pessoa paga antes => não paga de novo
   window.DB.insert("appointments", { id: "a20", date: d(20), time: "09:00", employeeId: "ana", serviceId: "s", clientId: "c", price: 100, status: "concluido" });
@@ -147,7 +147,8 @@ const commPays = () => tables.transactions.filter(t => t.categoryId === "catc" &
   ok(has(cell(row("Cida"), 8), 0) && !row("Cida").querySelector("[data-pay]"), "6b: mês já pago (antigo, R$ 60 de R$ 100): nada a pagar em nenhum corte", cell(row("Cida"), 8));
   const sf = Utils.commissionLedger().shortfalls.filter(x => x.txn.id === "oldMes");
   ok(sf.length === 1 && sf[0].amount === 40, "6c: diferença de R$ 40 listada na auditoria (pago abaixo do calculado)", sf);
-  ok(/pagos abaixo do valor calculado/.test(document.getElementById("com-audit").textContent), "6d: auditoria mostra a seção de diferença");
+  const audit6 = document.getElementById("com-audit");
+  ok(!audit6 || audit6.textContent.trim() === "", "6d: auditoria de diferença também fica oculta");
 
   // 7) Agenda/Aprovações enxergam o fechamento item a item
   Utils.invalidateCommissionLedger();
